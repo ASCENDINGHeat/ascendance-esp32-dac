@@ -59,7 +59,7 @@ To ensure rapid navigation for embedded engineers, system architects, and autono
 | :--- | :--- | :--- |
 | **[USB Audio Class (UAC) DAC Guide](guides/usb_dac_guide.md)** | **USB Audio & WebHID Stack** | Native USB OTG (GPIO 19/20), TinyUSB UAC 1.0 isochronous streaming (48 kHz / 16-bit stereo), host volume/mute synchronization, and bidirectional 64-byte raw WebHID protocol. |
 | **[Parametric Equalizer (PEQ) DSP Guide](guides/parametric_eq_guide.md)** | **DSP Audio Engine** | Robert Bristow-Johnson (RBJ) Audio EQ Cookbook biquad mathematics, 1-to-10 dynamic band scaling, 15 ms click-free crossfade, pre-gain headroom, saturation clamping, and NVS flash persistence. |
-| **[User Interface, Display & Controls](guides/ui_and_controls_guide.md)** | **Physical UI & Visualizer** | SSD1306 128x64 OLED graphics driver (I2C 400 kHz @ `0x3C`), volume/EQ overlay popups, hardware PCNT quadrature rotary decoding (GPIO 15/16), and button state machine. |
+| **[User Interface, Display & Controls](guides/ui_and_controls_guide.md)** | **Physical UI & Visualizer** | SSD1306 128x64 OLED graphics driver (I2C 400 kHz @ `0x3C`), 3 operating modes (Playback HUD, Main Menu, and On-Device Digit-by-Digit PEQ Editor), hardware PCNT rotary decoding (GPIO 15/16), WS2812B aRGB RMT loudness/mute LED, and debounced dual navigation buttons. |
 | **[Audio Switching & Handover Guide](guides/mode_switching_guide.md)** | **Source Arbiter & Muting** | Central audio source arbiter, 4-phase zero-pop hardware muting protocol (`GPIO 7: XMT`), diagnostic tone arpeggio generator, and continuous frequency sweep. |
 
 ---
