@@ -1,0 +1,1531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ESP32-S3 Hi-Fi DSP DAC - WebHID Live PEQ Tuner</title>
+    <style>
+        :root {
+            --bg-color: #0d1117;
+            --card-bg: #161b22;
+            --accent-color: #58a6ff;
+            --accent-hover: #79c0ff;
+            --text-primary: #c9d1d9;
+            --text-secondary: #8b949e;
+            --border-color: #30363d;
+            --green: #3fb950;
+            --red: #f85149;
+            --slider-track: #21262d;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            padding: 24px;
+            display: flex;
+            justify-content: center;
+        }
+
+        .container {
+            max-width: 900px;
+            width: 100%;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 16px;
+            margin-bottom: 24px;
+        }
+
+        h1 {
+            font-size: 1.4rem;
+            color: #f0f6fc;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .device-badge {
+            font-size: 0.75rem;
+            background: #238636;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-weight: 600;
+        }
+
+        .status-panel {
+            display: flex;
+            gap: 12px;
+            align-items: center;
+        }
+
+        button {
+            background-color: #21262d;
+            color: #c9d1d9;
+            border: 1px solid var(--border-color);
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        button:hover:not(:disabled) {
+            background-color: #30363d;
+            border-color: #8b949e;
+        }
+
+        button.primary {
+            background-color: #238636;
+            color: white;
+            border-color: rgba(240, 246, 252, 0.1);
+        }
+
+        button.primary:hover:not(:disabled) {
+            background-color: #2ea043;
+        }
+
+        button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card-header {
+            font-size: 1rem;
+            font-weight: 600;
+            color: #f0f6fc;
+            margin-bottom: 16px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        canvas {
+            width: 100%;
+            height: 180px;
+            background-color: #0b0e14;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+            margin-bottom: 16px;
+        }
+
+        .controls-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 16px;
+        }
+
+        .band-card {
+            background-color: #12161c;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 12px;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            position: relative;
+        }
+
+        .band-card.active-band {
+            border-color: var(--accent-color);
+            box-shadow: 0 0 12px rgba(88, 166, 255, 0.35);
+        }
+
+        .band-color-dot {
+            width: 9px;
+            height: 9px;
+            border-radius: 50%;
+            display: inline-block;
+            flex-shrink: 0;
+        }
+
+        .btn-del {
+            background: transparent;
+            border: 1px solid transparent;
+            color: #8b949e;
+            border-radius: 4px;
+            padding: 1px 6px;
+            font-size: 0.8rem;
+            cursor: pointer;
+            line-height: 1;
+            transition: all 0.15s ease;
+        }
+
+        .btn-del:hover:not(:disabled) {
+            color: #f85149;
+            border-color: rgba(248, 81, 73, 0.4);
+            background-color: rgba(248, 81, 73, 0.12);
+        }
+
+        .band-title {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--accent-color);
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .control-group {
+            margin-bottom: 12px;
+        }
+
+        .control-label-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.75rem;
+            color: var(--text-secondary);
+            margin-bottom: 6px;
+        }
+
+        .num-input {
+            width: 74px;
+            background-color: #0b0e14;
+            color: #58a6ff;
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 2px 6px;
+            font-size: 0.75rem;
+            font-family: monospace;
+            font-weight: 600;
+            text-align: right;
+            outline: none;
+            transition: border-color 0.2s, box-shadow 0.2s;
+        }
+
+        .num-input:focus {
+            border-color: var(--accent-color);
+            box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
+            color: #f0f6fc;
+        }
+
+        .num-input:invalid {
+            border-color: var(--red);
+            color: var(--red);
+        }
+
+        input[type=range] {
+            width: 100%;
+            height: 4px;
+            background: var(--slider-track);
+            border-radius: 2px;
+            outline: none;
+            -webkit-appearance: none;
+        }
+
+        input[type=range]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--accent-color);
+            cursor: pointer;
+            transition: transform 0.1s ease;
+        }
+
+        input[type=range]::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+        }
+
+        select {
+            width: 100%;
+            background-color: #0b0e14;
+            color: var(--text-primary);
+            border: 1px solid var(--border-color);
+            border-radius: 4px;
+            padding: 4px 8px;
+            font-size: 0.75rem;
+            outline: none;
+        }
+
+        .footer-actions {
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+            margin-top: 16px;
+        }
+
+        .log-box {
+            background: #0b0e14;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 0.75rem;
+            color: #8b949e;
+            max-height: 100px;
+            overflow-y: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>ESP32-S3 Hi-Fi DSP DAC <span class="device-badge">Schematic 2</span></h1>
+                <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px;">
+                    Driverless WebHID Live Parametric EQ Tuner (GPIO 19/20 Native USB OTG)
+                </p>
+            </div>
+            <div class="status-panel">
+                <span id="connStatus" style="font-size: 0.85rem; color: var(--red);">● Disconnected</span>
+                <button id="btnConnect" class="primary">Connect USB DAC</button>
+            </div>
+        </header>
+
+        <div class="card">
+            <div class="card-header">
+                <span>Real-Time Frequency Response Curve</span>
+                <div style="display: flex; gap: 8px;">
+                    <select id="presetSelect" style="width: auto; padding: 6px 12px;">
+                        <option value="3">User Custom (Live Audition)</option>
+                        <option value="0">Preset: Reference Flat</option>
+                        <option value="1">Preset: Warm Bass Boost (+4.5 dB)</option>
+                        <option value="2">Preset: Harman OE2018 Target</option>
+                    </select>
+                </div>
+            </div>
+            <canvas id="eqCanvas" width="850" height="180" style="cursor: crosshair;"></canvas>
+
+            <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-secondary); margin-top: -8px; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
+                <span>💡 <strong>Interactive Nodes:</strong> Drag circle (X=Freq, Y=Gain) • <strong>Mouse Wheel</strong> = Q Factor • <strong>Double-Click</strong> = Add/Reset Band</span>
+                <span style="color: var(--accent-color);">60 FPS Live Volatile Tuning (0 Flash Wear)</span>
+            </div>
+
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; flex-wrap: wrap;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <label style="font-size: 0.85rem; color: var(--text-secondary);" for="preampNum">
+                        Preamp Headroom:
+                    </label>
+                    <input type="number" class="num-input" id="preampNum" min="-12.0" max="0.0" step="0.1" value="0.0" style="width: 76px;">
+                    <span style="font-size: 0.8rem; color: var(--text-secondary);">dB</span>
+                </div>
+                <input type="range" id="preampSlider" min="-12" max="0" step="0.1" value="0" style="flex: 1; min-width: 200px;">
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header" style="flex-wrap: wrap; gap: 10px;">
+                <span>Parametric Equalizer (<span id="bandCountLabel">5</span> Active Bands)</span>
+                <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                    <label style="font-size: 0.75rem; color: var(--text-secondary);">Bands:</label>
+                    <input type="number" id="customBandCountInput" min="1" max="10" step="1" value="5" class="num-input" style="width: 50px;" title="Set custom number of bands (1 to 10)">
+                    <select id="bandCountSelect" style="width: auto; padding: 3px 8px;">
+                        <option value="custom" disabled hidden>Custom Count</option>
+                        <option value="3">3 Bands (Tone)</option>
+                        <option value="5" selected>5 Bands (Standard)</option>
+                        <option value="7">7 Bands (Extended)</option>
+                        <option value="10">10 Bands (Pro Mastering)</option>
+                    </select>
+                    <button id="btnAddBand" style="padding: 4px 10px; font-size: 0.75rem; background-color: #238636; color: white; border: 1px solid rgba(240, 246, 252, 0.1); border-radius: 4px; font-weight: 600; cursor: pointer;">
+                        + Add Band
+                    </button>
+                    <span style="font-size: 0.75rem; color: var(--text-secondary);">(Max 10)</span>
+                </div>
+            </div>
+
+            <div class="controls-grid" id="bandsContainer">
+                <!-- Dynamically generated bands -->
+            </div>
+
+            <div class="footer-actions">
+                <button id="btnReset">↺ Reset to Flat</button>
+                <button id="btnSave" class="primary" style="background-color: #1f6feb;">💾 Save to Hardware NVS</button>
+            </div>
+        </div>
+
+        <div class="card" style="padding: 12px;">
+            <div class="card-header" style="margin-bottom: 8px; font-size: 0.85rem;">Hardware Event Log</div>
+            <div class="log-box" id="logBox">Awaiting WebHID connection via Chrome/Edge...</div>
+        </div>
+    </div>
+
+    <script>
+        const WEBHID_MAGIC_16 = 0x4551; // "EQ"
+        const CMD_GET_ACTIVE_PROFILE = 0x01;
+        const CMD_SET_BAND_LIVE      = 0x02;
+        const CMD_SET_PREAMP_LIVE    = 0x03;
+        const CMD_SELECT_PROFILE     = 0x04;
+        const CMD_SAVE_TO_PRESET     = 0x05;
+        const CMD_RESET_TO_PRESET    = 0x06;
+        const CMD_SET_BAND_COUNT     = 0x07;
+
+        const ISO_FREQS = {
+            1:  [1000],
+            2:  [150, 4000],
+            3:  [100, 1000, 10000],
+            4:  [100, 500, 2500, 10000],
+            5:  [80, 250, 1000, 4000, 12000],
+            6:  [80, 200, 800, 2500, 6300, 14000],
+            7:  [63, 160, 400, 1000, 2500, 6300, 16000],
+            8:  [40, 100, 250, 630, 1600, 4000, 10000, 16000],
+            9:  [31, 63, 160, 400, 1000, 2500, 5000, 10000, 16000],
+            10: [31, 63, 125, 250, 500, 1000, 2000, 4000, 8000, 16000]
+        };
+
+        const BAND_COLORS = [
+            '#58a6ff', // Band 1: Dodger Blue
+            '#3fb950', // Band 2: Emerald Green
+            '#d29922', // Band 3: Gold/Amber
+            '#f85149', // Band 4: Coral/Red
+            '#bc8cff', // Band 5: Lavender/Purple
+            '#39c5bb', // Band 6: Cyan/Teal
+            '#f0883e', // Band 7: Tangerine Orange
+            '#79c0ff', // Band 8: Light Sky Blue
+            '#56d364', // Band 9: Mint Lime
+            '#e3b341'  // Band 10: Sunflower Yellow
+        ];
+
+        let currentBandCount = 5;
+        let activeBands = [];
+        let preampDb = 0.0;
+        let hidDevice = null;
+
+        let hoveredBandIdx = -1;
+        let draggedBandIdx = -1;
+
+        const logBox = document.getElementById('logBox');
+        const connStatus = document.getElementById('connStatus');
+        const btnConnect = document.getElementById('btnConnect');
+        const btnSave = document.getElementById('btnSave');
+        const btnReset = document.getElementById('btnReset');
+        const btnAddBand = document.getElementById('btnAddBand');
+        const presetSelect = document.getElementById('presetSelect');
+        const bandCountSelect = document.getElementById('bandCountSelect');
+        const customBandCountInput = document.getElementById('customBandCountInput');
+        const bandCountLabel = document.getElementById('bandCountLabel');
+        const preampSlider = document.getElementById('preampSlider');
+        const preampNum = document.getElementById('preampNum');
+        const bandsContainer = document.getElementById('bandsContainer');
+        const canvas = document.getElementById('eqCanvas');
+        const ctx = canvas.getContext('2d');
+
+        function log(msg) {
+            const time = new Date().toLocaleTimeString();
+            logBox.innerHTML = `[${time}] ${msg}<br>` + logBox.innerHTML;
+        }
+
+        function clamp(val, min, max) {
+            if (isNaN(val)) return min;
+            return Math.max(min, Math.min(max, val));
+        }
+
+        function createDefaultBands(count) {
+            const freqs = ISO_FREQS[count] || ISO_FREQS[5];
+            const bands = [];
+            for (let i = 0; i < count; i++) {
+                let type = 1; // Peaking
+                if (i === 0) type = 2; // Low Shelf
+                else if (i === count - 1) type = 3; // High Shelf
+                bands.push({
+                    type: type,
+                    freq: freqs[i] || Math.round(100 * Math.pow(2, i)),
+                    gain: 0.0,
+                    q: (type === 1) ? 1.00 : 0.71
+                });
+            }
+            return bands;
+        }
+
+        activeBands = createDefaultBands(currentBandCount);
+
+        const PRESET_DEFINITIONS = {
+            0: { // Reference Flat
+                preamp: 0.0,
+                bands: [
+                    { type: 2, freq: 80, gain: 0.0, q: 0.71 },
+                    { type: 1, freq: 250, gain: 0.0, q: 1.00 },
+                    { type: 1, freq: 1000, gain: 0.0, q: 1.00 },
+                    { type: 1, freq: 4000, gain: 0.0, q: 1.00 },
+                    { type: 3, freq: 10000, gain: 0.0, q: 0.71 }
+                ]
+            },
+            1: { // Warm Bass Boost
+                preamp: -2.5,
+                bands: [
+                    { type: 2, freq: 80, gain: 4.5, q: 0.71 },
+                    { type: 1, freq: 250, gain: 1.5, q: 1.00 },
+                    { type: 1, freq: 1000, gain: 0.0, q: 1.00 },
+                    { type: 1, freq: 4000, gain: -1.0, q: 1.00 },
+                    { type: 3, freq: 10000, gain: 0.5, q: 0.71 }
+                ]
+            },
+            2: { // Harman OE2018 Target
+                preamp: -4.0,
+                bands: [
+                    { type: 2, freq: 105, gain: 5.0, q: 0.71 },
+                    { type: 1, freq: 200, gain: -1.5, q: 1.20 },
+                    { type: 1, freq: 1200, gain: 1.0, q: 1.40 },
+                    { type: 1, freq: 3000, gain: 2.5, q: 1.80 },
+                    { type: 3, freq: 8000, gain: -1.0, q: 0.71 }
+                ]
+            }
+        };
+
+        // Coordinate Conversions
+        function freqToX(freq) {
+            const f = clamp(freq, 20, 20000);
+            return (canvas.width * Math.log10(f / 20.0)) / 3.0;
+        }
+
+        function xToFreq(x) {
+            const clampedX = clamp(x, 0, canvas.width);
+            const f = 20.0 * Math.pow(1000.0, clampedX / canvas.width);
+            return clamp(Math.round(f), 20, 20000);
+        }
+
+        function gainToY(gain) {
+            const totalG = gain + preampDb;
+            return (canvas.height / 2.0) - (totalG / 24.0) * (canvas.height / 2.0);
+        }
+
+        function yToGain(y) {
+            const clampedY = clamp(y, 0, canvas.height);
+            const totalG = 24.0 * (1.0 - (2.0 * clampedY) / canvas.height);
+            const g = totalG - preampDb;
+            return clamp(Math.round(g * 10.0) / 10.0, -24.0, 12.0);
+        }
+
+        function getCanvasCoords(evt) {
+            const rect = canvas.getBoundingClientRect();
+            const scaleX = canvas.width / rect.width;
+            const scaleY = canvas.height / rect.height;
+            const clientX = (evt.touches && evt.touches.length > 0) ? evt.touches[0].clientX : evt.clientX;
+            const clientY = (evt.touches && evt.touches.length > 0) ? evt.touches[0].clientY : evt.clientY;
+            return {
+                x: (clientX - rect.left) * scaleX,
+                y: (clientY - rect.top) * scaleY
+            };
+        }
+
+        function findHoveredBand(cx, cy, radius = 15) {
+            let closestIdx = -1;
+            let minDistSq = radius * radius;
+            for (let i = 0; i < activeBands.length; i++) {
+                const b = activeBands[i];
+                const bx = freqToX(b.freq);
+                const by = gainToY(b.gain);
+                const distSq = (cx - bx) * (cx - bx) + (cy - by) * (cy - by);
+                if (distSq <= minDistSq) {
+                    minDistSq = distSq;
+                    closestIdx = i;
+                }
+            }
+            return closestIdx;
+        }
+
+        function updateBandCountUI() {
+            bandCountLabel.textContent = currentBandCount;
+            if (customBandCountInput) customBandCountInput.value = currentBandCount;
+            if ([3, 5, 7, 10].includes(currentBandCount)) {
+                bandCountSelect.value = String(currentBandCount);
+            } else {
+                bandCountSelect.value = "custom";
+            }
+            if (btnAddBand) {
+                btnAddBand.disabled = (currentBandCount >= 10);
+                btnAddBand.style.opacity = (currentBandCount >= 10) ? "0.4" : "1.0";
+                btnAddBand.style.cursor = (currentBandCount >= 10) ? "not-allowed" : "pointer";
+            }
+        }
+
+        function highlightBandCard(idx) {
+            const cards = bandsContainer.children;
+            for (let i = 0; i < cards.length; i++) {
+                if (i === idx) {
+                    cards[i].classList.add('active-band');
+                } else {
+                    cards[i].classList.remove('active-band');
+                }
+            }
+        }
+
+        function syncBandControls(i) {
+            const card = bandsContainer.children[i];
+            if (!card) return;
+            const b = activeBands[i];
+            const fSlider = card.querySelector(`#freq_${i}`);
+            const fNum = card.querySelector(`#num_f_${i}`);
+            const gSlider = card.querySelector(`#gain_${i}`);
+            const gNum = card.querySelector(`#num_g_${i}`);
+            const qSlider = card.querySelector(`#q_${i}`);
+            const qNum = card.querySelector(`#num_q_${i}`);
+
+            if (fSlider) fSlider.value = Math.round(b.freq);
+            if (fNum) fNum.value = Math.round(b.freq);
+            if (gSlider) gSlider.value = b.gain;
+            if (gNum) gNum.value = b.gain.toFixed(1);
+            if (qSlider) qSlider.value = b.q;
+            if (qNum) qNum.value = b.q.toFixed(2);
+        }
+
+        async function addCustomBand(freq, gain) {
+            if (activeBands.length >= 10) {
+                log("Maximum of 10 bands supported by hardware DSP.");
+                return;
+            }
+
+            let newFreq = freq;
+            let newGain = (gain !== undefined) ? gain : 0.0;
+
+            if (newFreq === undefined) {
+                if (activeBands.length === 0) {
+                    newFreq = 1000;
+                } else {
+                    const sorted = [...activeBands].sort((a, b) => a.freq - b.freq);
+                    let maxRatio = 0;
+                    let bestIdx = 0;
+                    for (let i = 0; i < sorted.length - 1; i++) {
+                        const ratio = sorted[i + 1].freq / sorted[i].freq;
+                        if (ratio > maxRatio) {
+                            maxRatio = ratio;
+                            bestIdx = i;
+                        }
+                    }
+                    if (maxRatio > 1.35) {
+                        newFreq = Math.round(Math.sqrt(sorted[bestIdx].freq * sorted[bestIdx + 1].freq));
+                    } else if (sorted[sorted.length - 1].freq < 14000) {
+                        newFreq = Math.min(20000, Math.round(sorted[sorted.length - 1].freq * 1.4));
+                    } else if (sorted[0].freq > 30) {
+                        newFreq = Math.max(20, Math.round(sorted[0].freq / 1.4));
+                    } else {
+                        newFreq = 1000;
+                    }
+                }
+            }
+
+            let filterType = 1; // Peaking
+            if (activeBands.length === 0) filterType = 2; // Low shelf if first
+
+            activeBands.push({
+                type: filterType,
+                freq: clamp(Math.round(newFreq), 20, 20000),
+                gain: clamp(Math.round(newGain * 10.0) / 10.0, -24.0, 12.0),
+                q: 1.00
+            });
+
+            currentBandCount = activeBands.length;
+            presetSelect.value = "3"; // User custom
+            updateBandCountUI();
+            renderBands();
+
+            await sendSetBandCount(currentBandCount);
+            for (let i = 0; i < currentBandCount; i++) {
+                await sendBandLive(i);
+            }
+            drawCurve();
+            log(`Added Band ${currentBandCount}: ${Math.round(newFreq)} Hz, ${newGain >= 0 ? '+' : ''}${newGain.toFixed(1)} dB.`);
+        }
+
+        async function removeBand(idx) {
+            if (activeBands.length <= 1) {
+                alert("Minimum 1 active EQ band required.");
+                return;
+            }
+
+            const removed = activeBands.splice(idx, 1)[0];
+            currentBandCount = activeBands.length;
+            presetSelect.value = "3";
+            hoveredBandIdx = -1;
+            draggedBandIdx = -1;
+            updateBandCountUI();
+            renderBands();
+
+            await sendSetBandCount(currentBandCount);
+            for (let i = 0; i < currentBandCount; i++) {
+                await sendBandLive(i);
+            }
+            drawCurve();
+            log(`Deleted Band ${idx + 1} (${Math.round(removed.freq)} Hz). ${currentBandCount} bands active.`);
+        }
+
+        async function setCustomBandCount(targetCount) {
+            const count = clamp(targetCount, 1, 10);
+            if (count === currentBandCount) return;
+
+            if (count < currentBandCount) {
+                activeBands = activeBands.slice(0, count);
+            } else {
+                const defaultList = ISO_FREQS[count];
+                while (activeBands.length < count) {
+                    const idx = activeBands.length;
+                    const freq = (defaultList && defaultList[idx]) ? defaultList[idx] : Math.min(20000, 80 * Math.pow(2, idx));
+                    activeBands.push({
+                        type: (idx === count - 1) ? 3 : 1,
+                        freq: clamp(Math.round(freq), 20, 20000),
+                        gain: 0.0,
+                        q: 1.00
+                    });
+                }
+            }
+
+            currentBandCount = count;
+            presetSelect.value = "3";
+            updateBandCountUI();
+            renderBands();
+
+            await sendSetBandCount(currentBandCount);
+            for (let i = 0; i < currentBandCount; i++) {
+                await sendBandLive(i);
+            }
+            drawCurve();
+            log(`Configured band count: ${currentBandCount} bands.`);
+        }
+
+        // Render Band Cards
+        function renderBands() {
+            bandsContainer.innerHTML = '';
+            updateBandCountUI();
+
+            activeBands.forEach((band, i) => {
+                const card = document.createElement('div');
+                card.className = 'band-card';
+                const bandColor = BAND_COLORS[i % BAND_COLORS.length];
+
+                card.innerHTML = `
+                    <div class="band-title">
+                        <span style="display: flex; align-items: center; gap: 6px;">
+                            <span class="band-color-dot" style="background-color: ${bandColor};"></span>
+                            Band ${i + 1}
+                        </span>
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            <select id="type_${i}" style="width: auto;">
+                                <option value="1" ${band.type === 1 ? 'selected' : ''}>Peaking</option>
+                                <option value="2" ${band.type === 2 ? 'selected' : ''}>Low Shelf</option>
+                                <option value="3" ${band.type === 3 ? 'selected' : ''}>High Shelf</option>
+                                <option value="0" ${band.type === 0 ? 'selected' : ''}>Bypass</option>
+                            </select>
+                            <button class="btn-del" id="del_${i}" title="Delete Band ${i + 1}" ${activeBands.length <= 1 ? 'disabled style="opacity:0.3;cursor:not-allowed;"' : ''}>✕</button>
+                        </div>
+                    </div>
+                    <div class="control-group">
+                        <div class="control-label-row">
+                            <label for="num_f_${i}">Freq (Hz):</label>
+                            <input type="number" class="num-input" id="num_f_${i}" min="20" max="20000" step="1" value="${Math.round(band.freq)}">
+                        </div>
+                        <input type="range" id="freq_${i}" min="20" max="20000" step="1" value="${Math.round(band.freq)}">
+                    </div>
+                    <div class="control-group">
+                        <div class="control-label-row">
+                            <label for="num_g_${i}">Gain (dB):</label>
+                            <input type="number" class="num-input" id="num_g_${i}" min="-24.0" max="12.0" step="0.1" value="${band.gain.toFixed(1)}">
+                        </div>
+                        <input type="range" id="gain_${i}" min="-24.0" max="12.0" step="0.1" value="${band.gain}">
+                    </div>
+                    <div class="control-group">
+                        <div class="control-label-row">
+                            <label for="num_q_${i}">Q Factor:</label>
+                            <input type="number" class="num-input" id="num_q_${i}" min="0.10" max="10.00" step="0.01" value="${band.q.toFixed(2)}">
+                        </div>
+                        <input type="range" id="q_${i}" min="0.10" max="10.00" step="0.05" value="${band.q}">
+                    </div>
+                `;
+                bandsContainer.appendChild(card);
+
+                // Card hover linking
+                card.onmouseenter = () => {
+                    if (draggedBandIdx === -1) {
+                        hoveredBandIdx = i;
+                        highlightBandCard(i);
+                        drawCurve();
+                    }
+                };
+                card.onmouseleave = () => {
+                    if (draggedBandIdx === -1) {
+                        if (hoveredBandIdx === i) hoveredBandIdx = -1;
+                        highlightBandCard(-1);
+                        drawCurve();
+                    }
+                };
+
+                // Delete button
+                const delBtn = card.querySelector(`#del_${i}`);
+                if (delBtn) {
+                    delBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        removeBand(i);
+                    };
+                }
+
+                // Frequency controls
+                const fSlider = card.querySelector(`#freq_${i}`);
+                const fNum = card.querySelector(`#num_f_${i}`);
+
+                fSlider.oninput = (e) => {
+                    const val = parseFloat(e.target.value);
+                    activeBands[i].freq = val;
+                    fNum.value = Math.round(val);
+                    presetSelect.value = "3";
+                    sendBandLive(i);
+                    drawCurve();
+                };
+
+                fNum.oninput = (e) => {
+                    const val = parseFloat(e.target.value);
+                    if (!isNaN(val) && val >= 20 && val <= 20000) {
+                        activeBands[i].freq = val;
+                        fSlider.value = val;
+                        presetSelect.value = "3";
+                        sendBandLive(i);
+                        drawCurve();
+                    }
+                };
+
+                fNum.onchange = (e) => {
+                    let val = parseFloat(e.target.value);
+                    val = clamp(val, 20, 20000);
+                    val = Math.round(val);
+                    activeBands[i].freq = val;
+                    fNum.value = val;
+                    fSlider.value = val;
+                    presetSelect.value = "3";
+                    sendBandLive(i);
+                    drawCurve();
+                    log(`Band ${i + 1} Freq: ${val} Hz`);
+                };
+
+                fNum.onkeydown = (e) => {
+                    if (e.key === 'Enter') fNum.blur();
+                };
+
+                // Gain controls
+                const gSlider = card.querySelector(`#gain_${i}`);
+                const gNum = card.querySelector(`#num_g_${i}`);
+
+                gSlider.oninput = (e) => {
+                    const val = parseFloat(e.target.value);
+                    activeBands[i].gain = val;
+                    gNum.value = val.toFixed(1);
+                    presetSelect.value = "3";
+                    sendBandLive(i);
+                    drawCurve();
+                };
+
+                gNum.oninput = (e) => {
+                    const val = parseFloat(e.target.value);
+                    if (!isNaN(val) && val >= -24.0 && val <= 12.0) {
+                        activeBands[i].gain = val;
+                        gSlider.value = val;
+                        presetSelect.value = "3";
+                        sendBandLive(i);
+                        drawCurve();
+                    }
+                };
+
+                gNum.onchange = (e) => {
+                    let val = parseFloat(e.target.value);
+                    val = clamp(val, -24.0, 12.0);
+                    val = Math.round(val * 10) / 10;
+                    activeBands[i].gain = val;
+                    gNum.value = val.toFixed(1);
+                    gSlider.value = val;
+                    presetSelect.value = "3";
+                    sendBandLive(i);
+                    drawCurve();
+                    log(`Band ${i + 1} Gain: ${val.toFixed(1)} dB`);
+                };
+
+                gNum.onkeydown = (e) => {
+                    if (e.key === 'Enter') gNum.blur();
+                };
+
+                // Q Factor controls
+                const qSlider = card.querySelector(`#q_${i}`);
+                const qNum = card.querySelector(`#num_q_${i}`);
+
+                qSlider.oninput = (e) => {
+                    const val = parseFloat(e.target.value);
+                    activeBands[i].q = val;
+                    qNum.value = val.toFixed(2);
+                    presetSelect.value = "3";
+                    sendBandLive(i);
+                    drawCurve();
+                };
+
+                qNum.oninput = (e) => {
+                    const val = parseFloat(e.target.value);
+                    if (!isNaN(val) && val >= 0.10 && val <= 10.00) {
+                        activeBands[i].q = val;
+                        qSlider.value = val;
+                        presetSelect.value = "3";
+                        sendBandLive(i);
+                        drawCurve();
+                    }
+                };
+
+                qNum.onchange = (e) => {
+                    let val = parseFloat(e.target.value);
+                    val = clamp(val, 0.10, 10.00);
+                    val = Math.round(val * 100) / 100;
+                    activeBands[i].q = val;
+                    qNum.value = val.toFixed(2);
+                    qSlider.value = val;
+                    presetSelect.value = "3";
+                    sendBandLive(i);
+                    drawCurve();
+                    log(`Band ${i + 1} Q: ${val.toFixed(2)}`);
+                };
+
+                qNum.onkeydown = (e) => {
+                    if (e.key === 'Enter') qNum.blur();
+                };
+
+                // Filter Type
+                const tSelect = card.querySelector(`#type_${i}`);
+                tSelect.onchange = (e) => {
+                    activeBands[i].type = parseInt(e.target.value);
+                    presetSelect.value = "3";
+                    sendBandLive(i);
+                    drawCurve();
+                };
+            });
+
+            drawCurve();
+        }
+
+        bandCountSelect.onchange = async (e) => {
+            const val = e.target.value;
+            if (val === "custom") return;
+            currentBandCount = parseInt(val);
+            activeBands = createDefaultBands(currentBandCount);
+            updateBandCountUI();
+            renderBands();
+            await sendSetBandCount(currentBandCount);
+            for (let i = 0; i < currentBandCount; i++) {
+                await sendBandLive(i);
+            }
+            log(`Configured PEQ band count: ${currentBandCount} bands.`);
+        };
+
+        customBandCountInput.onchange = (e) => {
+            let val = parseInt(e.target.value);
+            val = clamp(val, 1, 10);
+            customBandCountInput.value = val;
+            setCustomBandCount(val);
+        };
+
+        customBandCountInput.onkeydown = (e) => {
+            if (e.key === 'Enter') customBandCountInput.blur();
+        };
+
+        btnAddBand.onclick = () => {
+            addCustomBand();
+        };
+
+        preampSlider.oninput = (e) => {
+            preampDb = parseFloat(e.target.value);
+            preampNum.value = preampDb.toFixed(1);
+            presetSelect.value = "3";
+            sendPreampLive(preampDb);
+            drawCurve();
+        };
+
+        preampNum.oninput = (e) => {
+            const val = parseFloat(e.target.value);
+            if (!isNaN(val) && val >= -12.0 && val <= 0.0) {
+                preampDb = val;
+                preampSlider.value = val;
+                presetSelect.value = "3";
+                sendPreampLive(preampDb);
+                drawCurve();
+            }
+        };
+
+        preampNum.onchange = (e) => {
+            let val = parseFloat(e.target.value);
+            val = clamp(val, -12.0, 0.0);
+            val = Math.round(val * 10) / 10;
+            preampDb = val;
+            preampNum.value = val.toFixed(1);
+            preampSlider.value = val;
+            presetSelect.value = "3";
+            sendPreampLive(preampDb);
+            drawCurve();
+            log(`Preamp Headroom: ${val.toFixed(1)} dB`);
+        };
+
+        preampNum.onkeydown = (e) => {
+            if (e.key === 'Enter') preampNum.blur();
+        };
+
+        presetSelect.onchange = async (e) => {
+            const slot = parseInt(e.target.value);
+            if (PRESET_DEFINITIONS[slot]) {
+                const p = PRESET_DEFINITIONS[slot];
+                preampDb = p.preamp;
+                preampNum.value = preampDb.toFixed(1);
+                preampSlider.value = preampDb;
+                currentBandCount = p.bands.length;
+                activeBands = JSON.parse(JSON.stringify(p.bands));
+                updateBandCountUI();
+                renderBands();
+                await sendSetBandCount(currentBandCount);
+                for (let i = 0; i < currentBandCount; i++) {
+                    await sendBandLive(i);
+                }
+                await sendPreampLive(preampDb);
+            }
+            await sendSelectProfile(slot);
+        };
+
+        // Interactive Pointer Handlers on Canvas
+        function onPointerDown(e) {
+            const coords = getCanvasCoords(e);
+            const hitIdx = findHoveredBand(coords.x, coords.y, 14);
+            if (hitIdx !== -1) {
+                if (e.cancelable) e.preventDefault();
+                draggedBandIdx = hitIdx;
+                hoveredBandIdx = hitIdx;
+                highlightBandCard(hitIdx);
+                canvas.style.cursor = 'grabbing';
+                drawCurve();
+            }
+        }
+
+        function onPointerMove(e) {
+            const coords = getCanvasCoords(e);
+            if (draggedBandIdx !== -1) {
+                if (e.cancelable) e.preventDefault();
+                const newFreq = xToFreq(coords.x);
+                const newGain = yToGain(coords.y);
+
+                activeBands[draggedBandIdx].freq = newFreq;
+                activeBands[draggedBandIdx].gain = newGain;
+
+                presetSelect.value = "3";
+                syncBandControls(draggedBandIdx);
+                sendBandLive(draggedBandIdx);
+                drawCurve();
+            } else {
+                const rect = canvas.getBoundingClientRect();
+                const clientX = (e.touches && e.touches.length > 0) ? e.touches[0].clientX : e.clientX;
+                const clientY = (e.touches && e.touches.length > 0) ? e.touches[0].clientY : e.clientY;
+                const isInside = (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom);
+
+                if (isInside) {
+                    const hitIdx = findHoveredBand(coords.x, coords.y, 14);
+                    if (hitIdx !== hoveredBandIdx) {
+                        hoveredBandIdx = hitIdx;
+                        highlightBandCard(hitIdx);
+                        drawCurve();
+                    }
+                    canvas.style.cursor = (hoveredBandIdx !== -1) ? 'grab' : 'crosshair';
+                } else if (hoveredBandIdx !== -1) {
+                    hoveredBandIdx = -1;
+                    highlightBandCard(-1);
+                    drawCurve();
+                }
+            }
+        }
+
+        function onPointerUp(e) {
+            if (draggedBandIdx !== -1) {
+                const b = activeBands[draggedBandIdx];
+                log(`Band ${draggedBandIdx + 1} positioned: ${Math.round(b.freq)} Hz, ${b.gain >= 0 ? '+' : ''}${b.gain.toFixed(1)} dB`);
+                draggedBandIdx = -1;
+                canvas.style.cursor = (hoveredBandIdx !== -1) ? 'grab' : 'crosshair';
+                drawCurve();
+            }
+        }
+
+        function onCanvasWheel(e) {
+            const coords = getCanvasCoords(e);
+            const hitIdx = findHoveredBand(coords.x, coords.y, 18);
+            if (hitIdx !== -1) {
+                e.preventDefault();
+                const delta = e.deltaY < 0 ? 0.05 : -0.05;
+                let newQ = Math.round((activeBands[hitIdx].q + delta) * 100) / 100;
+                newQ = clamp(newQ, 0.10, 10.00);
+                activeBands[hitIdx].q = newQ;
+                presetSelect.value = "3";
+                syncBandControls(hitIdx);
+                sendBandLive(hitIdx);
+                drawCurve();
+            }
+        }
+
+        function onCanvasDblClick(e) {
+            const coords = getCanvasCoords(e);
+            const hitIdx = findHoveredBand(coords.x, coords.y, 14);
+            if (hitIdx !== -1) {
+                activeBands[hitIdx].gain = 0.0;
+                presetSelect.value = "3";
+                syncBandControls(hitIdx);
+                sendBandLive(hitIdx);
+                drawCurve();
+                log(`Band ${hitIdx + 1} gain reset to 0.0 dB.`);
+            } else {
+                if (activeBands.length < 10) {
+                    const freq = xToFreq(coords.x);
+                    const gain = yToGain(coords.y);
+                    addCustomBand(freq, gain);
+                } else {
+                    log("Maximum 10 bands reached. Cannot add more bands.");
+                }
+            }
+        }
+
+        canvas.addEventListener('mousedown', onPointerDown);
+        window.addEventListener('mousemove', onPointerMove);
+        window.addEventListener('mouseup', onPointerUp);
+
+        canvas.addEventListener('touchstart', onPointerDown, { passive: false });
+        window.addEventListener('touchmove', onPointerMove, { passive: false });
+        window.addEventListener('touchend', onPointerUp);
+
+        canvas.addEventListener('wheel', onCanvasWheel, { passive: false });
+        canvas.addEventListener('dblclick', onCanvasDblClick);
+
+        // WebHID Communication
+        btnConnect.onclick = async () => {
+            if (!navigator.hid) {
+                alert("WebHID is not supported in this browser. Please use Google Chrome or Microsoft Edge.");
+                return;
+            }
+
+            try {
+                let device = null;
+
+                // Check if device was previously paired and permitted by user
+                const pairedDevices = await navigator.hid.getDevices();
+                device = pairedDevices.find(d => d.vendorId === 0x303A && d.productId === 0x4002);
+
+                if (!device) {
+                    const filters = [{ vendorId: 0x303A, productId: 0x4002 }];
+                    const devices = await navigator.hid.requestDevice({ filters });
+                    if (devices.length === 0) return;
+                    device = devices[0];
+                }
+
+                hidDevice = device;
+                await hidDevice.open();
+
+                connStatus.innerHTML = "● Connected (GPIO 19/20 Native OTG)";
+                connStatus.style.color = "var(--green)";
+                btnConnect.textContent = "Disconnect";
+                btnConnect.onclick = disconnectDevice;
+                log(`Connected to: ${hidDevice.productName} (VID: 0x${hidDevice.vendorId.toString(16)}, PID: 0x${hidDevice.productId.toString(16)})`);
+
+                hidDevice.oninputreport = (evt) => {
+                    if (evt.data.byteLength < 16) return;
+                    const magic = evt.data.getUint16(0, true);
+                    if (magic !== WEBHID_MAGIC_16) return;
+
+                    const cmd = evt.data.getUint8(2);
+                    const bIdx = evt.data.getUint8(3);
+                    const numBands = evt.data.getUint8(16); // reserved[0] = active num_bands
+
+                    if (numBands >= 1 && numBands <= 10 && numBands !== currentBandCount) {
+                        currentBandCount = numBands;
+                        activeBands = createDefaultBands(currentBandCount);
+                        updateBandCountUI();
+                        renderBands();
+                        log(`DAC synced active band count: ${currentBandCount} bands`);
+                    }
+
+                    if (cmd === CMD_GET_ACTIVE_PROFILE && bIdx < activeBands.length) {
+                        const fType = evt.data.getUint8(4);
+                        const fHz = evt.data.getUint16(6, true);
+                        const gDb = evt.data.getInt16(8, true) / 10.0;
+                        const qVal = evt.data.getUint16(10, true) / 100.0;
+
+                        activeBands[bIdx].type = fType;
+                        activeBands[bIdx].freq = fHz;
+                        activeBands[bIdx].gain = gDb;
+                        activeBands[bIdx].q = qVal;
+
+                        syncBandControls(bIdx);
+                        const card = bandsContainer.children[bIdx];
+                        if (card) {
+                            const tSel = card.querySelector(`#type_${bIdx}`);
+                            if (tSel) tSel.value = fType;
+                        }
+                        drawCurve();
+                    }
+                };
+
+                // Request initial state from DAC
+                for (let b = 0; b < currentBandCount; b++) {
+                    await sendGetBand(b);
+                }
+            } catch (err) {
+                log(`Connection error: ${err.message}`);
+                if (err.message && err.message.toLowerCase().includes("failed to open")) {
+                    log(`<span style="color: #f85149; font-weight: 600;">⚠️ Linux Permission Denied on /dev/hidraw:</span>`);
+                    log(`Run in terminal: <code style="color: #58a6ff;">sudo chmod 666 /dev/hidraw*</code>`);
+                    log(`Or add udev rule: <code style="color: #8b949e;">echo 'KERNEL=="hidraw*", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="4002", MODE="0666", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/99-esp32-webhid.rules</code>`);
+                }
+            }
+        };
+
+        async function sendGetBand(bandIdx) {
+            if (!hidDevice || !hidDevice.opened) return;
+            const buffer = new ArrayBuffer(64);
+            const view = new DataView(buffer);
+            view.setUint16(0, WEBHID_MAGIC_16, true);
+            view.setUint8(2, CMD_GET_ACTIVE_PROFILE);
+            view.setUint8(3, bandIdx);
+            try {
+                await hidDevice.sendReport(0x00, new Uint8Array(buffer));
+            } catch (e) {
+                // Ignore transient send failure
+            }
+        }
+
+        async function sendSetBandCount(count) {
+            if (!hidDevice || !hidDevice.opened) return;
+            const buffer = new ArrayBuffer(64);
+            const view = new DataView(buffer);
+            view.setUint16(0, WEBHID_MAGIC_16, true);
+            view.setUint8(2, CMD_SET_BAND_COUNT);
+            view.setUint8(3, count);
+            try {
+                await hidDevice.sendReport(0x00, new Uint8Array(buffer));
+            } catch (e) {
+                log(`Send band count error: ${e.message}`);
+            }
+        }
+
+        async function disconnectDevice() {
+            if (hidDevice) {
+                await hidDevice.close();
+                hidDevice = null;
+                connStatus.innerHTML = "● Disconnected";
+                connStatus.style.color = "var(--red)";
+                btnConnect.textContent = "Connect USB DAC";
+                btnConnect.onclick = () => location.reload();
+                log("Disconnected from device.");
+            }
+        }
+
+        async function sendBandLive(bandIdx) {
+            if (!hidDevice || !hidDevice.opened) return;
+
+            const band = activeBands[bandIdx];
+            if (!band) return;
+
+            const buffer = new ArrayBuffer(64);
+            const view = new DataView(buffer);
+
+            view.setUint16(0, WEBHID_MAGIC_16, true);       // Magic 0x4551 ("EQ")
+            view.setUint8(2, CMD_SET_BAND_LIVE);           // Command 0x02
+            view.setUint8(3, bandIdx);                     // Band Index (0-9)
+            view.setUint8(4, band.type);                    // Filter Type
+            view.setUint8(5, band.type !== 0 ? 1 : 0);      // Enabled
+            view.setUint16(6, Math.round(band.freq), true); // Frequency Hz
+            view.setInt16(8, Math.round(band.gain * 10), true); // Gain x10
+            view.setUint16(10, Math.round(band.q * 100), true); // Q x100
+
+            try {
+                await hidDevice.sendReport(0x00, new Uint8Array(buffer));
+            } catch (e) {
+                log(`Send live band error: ${e.message}`);
+            }
+        }
+
+        async function sendPreampLive(gain) {
+            if (!hidDevice || !hidDevice.opened) return;
+
+            const buffer = new ArrayBuffer(64);
+            const view = new DataView(buffer);
+
+            view.setUint16(0, WEBHID_MAGIC_16, true);
+            view.setUint8(2, CMD_SET_PREAMP_LIVE);
+            view.setInt16(8, Math.round(gain * 10), true);
+
+            try {
+                await hidDevice.sendReport(0x00, new Uint8Array(buffer));
+            } catch (e) {
+                log(`Send preamp error: ${e.message}`);
+            }
+        }
+
+        async function sendSelectProfile(slot) {
+            if (!hidDevice || !hidDevice.opened) return;
+
+            const buffer = new ArrayBuffer(64);
+            const view = new DataView(buffer);
+
+            view.setUint16(0, WEBHID_MAGIC_16, true);
+            view.setUint8(2, CMD_SELECT_PROFILE);
+            view.setUint8(3, slot);
+
+            try {
+                await hidDevice.sendReport(0x00, new Uint8Array(buffer));
+                log(`Switched to profile slot: ${slot}`);
+            } catch (e) {
+                log(`Select profile error: ${e.message}`);
+            }
+        }
+
+        btnSave.onclick = async () => {
+            if (!hidDevice || !hidDevice.opened) {
+                alert("Please connect to ESP32-S3 via USB first.");
+                return;
+            }
+
+            const buffer = new ArrayBuffer(64);
+            const view = new DataView(buffer);
+
+            view.setUint16(0, WEBHID_MAGIC_16, true);
+            view.setUint8(2, CMD_SAVE_TO_PRESET);
+
+            try {
+                await hidDevice.sendReport(0x00, new Uint8Array(buffer));
+                log("Active PEQ curve committed to hardware NVS flash!");
+                alert("Equalizer settings permanently saved to ESP32-S3 NVS flash!");
+            } catch (e) {
+                log(`Save to NVS error: ${e.message}`);
+            }
+        };
+
+        btnReset.onclick = async () => {
+            activeBands = createDefaultBands(currentBandCount);
+            preampDb = 0.0;
+            if (preampNum) preampNum.value = "0.0";
+            if (preampSlider) preampSlider.value = 0;
+            if (presetSelect) presetSelect.value = "3";
+            updateBandCountUI();
+            renderBands();
+            for (let i = 0; i < currentBandCount; i++) {
+                await sendBandLive(i);
+            }
+            await sendPreampLive(0.0);
+            log(`Reset ${currentBandCount} EQ bands to flat (0.0 dB).`);
+        };
+
+        // Draw Interactive Frequency Response Visualizer
+        function drawCurve() {
+            const w = canvas.width;
+            const h = canvas.height;
+            ctx.clearRect(0, 0, w, h);
+
+            // Draw Frequency Grid Lines (Logarithmic)
+            const fGrid = [50, 100, 250, 500, 1000, 2000, 4000, 8000, 16000];
+            ctx.strokeStyle = "#161b22";
+            ctx.lineWidth = 1;
+            fGrid.forEach(f => {
+                const x = freqToX(f);
+                ctx.beginPath();
+                ctx.moveTo(x, 0);
+                ctx.lineTo(x, h);
+                ctx.stroke();
+
+                ctx.fillStyle = "#30363d";
+                ctx.font = "9px monospace";
+                const label = f >= 1000 ? `${f / 1000}k` : `${f}`;
+                ctx.fillText(label, x + 2, h - 4);
+            });
+
+            // Draw Gain Grid Lines (0 dB, +6 dB, -6 dB, +12 dB, -12 dB, -18 dB)
+            const dbLevels = [12, 6, 0, -6, -12, -18];
+            dbLevels.forEach(db => {
+                const y = h / 2 - (db / 24) * (h / 2);
+                ctx.beginPath();
+                ctx.strokeStyle = (db === 0) ? "#30363d" : "#21262d";
+                ctx.lineWidth = (db === 0) ? 1.5 : 1;
+                ctx.moveTo(0, y);
+                ctx.lineTo(w, y);
+                ctx.stroke();
+
+                ctx.fillStyle = (db === 0) ? "#8b949e" : "#484f58";
+                ctx.font = "10px monospace";
+                ctx.fillText(`${db > 0 ? '+' : ''}${db}dB`, 10, y - 2);
+            });
+
+            // Draw Active Band Guide Lines (Bandwidth & Center Frequency Marker)
+            const activeGuideIdx = (draggedBandIdx !== -1) ? draggedBandIdx : hoveredBandIdx;
+            if (activeGuideIdx >= 0 && activeGuideIdx < activeBands.length) {
+                const b = activeBands[activeGuideIdx];
+                const nx = freqToX(b.freq);
+                const guideColor = BAND_COLORS[activeGuideIdx % BAND_COLORS.length];
+
+                // Faint vertical center line
+                ctx.save();
+                ctx.strokeStyle = guideColor;
+                ctx.lineWidth = 1;
+                ctx.setLineDash([3, 3]);
+                ctx.beginPath();
+                ctx.moveTo(nx, 0);
+                ctx.lineTo(nx, h);
+                ctx.stroke();
+
+                // Bandwidth region for Peaking filters
+                if (b.type === 1 && b.q > 0.05) {
+                    const bwOctaves = 1.0 / b.q;
+                    const fLow = b.freq * Math.pow(2, -bwOctaves / 2);
+                    const fHigh = b.freq * Math.pow(2, bwOctaves / 2);
+                    const xLow = freqToX(fLow);
+                    const xHigh = freqToX(fHigh);
+
+                    ctx.fillStyle = "rgba(88, 166, 255, 0.05)";
+                    ctx.fillRect(xLow, 0, Math.max(2, xHigh - xLow), h);
+
+                    ctx.strokeStyle = "rgba(240, 246, 252, 0.15)";
+                    ctx.beginPath();
+                    ctx.moveTo(xLow, 0); ctx.lineTo(xLow, h);
+                    ctx.moveTo(xHigh, 0); ctx.lineTo(xHigh, h);
+                    ctx.stroke();
+                }
+                ctx.restore();
+            }
+
+            // Calculate Frequency Curve Points
+            const curvePoints = [];
+            for (let x = 0; x <= w; x++) {
+                const freq = 20 * Math.pow(1000, x / w);
+                let totalGain = preampDb;
+
+                activeBands.forEach(b => {
+                    if (b.type === 0 || b.gain === 0) return;
+                    const f0 = b.freq;
+                    const g = b.gain;
+                    const q = b.q;
+
+                    const ratio = freq / f0;
+                    const octDiff = Math.abs(Math.log2(ratio));
+                    const bandwidth = 1.0 / q;
+                    const effect = Math.exp(-Math.pow(octDiff / bandwidth, 2));
+
+                    if (b.type === 1) { // Peaking
+                        totalGain += g * effect;
+                    } else if (b.type === 2) { // Low Shelf
+                        if (freq <= f0) totalGain += g;
+                        else totalGain += g * effect;
+                    } else if (b.type === 3) { // High Shelf
+                        if (freq >= f0) totalGain += g;
+                        else totalGain += g * effect;
+                    }
+                });
+
+                const y = (h / 2) - (totalGain / 24.0) * (h / 2);
+                curvePoints.push({ x, y });
+            }
+
+            // Fill Area Under Curve
+            const zeroY = (h / 2) - (preampDb / 24.0) * (h / 2);
+            const grad = ctx.createLinearGradient(0, 0, 0, h);
+            grad.addColorStop(0, "rgba(88, 166, 255, 0.22)");
+            grad.addColorStop(1, "rgba(88, 166, 255, 0.02)");
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.moveTo(0, zeroY);
+            curvePoints.forEach(p => ctx.lineTo(p.x, p.y));
+            ctx.lineTo(w, zeroY);
+            ctx.closePath();
+            ctx.fill();
+
+            // Draw Frequency Curve Outline
+            ctx.strokeStyle = "#58a6ff";
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            curvePoints.forEach((p, idx) => {
+                if (idx === 0) ctx.moveTo(p.x, p.y);
+                else ctx.lineTo(p.x, p.y);
+            });
+            ctx.stroke();
+
+            // Draw Interactive Draggable Nodes
+            activeBands.forEach((b, i) => {
+                const nx = freqToX(b.freq);
+                const ny = gainToY(b.gain);
+                const color = BAND_COLORS[i % BAND_COLORS.length];
+                const isHovered = (i === hoveredBandIdx);
+                const isDragged = (i === draggedBandIdx);
+                const isBypassed = (b.type === 0);
+                const radius = (isHovered || isDragged) ? 10 : 8;
+
+                ctx.save();
+                if (isHovered || isDragged) {
+                    ctx.shadowColor = color;
+                    ctx.shadowBlur = 12;
+                }
+
+                ctx.beginPath();
+                ctx.arc(nx, ny, radius, 0, 2 * Math.PI);
+                if (isBypassed) {
+                    ctx.fillStyle = "#161b22";
+                    ctx.fill();
+                    ctx.strokeStyle = color;
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([2, 2]);
+                    ctx.stroke();
+                } else {
+                    ctx.fillStyle = color;
+                    ctx.fill();
+                    ctx.strokeStyle = "#ffffff";
+                    ctx.lineWidth = 1.5;
+                    ctx.stroke();
+                }
+                ctx.restore();
+
+                // Band Number Label Inside Node
+                ctx.fillStyle = isBypassed ? color : "#0b0e14";
+                ctx.font = "bold 9px -apple-system, BlinkMacSystemFont, sans-serif";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(`${i + 1}`, nx, ny);
+            });
+
+            // Draw Tooltip for Active/Hovered Node
+            if (activeGuideIdx >= 0 && activeGuideIdx < activeBands.length) {
+                const b = activeBands[activeGuideIdx];
+                const nx = freqToX(b.freq);
+                const ny = gainToY(b.gain);
+                const typeNames = ["Bypass", "Peaking", "Low Shelf", "High Shelf"];
+                const text = `Band ${activeGuideIdx + 1} (${typeNames[b.type]}): ${Math.round(b.freq)} Hz | ${b.gain >= 0 ? '+' : ''}${b.gain.toFixed(1)} dB | Q: ${b.q.toFixed(2)}`;
+
+                ctx.font = "11px -apple-system, BlinkMacSystemFont, sans-serif";
+                const textWidth = ctx.measureText(text).width;
+                const tipW = textWidth + 18;
+                const tipH = 22;
+                let tipX = nx - tipW / 2;
+                tipX = clamp(tipX, 8, w - tipW - 8);
+                let tipY = ny - 24;
+                if (tipY < 6) tipY = ny + 14;
+
+                ctx.save();
+                ctx.fillStyle = "rgba(13, 17, 23, 0.94)";
+                ctx.strokeStyle = BAND_COLORS[activeGuideIdx % BAND_COLORS.length];
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                if (ctx.roundRect) {
+                    ctx.roundRect(tipX, tipY, tipW, tipH, 4);
+                } else {
+                    ctx.rect(tipX, tipY, tipW, tipH);
+                }
+                ctx.fill();
+                ctx.stroke();
+
+                ctx.fillStyle = "#f0f6fc";
+                ctx.textAlign = "center";
+                ctx.textBaseline = "middle";
+                ctx.fillText(text, tipX + tipW / 2, tipY + tipH / 2);
+                ctx.restore();
+            }
+        }
+
+        renderBands();
+    </script>
+</body>
+</html>

@@ -1,0 +1,69 @@
+menu "ESP32-S3 Audio DSP/DAC Configuration"
+
+    menu "I2S Pin Configuration (PCM5102A DAC)"
+        config EXAMPLE_I2S_LCK_PIN
+            int "I2S LCK / LRCK / WS GPIO Pin"
+            default 4
+            help
+                GPIO connected to PCM5102A LCK (LRCK / Word Select). Default is GPIO 4.
+
+        config EXAMPLE_I2S_DIN_PIN
+            int "I2S DIN (Data Out from ESP32) GPIO Pin"
+            default 5
+            help
+                GPIO connected to PCM5102A DIN (Data In). Default is GPIO 5.
+
+        config EXAMPLE_I2S_BCK_PIN
+            int "I2S BCK / BCLK (Bit Clock) GPIO Pin"
+            default 6
+            help
+                GPIO connected to PCM5102A BCK (Bit Clock). Default is GPIO 6.
+
+        config EXAMPLE_DAC_MUTE_PIN
+            int "DAC Soft Mute (XMST) GPIO Pin"
+            default 7
+            help
+                GPIO connected to PCM5102A XMST (Active-LOW soft mute). Default is GPIO 7.
+    endmenu
+
+    menu "I2C Display Configuration (SSD1306 OLED)"
+        config EXAMPLE_I2C_SDA_PIN
+            int "I2C SDA GPIO Pin"
+            default 8
+            help
+                GPIO connected to OLED SDA. Default is GPIO 8.
+
+        config EXAMPLE_I2C_SCL_PIN
+            int "I2C SCL GPIO Pin"
+            default 9
+            help
+                GPIO connected to OLED SCL. Default is GPIO 9.
+    endmenu
+
+    menu "Hardware Controls Configuration (EC11 Encoder & Mode Button)"
+        config EXAMPLE_ENC_A_PIN
+            int "Rotary Phase A GPIO Pin"
+            default 15
+            help
+                GPIO connected to EC11 Phase A. Default is GPIO 15.
+
+        config EXAMPLE_ENC_B_PIN
+            int "Rotary Phase B GPIO Pin"
+            default 16
+            help
+                GPIO connected to EC11 Phase B. Default is GPIO 16.
+
+        config EXAMPLE_ENC_SW_PIN
+            int "Rotary Push SW GPIO Pin"
+            default 17
+            help
+                GPIO connected to EC11 push switch. Default is GPIO 17.
+
+        config EXAMPLE_BTN_MODE_PIN
+            int "Tactile Mode Button GPIO Pin"
+            default 18
+            help
+                GPIO connected to mode button. Default is GPIO 18.
+    endmenu
+
+endmenu
