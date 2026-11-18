@@ -46,16 +46,23 @@ jobs:
           gradle testDebugUnitTest lintDebug assembleDebug --no-daemon
 
       - name: Build Signed Release APK (when keystore secrets configured)
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        id: release_apk
         working-directory: tools/android_companion
         env:
+          ANDROID_KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/ascendance-release.jks
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
         run: |
-          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$ANDROID_KEYSTORE_PATH"
-          gradle assembleRelease --no-daemon
+          if [ -n "$ANDROID_KEYSTORE_B64" ]; then
+            echo "$ANDROID_KEYSTORE_B64" | base64 -d > "$ANDROID_KEYSTORE_PATH"
+            gradle assembleRelease --no-daemon
+            echo "signed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping signed release APK (ANDROID_KEYSTORE_BASE64 secret not set)."
+          fi
 
       - name: Upload Debug APK Artifact
         uses: actions/upload-artifact@v4
@@ -64,7 +71,7 @@ jobs:
           path: tools/android_companion/app/build/outputs/apk/debug/*.apk
 
       - name: Upload Signed Release APK Artifact
-        if: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
+        if: steps.release_apk.outputs.signed == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: ascendance-android-companion-release
