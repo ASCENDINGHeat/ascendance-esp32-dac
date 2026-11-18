@@ -1,4 +1,4 @@
-const CACHE_NAME = 'ascendance-webhid-tuner-v2';
+const CACHE_NAME = 'ascendance-webhid-tuner-v3';
 const ASSETS = [
   './',
   './index.html',

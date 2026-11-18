@@ -198,7 +198,7 @@ private fun AscendanceCompanionApp(viewModel: DacViewModel) {
                         Text(if (state.abBypass) "A/B: BYP" else "A/B", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                     Spacer(Modifier.width(6.dp))
-                    // Quick Connect or Save NVS
+                    // Quick Connect or Save to DAC
                     if (state.usbInfo.connected) {
                         FilledTonalButton(
                             onClick = { viewModel.saveToHardwareNvs() },
@@ -211,7 +211,7 @@ private fun AscendanceCompanionApp(viewModel: DacViewModel) {
                         ) {
                             Icon(Icons.Outlined.Save, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("NVS", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            Text("Save", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                         }
                     } else {
                         FilledTonalButton(

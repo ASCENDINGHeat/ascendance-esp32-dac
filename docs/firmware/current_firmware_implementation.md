@@ -162,15 +162,15 @@ When parameters, channel mode, matrix/crossfeed, or A/B bypass state change:
    $$y[n] = (1.0 - \beta) \cdot y_{\text{active}}[n] + \beta \cdot y_{\text{target}}[n], \quad \beta \in [0.0, 1.0]$$
 3. **Preamp-Normalized Instant A/B Bypass:** `peq_dsp_set_ab_bypass()` toggles flat EQ comparison across the 15 ms crossfade while keeping `preamp_gain_db` engaged so A vs. B remains loudness-matched (transient only, never persisted to NVS).
 
-### 4.4 Saturation Protection, Lookahead Limiter, Equal Loudness & FIR (`v0.2.0`)
+### 4.4 Saturation Protection, True-Peak Limiter, Equal Loudness & FIR (`v0.2.0`)
 * **Pre-Gain Headroom:** Pre-attenuates digital input ($0.0\text{ to }-12.0\text{ dB}$) to prevent positive EQ boost stages from exceeding $0\text{ dBFS}$.
-* **Lookahead True-Peak Limiter & Soft Clipper:** `1.5 ms` circular stereo delay buffer (`LA_MAX_FRAMES = 144` frames @ 96 kHz), `-0.5 dBFS` (`7918595.0f`) ceiling with `0.4 ms` attack / `100 ms` release envelope, followed by asymptotic soft-knee saturation above `-0.2 dBFS` (`8196846.0f`) ahead of `clamp_s24_to_s32()`.
-* **Fletcher-Munson Equal-Loudness Contour:** Modes `0=Off`, `1=ISO Mild` (`+4.0 dB` @ 80 Hz / `+1.5 dB` @ 10 kHz), `2=ISO Full` (`+6.5 dB` / `+2.5 dB`), dynamically scaled when master volume `< 80%` and defeated cleanly during A/B bypass.
-* **ESP-DSP SIMD FIR Convolution:** `dsps_fir_f32` / PIE SIMD convolution with sample-rate adaptive tap limit (`256` taps/ch @ `44.1 / 48 kHz`, `128` taps/ch @ `96 kHz`) stored in 16-byte aligned internal DRAM and NVS keys `fir_taps_l`/`fir_taps_r`.
+* **True-Peak Limiter & Soft Clipper:** `1.5 ms` lookahead circular stereo delay buffer (`LA_MAX_FRAMES = 144` frames @ 96 kHz), `-0.5 dBFS` (`7918595.0f`) ceiling with `0.4 ms` attack / `100 ms` release envelope, followed by asymptotic soft-knee saturation above `-0.2 dBFS` (`8196846.0f`) ahead of `clamp_s24_to_s32()`.
+* **Equal Loudness (ISO 226):** Modes `0=Off`, `1=ISO Mild` (`+4.0 dB` @ 80 Hz / `+1.5 dB` @ 10 kHz), `2=ISO Full` (`+6.5 dB` / `+2.5 dB`), dynamically scaled when master volume `< 80%` and defeated cleanly during A/B bypass.
+* **FIR Impulse Filter (`esp-dsp`):** Hardware PIE-accelerated `dsps_fir_f32` convolution with sample-rate adaptive tap limit (`256` taps/ch @ `44.1 / 48 kHz`, `128` taps/ch @ `96 kHz`) stored in 16-byte aligned internal DRAM and NVS keys `fir_taps_l`/`fir_taps_r`.
 
-### 4.5 8-Slot Editable NVS v3 User Profiles
-All hardcoded factory presets (`Flat`, `Bass Boost`, `Harman`) have been removed in `v0.2.0`. The firmware initializes **8 fully editable, custom-named NVS v3 user slots (`Slot 0..7`)** (`peq_slot_0`..`peq_slot_7` + global `nvs_meta_v3` in namespace `audio_peq`):
-* On clean boot or `peq_dsp_reset_slot_to_flat()`, all 8 slots seed to **Reference Flat** (`"User 1"`..`"User 8"`, 5 ISO bands @ `0.0 dB`).
+### 4.5 8 Editable DAC Presets (`NVS v3`, `Slot 1`–`Slot 8`)
+All hardcoded factory presets (`Flat`, `Bass Boost`, `Harman`) have been removed in `v0.2.0`. The firmware initializes **8 fully editable, custom-named DAC preset slots (`Slot 0..7`)** (`peq_slot_0`..`peq_slot_7` + global `nvs_meta_v3` in namespace `audio_peq`):
+* On clean boot or `peq_dsp_reset_slot_to_flat()`, all 8 slots seed to **Reference Flat** (`"Slot 1"`..`"Slot 8"`, 5 ISO bands @ `0.0 dB`).
 * Legacy `v0.1.0` NVS v2 (`user_cfg_v2`) or V1 (`user_profile`) blobs automatically migrate into `Slot 0`. Every write uses CRC32 + `memcmp` delta verification to eliminate redundant flash wear.
 
 ---
@@ -225,28 +225,28 @@ The system coordinates three operational audio modes using the **4-Phase Zero-Po
 Implemented in [`main/controls.c`](../../main/controls.c), [`main/oled_display.c`](../../main/oled_display.c), and [`main/main.c`](../../main/main.c).
 
 ### 7.1 Physical Controls & SSD1306 OLED Engine (Core 0)
-* **I2C Auto-Probe, Hot-Plug & Burn-In Guard:** Auto-probes `0x3C` / `0x3D` (`10 ms` I2C timeout) with non-blocking `2 s` reconnect probe, `60 s` contrast dimmer (`0x81 0x1F`) + `±1 px` periodic shift, and `180 s` idle blank (`0xAE`).
-* **Cycleable Playback Visualizers (`OLED_VIEW_*`):** `0=HUD` (Classic), `1=CURVE` (`128×28` response plot), `2=VU` (dual horizontal Peak/RMS + `300 ms` peak hold + `CLIP`/`LIM` flags), `3=SPLIT` (`94 px` curve + `30 px` vertical VU).
+* **I2C Auto-Probe, Hot-Plug & Burn-In Guard:** Auto-probes `0x3C` / `0x3D` (`10 ms` I2C timeout) with non-blocking `2 s` reconnect probe, `60 s` contrast dimmer (`0x81 0x1F`) + `±1 px` periodic shift, and `180 s` idle sleep (`0xAE`).
+* **Cycleable OLED Screen Views (`OLED_VIEW_*`):** `0=Classic` (HUD), `1=EQ Curve` (`128×28` response plot), `2=VU Meters` (dual horizontal Peak/RMS + `300 ms` peak hold + `CLIP`/`LIM` flags), `3=Split` (`94 px` curve + `30 px` vertical VU).
 
 #### 1. Default Playback Mode (Normal Operation)
 * **Rotary Rotation (GPIO 15/16):** Adjusts master volume in $\pm 2\%$ increments with instant HUD overlay and dynamic WS2812B scaling.
-* **Encoder Push Switch (GPIO 17):** Short Click toggles Master Mute; Double-Click commits active slot & dynamics to NVS v3; Long Press (`>800 ms`) cycles audio source.
-* **Button 1 (GPIO 18 / ◄ / SW6):** Short Click opens Main Menu; Long Press cycles NVS v3 slots backward (`Slot 7`..`0`).
-* **Button 2 (GPIO 10 / ► / SW_NAV2):** Short Click cycles NVS v3 slots forward (`Slot 0`..`7`); Double-Click cycles OLED Playback Visualizer (`HUD -> Curve -> VU -> Split`).
+* **Encoder Push Switch (GPIO 17):** Short Click toggles Master Mute; Double-Click commits active slot & dynamics to DAC flash (`Save to DAC`); Long Press (`>800 ms`) cycles active audio input.
+* **Button 1 (GPIO 18 / ◄ / SW6):** Short Click opens Main Menu; Long Press cycles DAC preset slots backward (`Slot 8`..`1`).
+* **Button 2 (GPIO 10 / ► / SW_NAV2):** Short Click cycles DAC preset slots forward (`Slot 1`..`8`); Double-Click cycles **OLED Screen View** (`Classic -> EQ Curve -> VU Meters -> Split`).
 
 #### 2. Main Menu Navigation Mode (11 Items)
-* **Rotary Rotation / Button 2 (►):** Scrolls through all 11 options (`1. Live EQ Adjust`, `2. Slot:<Name>`, `3. A/B:<Active/Bypass>`, `4. Xfeed:<Off/Low/High>`, `5. Loud:<Off/Mild/Full>`, `6. Limiter:<On/Off>`, `7. OLED:<HUD/Curve/VU/Split>`, `8. Preamp:<dB>`, `9. Src:<Source>`, `10. Save to NVS`, `11. Exit Menu`).
-* **Encoder Switch (GPIO 17):** Confirms/cycles highlighted item; Long Press commits immediately to NVS v3.
+* **Rotary Rotation / Button 2 (►):** Scrolls through all 11 options (`1. Live EQ Adjust`, `2. Slot:<Name>`, `3. A/B:<Active/Bypass>`, `4. Crossfeed:<Off/Low/High>`, `5. Loudness:<Off/Mild/Full>`, `6. Limiter:<On/Off>`, `7. View:<Classic/Curve/VU/Split>`, `8. Preamp:<dB>`, `9. Input:<Source>`, `10. Save to DAC`, `11. Exit Menu`).
+* **Encoder Switch (GPIO 17):** Confirms/cycles highlighted item; Long Press saves immediately to DAC (`"Saved to DAC"`).
 * **Button 1 (◄):** Exits menu back to Playback Mode.
 
-#### 3. On-Device Live EQ Adjust Mode (Digit-by-Digit Laboratory Synthesizer / PEQ Tuner)
+#### 3. On-Device Live EQ Adjust Mode (Digit-by-Digit PEQ Tuner)
 Triggered by selecting **"1. Live EQ Adjust"** in the Main Menu:
 * **Layout on SSD1306 OLED (128x64):**
   - **Line 0:** `BND:[3]/5  [PEAK]` (Active band index, total band count, filter type: `[BYP ]`, `[PEAK]`, `[L-SH]`, `[H-SH]`, `[HPF ]`, `[LPF ]`, `[NTCH]`, `[BPF ]`).
   - **Line 1:** `FREQ:  0 1 0 0 0  Hz` (5 individual selectable digits: 10k, 1k, 100, 10, 1).
   - **Line 2:** `GAIN:  + 0 4 . 5  dB` (Selectable Sign `+`/`-`, Tens, Ones, Tenths).
   - **Line 3:** `Q   :  0 1 . 4 1` (Selectable Integer, Tenths, Hundredths).
-  - **Line 4:** `< >:Move  Rot:0-9` (Status & navigation hint).
+  - **Line 4:** `< >:Move  Turn:0-9` (Status & navigation hint).
   - **Line 5:** Bottom Action Toolbar: `[+B]  [-B]  [SAVE] [EXIT]`
 * **Navigation & Adjustment Matrix:**
   - **Button 1 (GPIO 18 / ◄):** Moves cursor Left across fields, digits, and toolbar items.
@@ -258,8 +258,8 @@ Triggered by selecting **"1. Live EQ Adjust"** in the Main Menu:
     - When on **Sign**: Toggles `+` and `-` and enables the band.
     - When on **Toolbar**: Rotates highlighted toolbar action (`[+B]`, `[-B]`, `[SAVE]`, `[EXIT]`).
   - **Encoder Switch (GPIO 17):**
-    - **Short Click:** If on a toolbar action, triggers it (`+B` adds band, `-B` removes band, `SAVE` commits to NVS, `EXIT` returns to playback). If on a parameter, rapidly jumps to the next section (`Band` $\rightarrow$ `Freq` $\rightarrow$ `Gain` $\rightarrow$ `Q` $\rightarrow$ `Toolbar`).
-    - **Long Press ($>800\text{ ms}$):** **Instant Save to NVS** (commits to flash with auto-dismissing `"SAVED TO NVS!"` popup).
+    - **Short Click:** If on a toolbar action, triggers it (`+B` adds band, `-B` removes band, `SAVE` commits to DAC, `EXIT` returns to playback). If on a parameter, rapidly jumps to the next section (`Band` $\rightarrow$ `Freq` $\rightarrow$ `Gain` $\rightarrow$ `Q` $\rightarrow$ `Toolbar`).
+    - **Long Press ($>800\text{ ms}$):** **Instant Save to DAC** (commits to flash with auto-dismissing `"SAVED TO DAC!"` popup).
   - **Button 1 Long Press ($>800\text{ ms}$):** **Cancel & Revert** (discards all unsaved session changes and restores previous profile).
   - **Button 1 Double Click:** Direct shortcut to **Remove Band** (`[-B]`).
   - **Button 2 Double Click:** Direct shortcut to **Add Band** (`[+B]`).
@@ -268,8 +268,8 @@ Triggered by selecting **"1. Live EQ Adjust"** in the Main Menu:
 ### 7.2 SSD1306 128x64 Monochrome OLED Display Modes
 * Driven over I2C Master (SDA=GPIO 8, SCL=GPIO 9) at 400 kHz with non-blocking 10 FPS rendering task on Core 0.
 * **Supported Screen Modes:**
-  1. **Playback Mode:** Dynamic source badge (`USB DAC`, `Synth`, `Sweep`), dynamic bit depth/sample rate (`44.1k 24b`, `48.0k 24b`, `96.0k 24b` updated via `oled_display_set_sample_rate()`), track title, subtitle, volume progress bar, transient volume/status overlay popups, and persistent footer `EQ:` preset label.
-  2. **Main Menu Mode:** 4-row scrolling viewport with highlighted selection bar, active preset name, current source, preamp gain readout, and navigation footer.
+  1. **Playback Mode:** Dynamic source badge (`USB DAC`, `Synth`, `Sweep`), dynamic bit depth/sample rate (`44.1k 24b`, `48.0k 24b`, `96.0k 24b` updated via `oled_display_set_sample_rate()`), headline `"ASCENDANCE Hi-Fi"`, subtitle, volume progress bar, transient volume/`<< EQ SLOT >>` overlay popups, and persistent footer slot label (`Slot 1`).
+  2. **Main Menu Mode:** 4-row scrolling viewport with highlighted selection bar, active preset name, current input, preamp gain readout, and navigation footer (`Turn:Move  Click:OK`).
   3. **Live EQ Adjust Mode:** Full-screen digit-by-digit editor supporting all 8 filter types (`BYP`, `PEAK`, `L-SH`, `H-SH`, `HPF`, `LPF`, `NTCH`, `BPF`), unified integer rounding for Gain and Q (`Q = 10.00`), and bottom action buttons.
 
 ### 7.3 Onboard WS2812B aRGB LED Volume Loudness Indicator
@@ -291,15 +291,16 @@ Implemented in [`main/led_indicator.c`](../../main/led_indicator.c) and [`main/l
 
 ## 8. Driverless WebHID Live Tuner & Offline PWA
 
-Location: [`tools/webhid_tuner/`](../../tools/webhid_tuner/) (`index.html`, `manifest.json`, `sw.js`, `icon.svg`).
+Location: [`tools/webhid_tuner/`](../../tools/webhid_tuner/) (`src/`, `public/manifest.json`, `public/sw.js`, `public/icon.svg`, Vite + React build outputting standalone `dist/index.html`).
 
-* **Zero-Driver / PWA Architecture:** Runs client-side in Google Chrome, Microsoft Edge, Brave, Opera, or Android Chrome via `navigator.hid`, with offline service worker installation (`manifest.json`, `sw.js`, guarded when `location.protocol !== 'file:'`).
+* **Zero-Driver / PWA Architecture:** Runs client-side in Google Chrome, Microsoft Edge, Brave, Opera, or Android Chrome via `navigator.hid`, with offline service worker installation (`public/manifest.json`, `public/sw.js`, guarded when `location.protocol !== 'file:'`) and `vite-plugin-singlefile` self-contained builds (`npm run build` -> `dist/index.html`).
 * **Interactive HTML5 Canvas Response, Phase & Group Delay Graph:**
-  - **Exact RBJ Evaluation:** Computes cascaded complex transfer function magnitude (`dB`), Phase (`-180°..+180°`), and Group Delay (`ms`) across all 8 filter topologies (`0..7`).
+  - **Frequency Response Visualizer:** Computes cascaded complex transfer function magnitude (`dB`), Phase (`-180°..+180°`), and Group Delay (`ms`) across all 8 filter topologies (`0..7`).
   - **Draggable Nodes, Wheel Q, Double-Click:** Drag center frequency ($20\text{ Hz}\dots 20\text{ kHz}$) & gain ($-24.0\dots +12.0\text{ dB}$), scroll for `Q` ($0.10\dots 10.00$), double-click to reset or add bands.
-* **Dual-Mono L/R PEQ, A/B Toggle & 2×2 Matrix/Crossfeed:** Switch between Linked Stereo and Left/Right tabs, toggle Preamp-Normalized A/B Bypass (`0x08`), adjust Balance, Mid-Side Width (`0–200%`), Custom `2×2` Matrix, and Chu Moy Crossfeed (`Off/Mild/Medium`).
+* **Dual-Mono L/R PEQ, A/B Toggle, Channel Matrix & Crossfeed:** Switch between Linked Stereo and Left/Right tabs, toggle Preamp-Normalized A/B Bypass (`0x08`), adjust Balance, M/S Stereo Width (`0–200%`), **Custom Channel Matrix**, and **Headphone Crossfeed (Chu Moy)** (`Off/Low/High`).
+* **Dynamics, FIR Impulse Filter & Power Settings:** Configure **True-Peak Limiter**, **Equal Loudness (ISO 226)**, **FIR Impulse Filter** (`.txt` / `.csv` / `.wav`), **OLED Screen View**, **Auto-Mute on Silence**, and **OLED Auto-Dim & Sleep**.
 * **Equalizer APO / AutoEQ `.txt` & `.json` Import/Export:** Imports/exports standard Equalizer APO filter files (`PK`, `LSC`, `HSC`, `HPQ`, `LPQ`, `NO`, `BP`) and full Dual-Mono/Matrix JSON backups.
-* **Volatile Auditioning:** Streams live updates into volatile SRAM with **0 flash wear**; commits to NVS v2 (`user_cfg_v2`) only on explicit "Save to Hardware NVS".
+* **Live Preview Tuning:** Streams live updates in volatile memory with **0 flash wear**; commits to NVS (`nvs_meta_v3` / `peq_slot_0..7`) only on explicit **Save to DAC**.
 
 ---
 
@@ -307,8 +308,8 @@ Location: [`tools/webhid_tuner/`](../../tools/webhid_tuner/) (`index.html`, `man
 
 * **Build Tool:** ESP-IDF v6.1 (`idf.py build`).
 * **Automated CI & Releases:**
-  - [`.github/workflows/build.yml`](../../.github/workflows/build.yml): Builds ESP32-S3 firmware inside `espressif/idf:v6.1`, generates `ASCENDANCE_merged.bin`, reports `idf.py size` in the job summary, uploads build artifacts, and runs `node --check` on `tools/webhid_tuner/index.html`.
-  - [`.github/workflows/release.yml`](../../.github/workflows/release.yml): Builds tagged firmware images and packages the WebHID tuner into a GitHub Release on `v*` tags.
+  - [`.github/workflows/build.yml`](../../.github/workflows/build.yml): Builds ESP32-S3 firmware inside `espressif/idf:v6.1`, generates `ASCENDANCE_merged.bin`, reports `idf.py size` in the job summary, uploads firmware artifacts, runs Vitest & Vite single-file build (`dist/index.html`) for `tools/webhid_tuner`, validates the compiled script via `node --check`, and uploads `ascendance-webhid-tuner`.
+  - [`.github/workflows/release.yml`](../../.github/workflows/release.yml): Builds tagged firmware images, Android APK, and single-file WebHID tuner HTML (`dist/index.html`) into a GitHub Release on `v*` tags.
 * **Compiler Flags (`CMakeLists.txt`) & RTOS Config (`sdkconfig.defaults`):**
   ```cmake
   CFG_TUD_AUDIO=1

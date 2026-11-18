@@ -87,7 +87,7 @@ class AscendanceUsbTransport(context: Context) {
                 UsbManager.ACTION_USB_DEVICE_ATTACHED -> {
                     val device: UsbDevice? = getUsbDeviceExtra(intent)
                     if (device != null && isMatchingDac(device)) {
-                        log("Detected attached ESP32-S3 DAC (${device.productName ?: "USB Audio+HID"}). Connecting...")
+                        log("Detected attached ASCENDANCE DAC (${device.productName ?: "USB Audio"}). Connecting...")
                         connectOrRequestPermission(device)
                     }
                 }
@@ -123,7 +123,7 @@ class AscendanceUsbTransport(context: Context) {
     fun scanAndConnect() {
         val candidate = usbManager.deviceList.values.firstOrNull { isMatchingDac(it) }
         if (candidate == null) {
-            log("No ESP32-S3 DAC (0x303A:0x4002) found on USB OTG bus.")
+            log("No ASCENDANCE DAC found on USB.")
             return
         }
         connectOrRequestPermission(candidate)
@@ -155,7 +155,7 @@ class AscendanceUsbTransport(context: Context) {
 
         val hidIntf = findHidInterface(device)
         if (hidIntf == null) {
-            log("Error: Device exposes no USB HID interface (UAC interfaces 0/1 remain OS-managed).")
+            log("Error: Device has no USB control interface.")
             return
         }
 
@@ -169,13 +169,13 @@ class AscendanceUsbTransport(context: Context) {
 
         val conn = usbManager.openDevice(device)
         if (conn == null) {
-            log("Error: UsbManager.openDevice() returned null.")
+            log("Error: Failed to open USB device.")
             return
         }
 
         // Claim ONLY Interface 2 (HID) so Android kernel snd-usb-audio continues playing UAC 1.0 audio.
         if (!conn.claimInterface(hidIntf, true)) {
-            log("Error: Failed to claim HID interface ${hidIntf.id}.")
+            log("Error: Failed to claim control interface #${hidIntf.id}.")
             conn.close()
             return
         }
@@ -189,7 +189,7 @@ class AscendanceUsbTransport(context: Context) {
         _connectionInfo.value = UsbConnectionInfo(
             connected = true,
             deviceName = device.deviceName,
-            productName = device.productName ?: "ESP32-S3 Hi-Fi DSP DAC",
+            productName = device.productName ?: "ASCENDANCE Hi-Fi DAC",
             vendorId = device.vendorId,
             productId = device.productId,
             hidInterfaceId = hidIntf.id,

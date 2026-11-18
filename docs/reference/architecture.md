@@ -12,7 +12,7 @@
 
 This project implements an audiophile-grade, driverless **USB Audio Class 1.0 (UAC 1.0) DAC and Real-Time DSP Audio Processor** using the **YD-ESP32-S3 (N16R8)** development board. Digital audio streams at 48,000 Hz / 16-bit stereo PCM are received over the Native USB OTG port, processed through a **dynamic 1-to-10 band Parametric Equalizer (PEQ)** with **click-free double-buffered linear crossfading**, and transmitted over an I2S digital audio bus into a **Texas Instruments GY-PCM5102A 32-bit DAC**. The ground-centered analog output is boosted by an onboard **NXP/Philips TDA1308 Class-AB headphone amplifier** to drive headphones from 16 Ω to 600 Ω.
 
-Simultaneously, the device provides an on-device **SSD1306 128x64 OLED display**, hardware **EC11 rotary encoder**, tactile mode pushbutton, and a **driverless WebHID live tuner web application** (`tools/webhid_tuner/index.html`) allowing 60 FPS real-time parametric curve editing inside standard web browsers over the same USB-C cable.
+Simultaneously, the device provides an on-device **SSD1306 128x64 OLED display**, hardware **EC11 rotary encoder**, tactile mode pushbutton, and a **driverless WebHID live tuner web application** (`tools/webhid_tuner/`, modular React + Vite built into standalone `dist/index.html`) allowing 60 FPS real-time parametric curve editing inside standard web browsers over the same USB-C cable.
 
 ---
 

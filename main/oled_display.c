@@ -591,7 +591,7 @@ static void render_playback_screen(void)
             break;
         case OLED_VIEW_HUD:
         default:
-            oled_draw_string(2, 16, state.title[0] ? state.title : "ESP32-S3 Audio DSP", false);
+            oled_draw_string(2, 16, state.title[0] ? state.title : "ASCENDANCE Hi-Fi", false);
             oled_draw_string(2, 28, state.subtitle[0] ? state.subtitle : "Active", false);
             oled_draw_progress_bar(2, 40, 124, 6, state.volume);
             break;
@@ -601,7 +601,7 @@ static void render_playback_screen(void)
     // 3. Footer (y: 52..63)
     oled_draw_hline(0, 50, OLED_WIDTH, true);
     char footer_eq[24];
-    snprintf(footer_eq, sizeof(footer_eq), "%.14s", state.eq_preset[0] ? state.eq_preset : "User 1");
+    snprintf(footer_eq, sizeof(footer_eq), "%.14s", state.eq_preset[0] ? state.eq_preset : "Slot 1");
     oled_draw_string(0, 54, footer_eq, false);
 
     const char *status_str = state.is_muted ? "MUTE" : (state.is_playing ? "PLAY" : "IDLE");
@@ -634,7 +634,7 @@ static void render_menu_screen(void)
 
     const char *xf_names[3]   = { "Off", "Low", "High" };
     const char *loud_names[3] = { "Off", "Mild", "Full" };
-    const char *view_names[4] = { "HUD", "Curve", "VU", "Split" };
+    const char *view_names[4] = { "Classic", "Curve", "VU", "Split" };
 
     char line_buf[64];
     for (int i = 0; i < 4; i++) {
@@ -647,19 +647,19 @@ static void render_menu_screen(void)
             break;
         case MENU_ITEM_EQ_PRESET:
             snprintf(line_buf, sizeof(line_buf), "2. Slot:%.12s",
-                     menu.current_preset[0] ? menu.current_preset : "User 1");
+                     menu.current_preset[0] ? menu.current_preset : "Slot 1");
             break;
         case MENU_ITEM_AB_BYPASS:
             snprintf(line_buf, sizeof(line_buf), "3. A/B:%s", menu.ab_bypass ? "Bypass" : "Active");
             break;
         case MENU_ITEM_CROSSFEED: {
             uint8_t xf = (menu.crossfeed_level < 3) ? menu.crossfeed_level : 0;
-            snprintf(line_buf, sizeof(line_buf), "4. Xfeed:%s", xf_names[xf]);
+            snprintf(line_buf, sizeof(line_buf), "4. Crossfeed:%s", xf_names[xf]);
             break;
         }
         case MENU_ITEM_LOUDNESS: {
             uint8_t ld = (menu.loudness_mode < 3) ? menu.loudness_mode : 0;
-            snprintf(line_buf, sizeof(line_buf), "5. Loud:%s", loud_names[ld]);
+            snprintf(line_buf, sizeof(line_buf), "5. Loudness:%s", loud_names[ld]);
             break;
         }
         case MENU_ITEM_LIMITER:
@@ -667,18 +667,18 @@ static void render_menu_screen(void)
             break;
         case MENU_ITEM_OLED_VIEW: {
             uint8_t vw = (menu.oled_view < 4) ? menu.oled_view : 0;
-            snprintf(line_buf, sizeof(line_buf), "7. OLED:%s", view_names[vw]);
+            snprintf(line_buf, sizeof(line_buf), "7. View:%s", view_names[vw]);
             break;
         }
         case MENU_ITEM_PREAMP_GAIN:
             snprintf(line_buf, sizeof(line_buf), "8. Preamp:%.1fdB", menu.preamp_gain_db);
             break;
         case MENU_ITEM_AUDIO_SOURCE:
-            snprintf(line_buf, sizeof(line_buf), "9. Src:%.12s",
+            snprintf(line_buf, sizeof(line_buf), "9. Input:%.11s",
                      menu.current_source[0] ? menu.current_source : "USB DAC");
             break;
         case MENU_ITEM_SAVE_NVS:
-            snprintf(line_buf, sizeof(line_buf), "10. Save to NVS");
+            snprintf(line_buf, sizeof(line_buf), "10. Save to DAC");
             break;
         case MENU_ITEM_EXIT:
             snprintf(line_buf, sizeof(line_buf), "11. Exit Menu");
@@ -700,7 +700,7 @@ static void render_menu_screen(void)
 
     // 3. Footer (y: 52..63)
     oled_draw_hline(0, 50, OLED_WIDTH, true);
-    oled_draw_string(2, 54, "Rot:Move  SW:Select", false);
+    oled_draw_string(2, 54, "Turn:Move  Click:OK", false);
 
     oled_flush();
 }
@@ -794,7 +794,7 @@ static void render_eq_adjust_screen(void)
     oled_draw_char(68, 31, '0' + q_dec2, eq.cursor == EQ_CURSOR_Q_DEC2);
 
     // 5. Hint text (y: 41..48)
-    oled_draw_string(2, 42, "< >:Move  Rot:0-9", false);
+    oled_draw_string(2, 42, "< >:Move  Turn:0-9", false);
 
     // 6. Action Toolbar (y: 52..63)
     oled_draw_hline(0, 50, OLED_WIDTH, true);
@@ -807,7 +807,7 @@ static void render_eq_adjust_screen(void)
     if (eq.saved_notification) {
         oled_draw_rect(14, 18, 100, 26, true, false); // clear black box
         oled_draw_rect(14, 18, 100, 26, false, true); // white border
-        oled_draw_string(22, 27, "SAVED TO NVS!", false);
+        oled_draw_string(25, 27, "SAVED TO DAC!", false);
     }
 
     oled_flush();
@@ -902,9 +902,9 @@ esp_err_t oled_display_init(void)
     memset(&s_current_state, 0, sizeof(s_current_state));
     snprintf(s_current_state.mode_str, sizeof(s_current_state.mode_str), "USB DAC");
     snprintf(s_current_state.sample_rate_str, sizeof(s_current_state.sample_rate_str), "48.0k 24b");
-    snprintf(s_current_state.title, sizeof(s_current_state.title), "ESP32-S3 Audio DSP");
-    snprintf(s_current_state.subtitle, sizeof(s_current_state.subtitle), "Ready / Standalone");
-    snprintf(s_current_state.eq_preset, sizeof(s_current_state.eq_preset), "User 1");
+    snprintf(s_current_state.title, sizeof(s_current_state.title), "ASCENDANCE Hi-Fi");
+    snprintf(s_current_state.subtitle, sizeof(s_current_state.subtitle), "Ready");
+    snprintf(s_current_state.eq_preset, sizeof(s_current_state.eq_preset), "Slot 1");
     s_current_state.volume = 50;
     s_current_state.is_playing = true;
 
@@ -927,7 +927,7 @@ esp_err_t oled_display_init(void)
     }
 
     memset(&s_current_menu_state, 0, sizeof(s_current_menu_state));
-    snprintf(s_current_menu_state.current_preset, sizeof(s_current_menu_state.current_preset), "User 1");
+    snprintf(s_current_menu_state.current_preset, sizeof(s_current_menu_state.current_preset), "Slot 1");
     snprintf(s_current_menu_state.current_source, sizeof(s_current_menu_state.current_source), "USB DAC");
     s_current_menu_state.limiter_enabled = peq_dsp_is_limiter_enabled();
     s_current_menu_state.loudness_mode = (uint8_t)peq_dsp_get_loudness_mode();

@@ -71,7 +71,7 @@ fun DeviceTab(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("USB OTG HID Transport", color = AscendanceColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    Text("USB Connection", color = AscendanceColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     Text(
                         text = if (state.usbInfo.connected) "CONNECTED" else "DISCONNECTED",
                         color = if (state.usbInfo.connected) AscendanceColors.AccentGreen else AscendanceColors.AccentRed,
@@ -91,13 +91,13 @@ fun DeviceTab(
                         fontSize = 12.sp
                     )
                     Text(
-                        text = "HID Interface #${info.hidInterfaceId} claimed • UAC Audio Interfaces #0/#1 left with Android Audio • EP OUT=${info.epOutAddress}, IN=${info.epInAddress}",
+                        text = "Control Interface #${info.hidInterfaceId} active • Android USB Audio untouched",
                         color = AscendanceColors.TextSecondary,
                         fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace
                     )
                     Text(
-                        text = "Active UAC Stream Format: ${
+                        text = "Active Audio Format: ${
                             String.format(Locale.US, "%.1f kHz / 24-bit", state.sampleRateHz / 1000.0f)
                         }",
                         color = AscendanceColors.AccentBlue,
@@ -106,7 +106,7 @@ fun DeviceTab(
                     )
                 } else {
                     Text(
-                        text = "Plug the ESP32-S3 DAC via USB-C OTG. Only HID Interface #2 is claimed so Spotify/Tidal/Android audio stays active over UAC.",
+                        text = "Connect your ASCENDANCE DAC via USB-C. Only the control interface is claimed so Android music playback stays uninterrupted.",
                         color = AscendanceColors.TextSecondary,
                         fontSize = 12.sp
                     )
@@ -120,7 +120,7 @@ fun DeviceTab(
                         Button(onClick = onSyncFromHardware, modifier = Modifier.weight(1f)) {
                             Icon(Icons.Outlined.Refresh, contentDescription = null, modifier = Modifier.size(16.dp))
                             Spacer(Modifier.width(4.dp))
-                            Text("Read DAC State", fontSize = 12.sp)
+                            Text("Sync from DAC", fontSize = 12.sp)
                         }
                     } else {
                         Button(onClick = onConnectUsb, modifier = Modifier.fillMaxWidth()) {
@@ -146,10 +146,10 @@ fun DeviceTab(
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                                 OutlinedButton(onClick = onPushDraftLive, modifier = Modifier.weight(1f)) {
-                                    Text("Push Live SRAM", fontSize = 11.sp)
+                                    Text("Preview Live", fontSize = 11.sp)
                                 }
                                 Button(onClick = onPushDraftAndSave, modifier = Modifier.weight(1f)) {
-                                    Text("Push & Save NVS", fontSize = 11.sp)
+                                    Text("Save to DAC", fontSize = 11.sp)
                                 }
                             }
                         }
@@ -162,7 +162,7 @@ fun DeviceTab(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Offline Demo / Edit Mode", color = AscendanceColors.TextPrimary, fontSize = 13.sp)
+                        Text("Offline Preview Mode", color = AscendanceColors.TextPrimary, fontSize = 13.sp)
                         Text("Design and preview curves without DAC attached", color = AscendanceColors.TextSecondary, fontSize = 11.sp)
                     }
                     Switch(
@@ -181,9 +181,9 @@ fun DeviceTab(
             border = BorderStroke(1.dp, AscendanceColors.BorderDark)
         ) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("OLED Display & Power Management (v0.2.0)", color = AscendanceColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                Text("Display & Power Settings", color = AscendanceColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
 
-                Text("Playback Screen Visualizer", color = AscendanceColors.TextSecondary, fontSize = 11.sp)
+                Text("OLED Screen View", color = AscendanceColors.TextSecondary, fontSize = 11.sp)
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     OledViewMode.entries.forEachIndexed { idx, view ->
                         SegmentedButton(
@@ -195,7 +195,7 @@ fun DeviceTab(
                     }
                 }
 
-                Text("Zero-Signal Auto-Mute (GPIO 7 Soft Mute)", color = AscendanceColors.TextSecondary, fontSize = 11.sp)
+                Text("Auto-Mute on Silence", color = AscendanceColors.TextSecondary, fontSize = 11.sp)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(0 to "Off", 10 to "10s", 30 to "30s", 60 to "60s").forEach { (sec, lbl) ->
                         FilterChip(
@@ -207,7 +207,7 @@ fun DeviceTab(
                     }
                 }
 
-                Text("OLED Burn-In Dimmer (Contrast 0x1F / 180s Blank)", color = AscendanceColors.TextSecondary, fontSize = 11.sp)
+                Text("OLED Auto-Dim & Sleep", color = AscendanceColors.TextSecondary, fontSize = 11.sp)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     listOf(0 to "Off", 60 to "60s", 120 to "120s").forEach { (sec, lbl) ->
                         FilterChip(
@@ -221,14 +221,14 @@ fun DeviceTab(
             }
         }
 
-        // Hardware Event Log
+        // Activity Log
         Surface(
             color = AscendanceColors.CardDark,
             shape = RoundedCornerShape(12.dp),
             border = BorderStroke(1.dp, AscendanceColors.BorderDark)
         ) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Text("USB & DSP Event Log", color = AscendanceColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                Text("Activity Log", color = AscendanceColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()

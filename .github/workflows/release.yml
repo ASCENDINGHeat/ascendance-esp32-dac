@@ -113,8 +113,17 @@ jobs:
           name: release-android
           path: release-assets
 
+      - name: Set up Node.js & Build WebHID Tuner
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: tools/webhid_tuner/package-lock.json
+
       - name: Package WebHID Tuner
-        run: cp tools/webhid_tuner/index.html release-assets/ascendance-webhid-tuner-${RELEASE_TAG}.html
+        run: |
+          (cd tools/webhid_tuner && npm ci && npm test && npm run build)
+          cp tools/webhid_tuner/dist/index.html release-assets/ascendance-webhid-tuner-${RELEASE_TAG}.html
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2

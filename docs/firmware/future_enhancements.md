@@ -238,7 +238,7 @@ For phase-linear minimum-phase target matching or room acoustic impulse correcti
 In `v0.1.0`, Slots `0..2` are hardcoded read-only factory presets (`Flat`, `Bass Boost`, `Harman`) and only Slot `3` (`User Custom`) is editable and persisted. In `v0.2.0`, **all hardcoded factory presets are removed** in favor of **8 fully editable, custom-named NVS user slots (`Slot 0..7`)**:
 
 * **Clean Default Initialization:**
-  - On first boot (or per-slot / full factory reset), **all 8 slots (`Slot 0..7`) initialize to Reference Flat (`0.0 dB`, 5 ISO bands, default names `"User 1"`..`"User 8"`)**.
+  - On first boot (or per-slot / full factory reset), **all 8 slots (`Slot 0..7`) initialize to Reference Flat (`0.0 dB`, 5 ISO bands, default names `"Slot 1"`..`"Slot 8"`)**.
   - Existing `v0.1.0` `user_cfg_v2` data automatically migrates into **`Slot 0`** on first `v0.2.0` boot.
 * **24 KB NVS Partition Budget:**
   ```c
@@ -313,10 +313,10 @@ The **SSD1306 128x64 Monochrome OLED Display** has sufficient spatial resolution
   4. **Split Curve + Compact VU:** Left `96 px` EQ response curve alongside right dual vertical L/R peak bars.
 * **Expanded Mode 2 Main Menu:**
   Expose on-device toggles without needing USB host tools:
-  - `2. Slot:<Name>` (cycles all 8 editable NVS v3 user slots)
-  - `A/B Bypass: <On/Off>` (instant preamp-normalized comparison)
-  - `Crossfeed: <Off/Low/High>` & `Loudness: <Off/Mild/Full>`
-  - `Limiter: <On/Off>` & `OLED View: <HUD/Curve/VU/Split>`
+  - `2. Slot:<Name>` (cycles all 8 editable DAC presets `Slot 1`–`Slot 8`)
+  - `3. A/B:<Active/Bypass>` (instant preamp-normalized comparison)
+  - `4. Crossfeed:<Off/Low/High>` & `5. Loudness:<Off/Mild/Full>`
+  - `6. Limiter:<On/Off>` & `7. View:<Classic/Curve/VU/Split>`
 
 ---
 
@@ -336,10 +336,10 @@ To prevent SSD1306 organic phosphor burn-in during multi-hour desktop DAC sessio
 
 ## 3. WebHID & Android Companion Client Tooling
 
-> **Implemented in `v0.1.0`:** Both [`tools/webhid_tuner/index.html`](../../tools/webhid_tuner/index.html) (Desktop Chromium PWA) and [`tools/android_companion/`](../../tools/android_companion/) (Native Kotlin + Jetpack Compose USB OTG HID-only companion app with pinch-to-Q Canvas, Offline Demo Mode, and Unlimited Local Phone Preset Library) implement Sections **3.1–3.3**. For `v0.2.0`, both clients will be extended with UI controls for the 8 NVS v3 named slots, Lookahead Limiter, Fletcher-Munson Loudness, chunked FIR impulse upload, and Power Config (`0x0A–0x14`).
+> **Implemented (`v0.1.0` & `v0.2.0`):** Both [`tools/webhid_tuner/`](../../tools/webhid_tuner/) (Modular React + Vite Desktop Chromium PWA) and [`tools/android_companion/`](../../tools/android_companion/) (Native Kotlin + Jetpack Compose USB control companion app with pinch-to-Q Canvas, **Offline Preview Mode**, and local phone profile library) implement Sections **3.1–3.3** plus full `v0.2.0` controls for **DAC Presets (1–8)**, **True-Peak Limiter**, **Equal Loudness (ISO 226)**, chunked **FIR Impulse Filter** upload, **OLED Screen View**, **Auto-Mute on Silence**, and **OLED Auto-Dim & Sleep** (`0x0A–0x14`).
 
 ### 3.1 AutoEQ & Equalizer APO Profile Import / Export
-The WebHID Tuner (`tools/webhid_tuner/index.html`) and Android Companion (`tools/android_companion/`) interface directly with standard community parametric equalization formats:
+The WebHID Tuner (`tools/webhid_tuner/`) and Android Companion (`tools/android_companion/`) interface directly with standard community parametric equalization formats:
 
 #### Import Support:
 * **Equalizer APO / Peace Format:** Parses standard multi-line parametric definitions:
@@ -402,12 +402,12 @@ Building directly on [`webhid_peq.h`](../../main/webhid_peq.h) commands `0x01..0
 | Command ID | Enum Symbol | Payload Layout (`64` Bytes) | Behavior |
 | :---: | :--- | :--- | :--- |
 | **`0x0A`** | `WEBHID_CMD_RENAME_SLOT` | `band_idx = slot (0..7)`, `reserved[0..15] = char name[16]` (NUL-terminated ASCII) | Updates active slot custom label on OLED/WebHID/Android |
-| **`0x0B`** | `WEBHID_CMD_SET_DYNAMICS` | `band_idx = limiter_en (0/1)`, `filter_type = loudness_mode (0..2)`, `enabled = fir_en (0/1)` | Toggles Lookahead Limiter, Fletcher-Munson Loudness, and FIR Convolution live (15 ms crossfade) |
-| **`0x0C`** | `WEBHID_CMD_SET_POWER_CFG` | `band_idx = auto_mute_sec (0..255)`, `filter_type = oled_dim_sec`, `enabled = oled_view (0..3)` | Configures Zero-Signal Auto-Mute, OLED Dimmer, and Playback Body View |
-| **`0x0D`** | `WEBHID_CMD_FACTORY_RESET_SLOT` | `band_idx = slot (0..7, or 0xFF for all 8 slots)` | Re-seeds target slot(s) to default Reference Flat and clears FIR taps |
-| **`0x14`** | `WEBHID_CMD_UPLOAD_FIR_CHUNK` | `band_idx = ch (1=L, 2=R)`, `filter_type = chunk_idx`, `enabled = total_chunks`, `freq_hz = total_taps`, `reserved[0..47] = 12 x float32 taps` | Streams 256/128-tap minimum-phase FIR impulse into volatile SRAM staging buffer |
+| **`0x0B`** | `WEBHID_CMD_SET_DYNAMICS` | `band_idx = view`, `filter_type = loudness`, `enabled = (limiter | (fir << 1))` | Toggles True-Peak Limiter, Equal Loudness (ISO 226), FIR Impulse Filter, and OLED Screen View live |
+| **`0x0C`** | `WEBHID_CMD_SET_POWER_CFG` | `freq_hz = auto_mute_sec`, `q_x100 = oled_dim_sec` | Configures Auto-Mute on Silence and OLED Auto-Dim & Sleep |
+| **`0x0D`** | `WEBHID_CMD_FACTORY_RESET_SLOT` | `band_idx = slot (0..7, or 0xFF for all 8 slots)` | Re-seeds target slot(s) to default Reference Flat (`"Slot N"`) |
+| **`0x14`** | `WEBHID_CMD_UPLOAD_FIR_CHUNK` | `band_idx = ch (1=L, 2=R)`, `filter_type = count`, `enabled = chunk_idx`, `freq_hz = total_taps`, `reserved[0..47] = 12 x float32 taps` | Streams 256/128-tap minimum-phase FIR impulse into volatile staging buffer |
 
-*(Note: `CMD_GET_ACTIVE_PROFILE (0x01)` response `reserved[14..17]` can report `limiter_en`, `loudness_mode`, `fir_en`, and `oled_view`, with `CMD_GET_ACTIVE_PROFILE` `band_idx = 0xFD` returning the active 16-byte slot name + slot count `8`.)*
+*(Note: `CMD_GET_ACTIVE_PROFILE (0x01)` with `band_idx = 0xFD` returns the active 16-byte slot name, dynamics flags, FIR tap counts, and power config.)*
 
 ---
 
@@ -420,13 +420,13 @@ Building directly on [`webhid_peq.h`](../../main/webhid_peq.h) commands `0x01..0
 | **Tri-Rate (44.1k, 48k, 96k)** | TinyUSB / Core 1 Reclock | Bit-perfect CD & Hi-Res playback with zero OS resampling | `v0.1.0` | **Implemented** |
 | **Dual-Mono L/R PEQ & NVS v2** | `peq_dsp.c` / WebHID / Android | Independent channel balance and CRC32 persistence | `v0.1.0` | **Implemented** |
 | **A/B Instant Toggle** | `peq_dsp.c` / WebHID / Android | Instant preamp-normalized comparison against bypass | `v0.1.0` | **Implemented** |
-| **Channel Matrix & Crossfeed** | `peq_dsp.c` / WebHID / Android | Stereo widening, mono downmix, and Chu Moy headphone crossfeed | `v0.1.0` | **Implemented** |
+| **Channel Matrix & Crossfeed** | `peq_dsp.c` / WebHID / Android | Stereo widening, mono downmix, and Headphone Crossfeed (Chu Moy) | `v0.1.0` | **Implemented** |
 | **AutoEQ / APO Import, PWA & Phase/GD** | `tools/webhid_tuner/` | One-click community headphone presets & complex curve plots | `v0.1.0` | **Implemented** |
-| **Native Android USB OTG Companion** | `tools/android_companion/` | HID-only mobile tuning alongside OS audio + local preset library | `v0.1.0` | **Implemented** |
-| **Lookahead Limiter & Soft-Clipper** | `peq_dsp.c` (1.5 ms lookahead) | -0.5 dBFS transient clip protection on heavy EQ boosts | `v0.2.0` | **Planned** |
-| **Fletcher-Munson Loudness Contour** | `peq_dsp.c` / `audio_pipeline.c` | Volume-coupled ISO 226 bass/air compensation for low SPLs | `v0.2.0` | **Planned** |
-| **ESP-DSP SIMD FIR Convolution** | `peq_dsp.c` (`esp-dsp`) | Adaptive 256-tap (48k) / 128-tap (96k) phase/room FIR engine | `v0.2.0` | **Planned** |
-| **8-Slot Editable NVS v3 Profiles** | `peq_dsp.c` / `main.c` / Apps | Replaces hardcoded factory presets with 8 flat-seeded named slots | `v0.2.0` | **Planned** |
-| **Cycleable OLED EQ Curve & VU Meter** | `oled_display.c` / `peq_dsp.c` | Toggleable 128×28 EQ plot, 300 ms Peak/RMS VU & Menu A/B/Xfeed | `v0.2.0` | **Planned** |
-| **OLED Hot-Plug, Dimmer & Burn-In Guard** | `oled_display.c` (`0x3C`/`0x3D`) | Non-blocking I2C recovery, 60 s dim, pixel shift & 180 s blank | `v0.2.0` | **Planned** |
-| **USB Suspend & 10s Silence Auto-Mute** | `webhid_peq.c` / `GPIO 7` | `<15 mA` USB suspend sleep & zero-signal analog silence mute | `v0.2.0` | **Planned** |
+| **Native Android Companion** | `tools/android_companion/` | Control-only mobile tuning alongside OS audio + local library | `v0.1.0` | **Implemented** |
+| **True-Peak Limiter & Soft-Clipper** | `peq_dsp.c` (1.5 ms lookahead) | -0.5 dBFS transient clip protection on heavy EQ boosts | `v0.2.0` | **Implemented** |
+| **Equal Loudness (ISO 226)** | `peq_dsp.c` / `audio_pipeline.c` | Volume-coupled ISO 226 bass/air compensation for low SPLs | `v0.2.0` | **Implemented** |
+| **FIR Impulse Filter (`esp-dsp`)** | `peq_dsp.c` (`esp-dsp`) | Adaptive 256-tap (48k) / 128-tap (96k) phase/room FIR engine | `v0.2.0` | **Implemented** |
+| **8 Editable DAC Presets (`Slot 1–8`)** | `peq_dsp.c` / `main.c` / Apps | Replaces hardcoded factory presets with 8 flat-seeded named slots | `v0.2.0` | **Implemented** |
+| **Cycleable OLED Screen Views** | `oled_display.c` / `peq_dsp.c` | `Classic`, `EQ Curve`, `VU Meters`, `Split` + expanded menu | `v0.2.0` | **Implemented** |
+| **OLED Hot-Plug & Auto-Dim / Sleep** | `oled_display.c` (`0x3C`/`0x3D`) | Non-blocking I2C recovery, 60 s dim, pixel shift & 180 s sleep | `v0.2.0` | **Implemented** |
+| **USB Suspend & Auto-Mute on Silence** | `webhid_peq.c` / `GPIO 7` | `<15 mA` USB suspend sleep & zero-signal analog silence mute | `v0.2.0` | **Implemented** |

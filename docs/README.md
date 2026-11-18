@@ -71,17 +71,17 @@ To ensure rapid navigation for embedded engineers, system architects, and autono
 | :--- | :--- | :--- |
 | **[Master Agentic AI Developer Reference](reference/agentic_ai_reference.md)** | **Autonomous AI Developer Manual** | The 10 Golden Invariants, master pinout definitions, FreeRTOS task affinities, memory caps, automated diagnostic triage tree, and coding rules for autonomous AI agents. |
 | **[Troubleshooting & Root Cause Analysis](guides/troubleshooting.md)** | **Post-Mortems & Preventative Eng** | Deep-dive post-mortems: eliminating 1 kHz USB frame buzz, star-grounding architecture, subnormal float DSP slowdowns, Core 1 cache panics during NVS commits, and brownout resets. |
-| **[WebHID Live Tuner Application](../tools/webhid_tuner/index.html)** | **Driverless Desktop PWA** | Chromium browser interactive client: HTML5 Canvas magnitude/phase/GD curve visualizer, Dual-Mono L/R, Matrix/Crossfeed, Equalizer APO import/export, and volatile SRAM auditioning. |
-| **[Android Companion Application](../tools/android_companion/)** | **Native Mobile USB OTG App** | Kotlin + Jetpack Compose Android app claiming HID Interface #2 without interrupting UAC OS audio; pinch-to-Q Canvas, Offline Demo Mode, and Unlimited Local Phone Preset Library. |
+| **[WebHID Live Tuner Application](../tools/webhid_tuner/)** | **Driverless React + Vite PWA** | Modular Chromium browser interactive client (`src/` compiled via `npm run build` into single-file `dist/index.html`): HTML5 Canvas magnitude/phase/GD curve visualizer, Dual-Mono L/R, Channel Matrix & Headphone Crossfeed, Equalizer APO import/export, FIR Impulse Filter, and live preview tuning. |
+| **[Android Companion Application](../tools/android_companion/)** | **Native Mobile USB App** | Kotlin + Jetpack Compose Android app claiming control interface #2 without interrupting OS audio; pinch-to-Q Canvas, Offline Preview Mode, DAC Presets (1–8), and local phone profile library. |
 
 ---
 
 ### Tier 4: Future Enhancements & Architectural Roadmap
-*Implementation-ready blueprints for `v0.2.0` development cycles alongside `v0.1.0` completed specs.*
+*Completed `v0.1.0` & `v0.2.0` features alongside future architectural blueprints.*
 
 | Document | Primary Focus | Key Subsystems & Topics Covered |
 | :--- | :--- | :--- |
-| **[Future Enhancements Roadmap](firmware/future_enhancements.md)** | **`v0.2.0` Blueprint & Tracker** | **Studio DSP (`v0.2.0`):** Lookahead True-Peak Limiter, Fletcher-Munson Loudness Contour, adaptive ESP-DSP SIMD FIR Convolution (`256/128` taps), **8 Editable Flat-Seeded NVS v3 User Slots** (replacing factory presets); **OLED & Power (`v0.2.0`):** Cycleable Live EQ Curve & Stereo Peak/RMS VU Meter, Menu A/B + Crossfeed, I2C Hot-Plug, OLED Dimmer/Screensaver, USB Suspend sleep (`<15 mA`), and 10s Zero-Signal Auto-Mute. |
+| **[Future Enhancements Roadmap](firmware/future_enhancements.md)** | **`v0.2.0` Tracker & Future Ideas** | **Dynamics & FIR (`v0.2.0`):** True-Peak Limiter, Equal Loudness (ISO 226), FIR Impulse Filter (`256/128` taps), **8 DAC Presets (`Slot 1`–`Slot 8`)**; **Display & Power (`v0.2.0`):** Cycleable OLED Screen Views (`Classic`, `EQ Curve`, `VU Meters`, `Split`), Menu A/B + Crossfeed, I2C Hot-Plug, OLED Auto-Dim & Sleep, USB Suspend low-power sleep, and Auto-Mute on Silence. |
 
 ---
 

@@ -36,8 +36,8 @@ enum class MixerMode(val code: Int, val label: String) {
     MONO(1, "Mono Summed (Downmix)"),
     SWAP(2, "Channel Swap (L <-> R)"),
     WIDTH(3, "M/S Stereo Width"),
-    CROSSFEED(4, "Chu Moy Crossfeed"),
-    CUSTOM_MATRIX(5, "Custom 2x2 Matrix");
+    CROSSFEED(4, "Headphone Crossfeed (Chu Moy)"),
+    CUSTOM_MATRIX(5, "Custom Channel Matrix");
 
     companion object {
         fun fromCode(code: Int): MixerMode =
@@ -57,9 +57,9 @@ enum class LoudnessMode(val code: Int, val label: String) {
 }
 
 enum class OledViewMode(val code: Int, val label: String) {
-    HUD(0, "HUD"),
+    HUD(0, "Classic"),
     CURVE(1, "EQ Curve"),
-    VU(2, "VU Meter"),
+    VU(2, "VU Meters"),
     SPLIT(3, "Split");
 
     companion object {
@@ -154,7 +154,13 @@ object DspDefaults {
 
     val SUPPORTED_SAMPLE_RATES = listOf(44100, 48000, 96000)
 
-    fun defaultSlotNames(): List<String> = List(USER_SLOT_COUNT) { "User ${it + 1}" }
+    fun defaultSlotNames(): List<String> = List(USER_SLOT_COUNT) { "Slot ${it + 1}" }
+
+    fun formatSlotLabel(index: Int, rawName: String?): String {
+        val defName = "Slot ${index + 1}"
+        val clean = rawName?.trim().orEmpty().ifEmpty { defName }
+        return if (clean == defName) clean else "${index + 1}: $clean"
+    }
 
     val BAND_COLORS_ARGB = listOf(
         0xFF58A6FFL, 0xFF3FB950L, 0xFFD29922L, 0xFFF85149L, 0xFFBC8CFFL,

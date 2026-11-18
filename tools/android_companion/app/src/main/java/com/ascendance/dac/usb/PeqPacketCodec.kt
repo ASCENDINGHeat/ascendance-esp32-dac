@@ -240,7 +240,7 @@ object PeqPacketCodec {
                 0,
                 if (nulIdx >= 0) nulIdx else nameBytes.size,
                 Charsets.UTF_8
-            ).ifBlank { "User ${activeSlot + 1}" }
+            ).ifBlank { "Slot ${activeSlot + 1}" }
             val cfg = DynamicsConfig(
                 limiterEnabled = (dynFlags and 0x01) != 0,
                 loudnessMode = (dynFlags shr 1) and 0x03,

@@ -141,22 +141,22 @@ The push-button on `GPIO 17` uses an interrupt-driven timer state machine:
 * **Short Press (<400 ms):** Play / Pause toggling (or "Enter / Select" in menus).
 * **Double Click (<300 ms between presses):** Skip to Next Track (or open SD Browser in SD mode).
 * **Long Press (>800 ms):** Open the Audio Mode Selection Menu (Wi-Fi ↔ USB DAC ↔ SD Card).
-* **Triple Click (<600 ms total) or Dedicated Mode Button Hold:** Open the **EQ Profile Selection Menu** (Preset 1 Flat ↔ Preset 2 Bass Boost ↔ Preset 3 Harman ↔ **User Custom NVS**).
+* **Triple Click (<600 ms total) or Dedicated Mode Button Hold:** Open the **EQ Preset Selection Menu** (`Slot 1`–`Slot 8` custom hardware presets).
 
 ---
 
 ## 4. UI Architecture & Screen Layouts
 
-The user interface is powered by **LVGL v9** or **U8g2** running on **Core 0** at 30 FPS.
+The user interface runs on **Core 0**.
 
 ```
 ┌────────────────────────────────────────────────────────┐
-│ [Wi-Fi] 44.1kHz 16b          VOL: [████████░░] 80%    │ <- Status Header
+│ [USB DAC] 48.0k 24b                              V:80% │ <- Status Header
 │                                                        │
-│ Radio Paradise - Mellow Mix                            │ <- Scrolling Title (Marquee)
-│ Track: Norah Jones - Come Away With Me                 │ <- Artist / Track info
+│ ASCENDANCE Hi-Fi                                       │ <- Device Headline
+│ USB DAC                                                │ <- Active Input
 │                                                        │
-│ [PEQ: Custom (NVS)]           || Playback: PLAYING    │ <- Footer / DSP Profile
+│ Slot 1                                            PLAY │ <- Footer / Preset Slot
 └────────────────────────────────────────────────────────┘
 ```
 
@@ -164,7 +164,7 @@ The user interface is powered by **LVGL v9** or **U8g2** running on **Core 0** a
 ```
                       ┌────────────────────────┐
                       │    BOOT / SPLASH       │
-                      │  "ESP32-S3 Audio DAC"  │
+                      │   "ASCENDANCE Hi-Fi"   │
                       └───────────┬────────────┘
                                   │ (Init Complete)
                                   ▼
@@ -173,14 +173,13 @@ The user interface is powered by **LVGL v9** or **U8g2** running on **Core 0** a
           │           │  (Status, Vol, Track)  │          │
           │           └───────┬────────────┬───┘          │
 (Timeout) │                   │            │              │ (Selection Made)
-          │   (Long Press SW) │            │ (Triple Click)
+          │   (Long Press SW) │            │ (Click ►/◄)  │
           │                   ▼            ▼              │
           │      ┌─────────────────┐  ┌─────────────────┐ │
-          └──────┤  MODE SELECTOR  │  │   EQ SELECTOR   ├─┘
-                 │  [Wi-Fi/USB/SD] │  │ [P1/P2/P3/Custom│
-                 └────────┬────────┘  │      (NVS)]     │
-                          │           └─────────────────┘
-                          │ (Double Click in SD Mode)
+          └──────┤  MODE SELECTOR  │  │  PRESET SLOTS   ├─┘
+                 │  [USB/Tone/Swp] │  │   [Slot 1..8]   │
+                 └────────┬────────┘  └─────────────────┘
+                          │
                           ▼
                  ┌─────────────────┐
                  │ SD CARD BROWSER │
@@ -189,25 +188,25 @@ The user interface is powered by **LVGL v9** or **U8g2** running on **Core 0** a
                  └─────────────────┘
 ```
 
-#### 4.2 EQ Profile Selector Screen Layout
-When the EQ Selector is engaged:
+#### 4.2 EQ Preset Selector Screen Layout
+When selecting DAC Presets:
 ```
 ┌────────────────────────────────────────────────────────┐
-│ << EQUALIZER PROFILE >>      [Slot: USER (NVS)]*      │ <- Asterisk indicates unsaved tweaks
+│ << EQ SLOT >>                 [Slot 1]*                │ <- Asterisk indicates unsaved tweaks
 │                                                        │
-│   ○ 1. Flat / Bypass (0 dB)                            │
-│   ○ 2. Warm Bass Boost (+4.5 dB)                       │
-│   ○ 3. Harman OE2018 Target                            │
-│   ● 4. Custom: Sennheiser HD600 (NVS)                  │
-│  ►💾 5. [Save Active to User Preset]                   │ <- Explicit Flash Commit
+│   ● 1. Slot 1 (Reference Flat)                         │
+│   ○ 2. HD600 (Custom)                                  │
+│   ○ 3. Bass Boost                                      │
+│   ...                                                  │
+│  ►💾 [Save to DAC]                                     │ <- Explicit Flash Commit
 │                                                        │
-│ [Press = Select/Save]         [Web/USB = Live Audition]│
+│ [Turn:Move  Click:OK]         [Web/USB = Preview Live] │
 └────────────────────────────────────────────────────────┘
 ```
 * **Persistent Storage & Explicit Save:**
-  * Selecting profiles 1–4 immediately loads parameters and triggers a click-free 15 ms crossfade on Core 1 without stopping audio playback.
-  * While live tuning via Web/USB WebHID, changes are auditioned in volatile SRAM (`s_active_peq_bank`), completely avoiding SPI flash wear.
-  * Selecting **`[Save Active to User Preset]`** explicitly executes `peq_storage_save_active_to_preset(0, "User Custom")`. It performs a hardware Delta comparison (`memcmp`), writes the binary blob with CRC32 to NVS, and briefly displays `[SAVED TO NVS]`.
+  * Selecting presets `Slot 1`–`Slot 8` immediately loads parameters and triggers a click-free 15 ms crossfade on Core 1 without stopping audio playback.
+  * While live tuning via WebHID or Android Companion, changes run via **Preview Live** in volatile RAM (`s_slots`), completely avoiding SPI flash wear.
+  * Selecting **`Save to DAC`** explicitly performs a hardware delta comparison (`memcmp`), writes the binary blob with CRC32 to NVS flash, and briefly displays `SAVED TO DAC!`.
 
 ## 5. Reference for AI Agents: Implementation Checklist & UI Invariants
 

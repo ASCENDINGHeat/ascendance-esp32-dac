@@ -194,12 +194,12 @@ To eliminate clicks, pops, or zipper noise when dragging sliders or switching pr
 * **Preamp Attenuation:** Provides $0.0\text{ to }-12.0\text{ dB}$ digital pre-attenuation to prevent large positive biquad boosts from exceeding $0\text{ dBFS}$.
 * **Hard Saturation Clamping:** Non-finite samples are zeroed and all floating-point audio samples are clamped to signed 24-bit full-scale bounds (`[-8388608.0f, 8388607.0f]`) before MSB-aligned 32-bit I2S slot output (`(int32_t)((uint32_t)(int32_t)lrintf(val) << 8)`).
 
-### 3.5 8-Slot Editable NVS v3 Persistence & Studio Dynamics
-All hardcoded factory presets (`Flat`, `Bass Boost`, `Harman`) have been removed in `v0.2.0`. Instead, `peq_dsp_init()` provisions **8 independently editable, custom-named NVS v3 user slots (`Slot 0..7`)** (`"User 1"`..`"User 8"` seeded to Reference Flat on clean boot, with one-way migration from `v0.1.0` `user_cfg_v2` / V1 into `Slot 0`).
+### 3.5 8 Editable DAC Presets (`NVS v3`) & Dynamics
+All hardcoded factory presets (`Flat`, `Bass Boost`, `Harman`) have been removed in `v0.2.0`. Instead, `peq_dsp_init()` provisions **8 independently editable, custom-named NVS v3 preset slots (`Slot 0..7`)** (`"Slot 1"`..`"Slot 8"` seeded to Reference Flat on clean boot, with one-way migration from `v0.1.0` `user_cfg_v2` / V1 into `Slot 0`).
 
 * **Per-Slot NVS Keys:** `peq_slot_0`..`peq_slot_7` storing `linked_stereo`, Left/Right profiles, and CRC32.
-* **Global Meta & FIR Keys:** `nvs_meta_v3` stores `active_slot`, Lookahead Limiter enable, Equal-Loudness mode (`Off / Mild / Full`), OLED playback view, `auto_mute_sec`, `oled_dim_sec`, FIR enable, and `peq_mixer_config_t`; `fir_taps_l`/`fir_taps_r` store up to 256 float32 impulse taps per channel (`128` active max at `96 kHz`).
-* **Zero Flash Wear During Tuning:** Live WebHID / Android Companion slider updates modify SRAM only. Commits (`WEBHID_CMD_SAVE_TO_PRESET` or long-press Save) check `memcmp()` before writing flash.
+* **Global Meta & FIR Keys:** `nvs_meta_v3` stores `active_slot`, True-Peak Limiter enable, Equal Loudness (ISO 226) mode (`Off / Mild / Full`), OLED Screen View, `auto_mute_sec`, `oled_dim_sec`, FIR enable, and `peq_mixer_config_t`; `fir_taps_l`/`fir_taps_r` store up to 256 float32 impulse taps per channel (`128` active max at `96 kHz`).
+* **Zero Flash Wear During Tuning:** Live WebHID / Android Companion **Preview Live** slider updates modify SRAM only. Explicit commits (`WEBHID_CMD_SAVE_TO_PRESET` or long-press Save) check `memcmp()` before writing flash.
 
 ---
 
@@ -239,12 +239,12 @@ The control subsystem operates across three modes (**Default Playback**, **Main 
 | :--- | :--- | :--- | :--- | :--- |
 | **Rotary Turn** | CW / CCW | Adjust master volume ($\pm 2\%$ per detent) | Volume Slider Overlay (1.5s auto-hide) | Dynamic brightness & color scaling ($1\%\dots 100\%$) |
 | **Encoder SW** | Short Click | Toggle Master Mute (`audio_pipeline_set_mute`) | `[MUTED]` flag on OLED header | Soft Red alert (when muted) / restores volume color |
-| **Encoder SW** | Double Click | Quick Save to NVS (commits active slot & dynamics) | `"Saved to NVS"` popup overlay | Maintained at current volume loudness |
+| **Encoder SW** | Double Click | **Save to DAC** (commits active slot & dynamics) | `"Saved to DAC"` popup overlay | Maintained at current volume loudness |
 | **Encoder SW** | Long Press ($>800\text{ ms}$) | Cycle Audio Source (USB DAC $\rightarrow$ Tone Test $\rightarrow$ Sweep) | Audio Source popup overlay | Maintained at current volume loudness |
 | **Button 1 (◄)** | Short Click | **Open On-Screen Menu** (enters Main Menu Mode) | Switches OLED body to interactive Menu List | Maintained at current volume loudness |
-| **Button 1 (◄)** | Long Press ($>800\text{ ms}$) | Cycle User Slot backward (`Slot 7..0`) | Slot overlay popup | Maintained at current volume loudness |
-| **Button 2 (►)** | Short Click | Cycle User Slot forward (`Slot 0..7`) | Slot overlay popup | Maintained at current volume loudness |
-| **Button 2 (►)** | Double-Click | Cycle OLED Playback Visualizer (`HUD -> Curve -> VU -> Split`) | View popup overlay & live renderer | Maintained at current volume loudness |
+| **Button 1 (◄)** | Long Press ($>800\text{ ms}$) | Cycle DAC Preset backward (`Slot 8..1`) | Slot overlay popup | Maintained at current volume loudness |
+| **Button 2 (►)** | Short Click | Cycle DAC Preset forward (`Slot 1..8`) | Slot overlay popup | Maintained at current volume loudness |
+| **Button 2 (►)** | Double-Click | Cycle **OLED Screen View** (`Classic -> EQ Curve -> VU Meters -> Split`) | View popup overlay & live renderer | Maintained at current volume loudness |
 
 #### 2. Main Menu Navigation Mode (Modal Menu Active)
 
@@ -254,23 +254,23 @@ The control subsystem operates across three modes (**Default Playback**, **Main 
 | **Button 2 (►)** | Short Click | **Move Down** menu item list | Selection bar advances to next item | Maintained at current volume loudness |
 | **Button 1 (◄)** | Short Click | **Exit Menu / Back** to Playback Mode | Reverts immediately to Default Playback display | Maintained at current volume loudness |
 | **Encoder SW** | Short Click | **Confirm / Cycle** | Enters Live EQ Editor or cycles parameter | Maintained at current volume loudness |
-| **Encoder SW** | Long Press ($>800\text{ ms}$) | **Quick Save to NVS** | `"Saved to NVS"` popup overlay | Maintained at current volume loudness |
+| **Encoder SW** | Long Press ($>800\text{ ms}$) | **Quick Save to DAC** | `"Saved to DAC"` popup overlay | Maintained at current volume loudness |
 
 #### 3. Menu Architecture (11 Selectable Options)
 1. **1. Live EQ Adjust:** Enters on-device digit-by-digit PEQ editor on active slot.
-2. **2. Slot:<Name>:** Cycles NVS v3 User Slots `0..7`.
+2. **2. Slot:<Name>:** Cycles DAC Presets `Slot 1`–`Slot 8`.
 3. **3. A/B:<Active/Bypass>:** Toggles transient preamp-normalized A/B comparison.
-4. **4. Xfeed:<Off/Low/High>:** Cycles Chu Moy headphone crossfeed level.
-5. **5. Loud:<Off/Mild/Full>:** Cycles Fletcher-Munson equal-loudness mode.
-6. **6. Limiter:<On/Off>:** Toggles 1.5 ms lookahead true-peak limiter (`-0.5 dBFS`).
-7. **7. OLED:<HUD/Curve/VU/Split>:** Cycles Playback Body visualizer mode.
+4. **4. Crossfeed:<Off/Low/High>:** Cycles Headphone Crossfeed (Chu Moy) level.
+5. **5. Loudness:<Off/Mild/Full>:** Cycles Equal Loudness (ISO 226) mode.
+6. **6. Limiter:<On/Off>:** Toggles True-Peak Limiter (`-0.5 dBFS`, 1.5 ms lookahead).
+7. **7. View:<Classic/Curve/VU/Split>:** Cycles Playback Body visualizer mode.
 8. **8. Preamp:<dB>:** Cycles headroom attenuation ($0.0, -2.0, -4.0, -6.0\text{ dB}$).
-9. **9. Src:<Source>:** Cycles `USB DAC` $\rightarrow$ `Tone Generator` $\rightarrow$ `Frequency Sweep`.
-10. **10. Save to NVS:** Commits active slot & dynamics config to NVS v3 flash.
+9. **9. Input:<Source>:** Cycles `USB DAC` $\rightarrow$ `Tone Generator` $\rightarrow$ `Frequency Sweep`.
+10. **10. Save to DAC:** Commits active slot & dynamics config to persistent DAC flash.
 11. **11. Exit Menu:** Closes menu and returns to Playback Mode.
 
 #### 4. On-Device EQ Adjust Mode (Live Digit-by-Digit PEQ Tuner)
-Triggered by selecting **"1. Live EQ Adjust"** from the Main Menu. Allows comprehensive, standalone tuning of the parametric equalizer without needing a PC or WebHID connection:
+Triggered by selecting **"1. Live EQ Adjust"** from the Main Menu. Allows comprehensive, standalone tuning of the parametric equalizer without needing a PC or companion app:
 
 | Control Input | Action | Function | UI Response | Audio / DSP Response |
 | :--- | :--- | :--- | :--- | :--- |
@@ -278,7 +278,7 @@ Triggered by selecting **"1. Live EQ Adjust"** from the Main Menu. Allows compre
 | **Button 2 (►)** | Short Click | **Move Cursor Right** | Cursor steps right across digits, sign, type, band, and toolbar items | UI highlight update |
 | **Rotary Turn** | CW / CCW | **Adjust Number (0–9)** on active digit / field | Increments / decrements single digit, toggles sign, cycles type, or scrolls toolbar | Real-time biquad recalculation & 15 ms click-free crossfade |
 | **Encoder SW** | Short Click | **Execute Action / Cycle Section** | Triggers toolbar item (`+B`, `-B`, `SAVE`, `EXIT`) or rapidly cycles parameter sections | Executes command or jumps cursor |
-| **Encoder SW** | Long Press ($>800\text{ ms}$) | **Instant Save to NVS** | Commits modified parameters to flash; displays `"SAVED TO NVS!"` | Zero flash wear during editing; writes only on save |
+| **Encoder SW** | Long Press ($>800\text{ ms}$) | **Instant Save to DAC** | Commits modified parameters to flash; displays `"SAVED TO DAC!"` | Zero flash wear during editing; writes only on save |
 | **Button 1 (◄)** | Long Press ($>800\text{ ms}$) | **Cancel & Revert** | Discards unsaved session adjustments and restores pre-edit snapshot | Restores original biquads, exits to Playback |
 | **Button 2 (►)** | Double Click | Shortcut: **Add Band** (`+1`) | Increments band count (up to 10 bands); initializes new band | Dynamically scales active biquad loop |
 | **Button 1 (◄)** | Double Click | Shortcut: **Remove Band** (`-1`)| Decrements band count (minimum 1 band); removes active band | Dynamically scales active biquad loop |
@@ -290,11 +290,11 @@ Triggered by selecting **"1. Live EQ Adjust"** from the Main Menu. Allows compre
   0,0 ┌────────────────────────────────────────────────────────┐ 127,0
       │ [USB DAC] 48.0k 24b                             V: 80% │ Header (y=0..10)
    12 ├────────────────────────────────────────────────────────┤
-      │                   ESP32-S3 Audio DSP                   │
-      │                     DSP Standalone                     │ Dynamic Body
+      │                   ASCENDANCE Hi-Fi                     │
+      │                        USB DAC                         │ Dynamic Body
       │                   [═══════════   ]                     │ (y=14..44)
    48 ├────────────────────────────────────────────────────────┤
-      │ EQ: Harman                                        PLAY │ Footer (y=52..63)
+      │ Slot 1                                            PLAY │ Footer (y=52..63)
   127 └────────────────────────────────────────────────────────┘ 127,63
 ```
 
@@ -304,11 +304,11 @@ Triggered by selecting **"1. Live EQ Adjust"** from the Main Menu. Allows compre
       │                    == MAIN MENU ==                     │ Header (y=0..10)
    12 ├────────────────────────────────────────────────────────┤
       │ [1. Live EQ Adjust                                   ] │ Inverted Selection (y=13..21)
-      │  2. Preset:Harman                                      │ Item 2 (y=22..30)
-      │  3. Src:USB DAC                                        │ Item 3 (y=31..39)
-      │  4. Preamp:-3.0dB                                      │ Item 4 (y=40..48)
+      │  2. Slot:Slot 1                                        │ Item 2 (y=22..30)
+      │  3. A/B:Active                                         │ Item 3 (y=31..39)
+      │  4. Crossfeed:Off                                      │ Item 4 (y=40..48)
    50 ├────────────────────────────────────────────────────────┤
-      │ Rot:Move  SW:Select                                    │ Navigation hints (y=52..63)
+      │ Turn:Move  Click:OK                                    │ Navigation hints (y=52..63)
   127 └────────────────────────────────────────────────────────┘ 127,63
 ```
 
@@ -320,7 +320,7 @@ Triggered by selecting **"1. Live EQ Adjust"** from the Main Menu. Allows compre
       │ FREQ:  0 1 [0] 0 0  Hz                                 │ Inverted active digit [0]
       │ GAIN:  + 0 4 . 5  dB                                   │ Gain sign & digits
       │ Q   :  0 1 . 4 1                                       │ Q factor digits
-      │ < >:Move  Rot:0-9                                      │ Status hint (y=42..49)
+      │ < >:Move  Turn:0-9                                     │ Status hint (y=42..49)
    51 ├────────────────────────────────────────────────────────┤
       │ [+B]  [-B]  [SAVE] [EXIT]                              │ Action Toolbar (y=53..63)
   127 └────────────────────────────────────────────────────────┘ 127,63
@@ -331,7 +331,7 @@ Triggered by selecting **"1. Live EQ Adjust"** from the Main Menu. Allows compre
 
 ## 6. Driverless WebHID Browser Tuner & PWA
 
-Location: [`tools/webhid_tuner/`](../../tools/webhid_tuner/) (`index.html`, `manifest.json`, `sw.js`, `icon.svg`).
+Location: [`tools/webhid_tuner/`](../../tools/webhid_tuner/) (`src/`, `public/manifest.json`, `public/sw.js`, `public/icon.svg`, Vite + React single-file build to `dist/index.html`).
 
 The live tuner operates without drivers, native software installations, or cloud dependencies, running directly inside Google Chrome, Microsoft Edge, Brave, Opera, or Android Chrome via the standard **WebHID API** (`navigator.hid`), with installable PWA support when served over HTTPS/`localhost`.
 
@@ -341,15 +341,15 @@ The live tuner operates without drivers, native software installations, or cloud
  ├──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬───────────┤
  │ Magic    │ Command  │ Band Idx │ Filter   │ Enabled  │ Freq     │ Gain      │
  │ (0x4551) │ (1 Byte) │ (1 Byte) │ (1 Byte) │ (1 Byte) │ (2 Bytes)│ (2 Bytes) │
- │ 2 Bytes  │ 0x01..13 │ 0..9/FE  │ 0..7     │ 0 or 1   │ 20..20k  │ x10 dB    │
+ │ 2 Bytes  │ 0x01..14 │ 0..9/FD  │ 0..7     │ 0 or 1   │ 20..20k  │ x10 dB    │
  ├──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴───────────┤
  │ Q Factor (2B, x100) │ reserved[0..51] @ byte 12 (num_bands/ch/flags/mixer/fs)│
  └─────────────────────┴───────────────────────────────────────────────────────┘
 ```
 
-* **Interactive HTML5 Canvas Graph:** Exact RBJ complex transfer evaluation with Magnitude (`dB`), Phase (`-180°..+180°`), Group Delay (`ms`), draggable nodes, and mouse-wheel Q factor adjustment.
-* **Dual-Mono L/R, A/B Toggle & Matrix/Crossfeed:** Linked Stereo or independent Left/Right tuning, transient A/B Bypass (`0x08`), `2×2` Channel Matrix (`0x13`), Chu Moy Crossfeed, and Equalizer APO `.txt` / `.json` import & export.
-* **Bidirectional Synchronization:** Automatically syncs hardware state (`num_bands`, active preset, Dual-Mono flags, mixer state, sample rate) upon USB connection.
+* **Frequency Response Visualizer:** HTML5 Canvas interactive graph with Magnitude (`dB`), Phase (`-180°..+180°`), Group Delay (`ms`), draggable nodes, and mouse-wheel Q factor adjustment.
+* **Dual-Mono L/R, A/B Toggle, Channel Matrix & Crossfeed:** Linked Stereo or independent Left/Right tuning, transient A/B Bypass (`0x08`), **Custom Channel Matrix** (`0x13`), **Headphone Crossfeed (Chu Moy)**, **Dynamics & FIR Impulse Filter**, and Equalizer APO `.txt` / `.json` import & export.
+* **Bidirectional Synchronization:** Automatically syncs hardware state (`num_bands`, active preset slot & name, Dual-Mono flags, mixer state, dynamics/FIR/power settings, sample rate) upon USB connection.
 
 ---
 

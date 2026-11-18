@@ -132,8 +132,8 @@ fun MatrixTab(
                     )
                 )
 
-                // Chu Moy Headphone Crossfeed
-                Text("Chu Moy Headphone Crossfeed (700 Hz / ~270 µs)", color = AscendanceColors.TextSecondary, fontSize = 12.sp)
+                // Headphone Crossfeed
+                Text("Headphone Crossfeed (Chu Moy)", color = AscendanceColors.TextSecondary, fontSize = 12.sp)
                 val cfLabels = listOf("Off", "Low (-4.5 dB)", "High (-6.0 dB)")
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     cfLabels.forEachIndexed { idx, lbl ->
@@ -155,14 +155,14 @@ fun MatrixTab(
             }
         }
 
-        // Studio Dynamics, Equal Loudness & ESP-DSP FIR Convolution
+        // Dynamics, Equal Loudness & FIR Impulse Filter
         Surface(
             color = AscendanceColors.CardDark,
             shape = RoundedCornerShape(12.dp),
             border = BorderStroke(1.dp, AscendanceColors.BorderDark)
         ) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Studio Dynamics & FIR (v0.2.0)", color = AscendanceColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                Text("Dynamics & FIR Impulse Filter", color = AscendanceColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -170,8 +170,8 @@ fun MatrixTab(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("Lookahead True-Peak Limiter", color = AscendanceColors.TextPrimary, fontSize = 13.sp)
-                        Text("-0.5 dBFS ceiling (1.5 ms lookahead + soft clip)", color = AscendanceColors.TextSecondary, fontSize = 11.sp)
+                        Text("True-Peak Limiter", color = AscendanceColors.TextPrimary, fontSize = 13.sp)
+                        Text("1.5 ms lookahead with -0.5 dBFS ceiling", color = AscendanceColors.TextSecondary, fontSize = 11.sp)
                     }
                     Switch(
                         checked = dynamics.limiterEnabled,
@@ -179,7 +179,7 @@ fun MatrixTab(
                     )
                 }
 
-                Text("Fletcher-Munson Equal Loudness (Vol < 80%)", color = AscendanceColors.TextSecondary, fontSize = 12.sp)
+                Text("Equal Loudness (ISO 226, Vol < 80%)", color = AscendanceColors.TextSecondary, fontSize = 12.sp)
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     LoudnessMode.entries.forEachIndexed { idx, mode ->
                         SegmentedButton(
@@ -198,9 +198,9 @@ fun MatrixTab(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(modifier = Modifier.weight(1f)) {
-                        Text("ESP-DSP SIMD FIR Convolution", color = AscendanceColors.TextPrimary, fontSize = 13.sp)
+                        Text("FIR Impulse Filter", color = AscendanceColors.TextPrimary, fontSize = 13.sp)
                         Text(
-                            "Loaded L:${dynamics.firTapsL} / R:${dynamics.firTapsR} taps (cap $maxCap @ ${sampleRateHz / 1000}k)",
+                            "Loaded L:${dynamics.firTapsL} / R:${dynamics.firTapsR} taps (max $maxCap @ ${sampleRateHz / 1000}k)",
                             color = AscendanceColors.TextSecondary,
                             fontSize = 11.sp,
                             fontFamily = FontFamily.Monospace
@@ -223,14 +223,14 @@ fun MatrixTab(
             }
         }
 
-        // Custom 2x2 Coefficient Grid
+        // Custom Channel Matrix Grid
         Surface(
             color = AscendanceColors.CardDark,
             shape = RoundedCornerShape(12.dp),
             border = BorderStroke(1.dp, AscendanceColors.BorderDark)
         ) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Custom 2x2 Matrix Coefficients (-4.0 to +4.0)", color = AscendanceColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                Text("Custom Channel Matrix (-4.0 to +4.0)", color = AscendanceColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     MatrixCoeffField("mLL (L->L)", mixer.customMatrix[0], Modifier.weight(1f)) { v ->
                         val nextMat = mixer.customMatrix.toMutableList().apply { this[0] = v }

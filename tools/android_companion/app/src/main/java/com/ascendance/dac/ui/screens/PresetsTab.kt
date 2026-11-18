@@ -46,6 +46,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.ascendance.dac.model.DspDefaults
 import com.ascendance.dac.model.LocalPreset
 import com.ascendance.dac.ui.DacUiState
 import com.ascendance.dac.ui.theme.AscendanceColors
@@ -82,7 +83,7 @@ fun PresetsTab(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // 8-Slot Editable NVS v3 User Profiles + Slot Rename / Reset / NVS Save
+        // 8-Slot Editable DAC Presets + Rename / Reset / Save
         Surface(
             color = AscendanceColors.CardDark,
             shape = RoundedCornerShape(12.dp),
@@ -94,9 +95,9 @@ fun PresetsTab(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("NVS v3 User Slots (0–7)", color = AscendanceColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    Text("DAC Presets (1–8)", color = AscendanceColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                     Text(
-                        text = "Active: S${state.activePresetSlot + 1}",
+                        text = "Active: Slot ${state.activePresetSlot + 1}",
                         color = AscendanceColors.AccentBlue,
                         fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace
@@ -104,7 +105,7 @@ fun PresetsTab(
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     (0 until 4).forEach { slot ->
-                        val lbl = state.slotNames.getOrElse(slot) { "User ${slot + 1}" }
+                        val lbl = DspDefaults.formatSlotLabel(slot, state.slotNames.getOrNull(slot))
                         FilterChip(
                             selected = state.activePresetSlot == slot,
                             onClick = { onSelectHardwarePreset(slot) },
@@ -115,7 +116,7 @@ fun PresetsTab(
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     (4 until 8).forEach { slot ->
-                        val lbl = state.slotNames.getOrElse(slot) { "User ${slot + 1}" }
+                        val lbl = DspDefaults.formatSlotLabel(slot, state.slotNames.getOrNull(slot))
                         FilterChip(
                             selected = state.activePresetSlot == slot,
                             onClick = { onSelectHardwarePreset(slot) },
@@ -127,7 +128,7 @@ fun PresetsTab(
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(
                         onClick = {
-                            slotRenameText = state.slotNames.getOrElse(state.activePresetSlot) { "User ${state.activePresetSlot + 1}" }
+                            slotRenameText = state.slotNames.getOrElse(state.activePresetSlot) { "Slot ${state.activePresetSlot + 1}" }
                             showRenameSlotDialog = true
                         },
                         modifier = Modifier.weight(1f)
@@ -140,15 +141,16 @@ fun PresetsTab(
                         Text("Reset Slot", fontSize = 11.sp)
                     }
                 }
+                Text("Template:", color = AscendanceColors.TextSecondary, fontSize = 11.sp)
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     OutlinedButton(onClick = { onApplyStarterCurve("flat") }, modifier = Modifier.weight(1f)) {
-                        Text("Seed Flat", fontSize = 10.sp)
+                        Text("Flat", fontSize = 10.sp)
                     }
                     OutlinedButton(onClick = { onApplyStarterCurve("bass") }, modifier = Modifier.weight(1f)) {
-                        Text("Seed Bass", fontSize = 10.sp)
+                        Text("Bass", fontSize = 10.sp)
                     }
                     OutlinedButton(onClick = { onApplyStarterCurve("harman") }, modifier = Modifier.weight(1f)) {
-                        Text("Seed Harman", fontSize = 10.sp)
+                        Text("Harman", fontSize = 10.sp)
                     }
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -159,7 +161,7 @@ fun PresetsTab(
                     ) {
                         Icon(Icons.Outlined.Save, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(6.dp))
-                        Text("Save to DAC NVS", fontSize = 12.sp)
+                        Text("Save to DAC", fontSize = 12.sp)
                     }
                     OutlinedButton(onClick = onResetFlat, modifier = Modifier.weight(0.75f)) {
                         Text("Flatten Band", fontSize = 11.sp)
@@ -284,7 +286,7 @@ fun PresetsTab(
                                     ) {
                                         Icon(Icons.Outlined.PlayArrow, contentDescription = null, modifier = Modifier.size(14.dp))
                                         Spacer(Modifier.width(4.dp))
-                                        Text("Audition Live", fontSize = 11.sp)
+                                        Text("Preview Live", fontSize = 11.sp)
                                     }
                                     OutlinedButton(
                                         onClick = { onApplyLocalPreset(preset, true) },
@@ -294,7 +296,7 @@ fun PresetsTab(
                                     ) {
                                         Icon(Icons.Outlined.Save, contentDescription = null, modifier = Modifier.size(14.dp))
                                         Spacer(Modifier.width(4.dp))
-                                        Text("Load & Save NVS", fontSize = 11.sp)
+                                        Text("Load & Save", fontSize = 11.sp)
                                     }
                                 }
                             }

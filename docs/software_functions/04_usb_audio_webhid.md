@@ -197,7 +197,7 @@ void tud_hid_set_report_cb(uint8_t instance,
 ```
 
 #### 2.4.1 Browser GUI Custom Value Input & Safe DSP Bounds
-The companion WebHID tuner client (`tools/webhid_tuner/index.html`) equips each band card and the preamp headroom stage with precision numeric inputs (`<input type="number">`) in addition to range sliders. Inputs are validated and clamped to safe DSP bounds:
+The companion WebHID tuner client (`tools/webhid_tuner/src/`) equips each band card and the preamp headroom stage with precision numeric inputs (`<input type="number">`) in addition to range sliders. Inputs are validated and clamped to safe DSP bounds:
 * **Frequency:** `20 Hz` to `20,000 Hz` (Step: `1 Hz`, clamped via `clamp(val, 20, 20000)`)
 * **Gain:** `-24.0 dB` to `+12.0 dB` (Step: `0.1 dB`, clamped via `clamp(val, -24.0, 12.0)`)
 * **Q Factor:** `0.10` to `10.00` (Step: `0.01`, clamped via `clamp(val, 0.10, 10.00)`)

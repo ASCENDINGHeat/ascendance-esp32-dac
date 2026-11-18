@@ -84,9 +84,9 @@ typedef struct {
 typedef struct {
     char mode_str[12];          // e.g. "USB DAC", "Synth"
     char sample_rate_str[12];   // e.g. "48.0k 24b"
-    char title[32];             // e.g. "ESP32-S3 Audio DSP"
+    char title[32];             // e.g. "ASCENDANCE Hi-Fi"
     char subtitle[32];          // e.g. "Active / Ready"
-    char eq_preset[16];         // e.g. "User 1"
+    char eq_preset[16];         // e.g. "Slot 1"
     int  volume;                // 0 - 100
     bool is_muted;
     bool is_playing;

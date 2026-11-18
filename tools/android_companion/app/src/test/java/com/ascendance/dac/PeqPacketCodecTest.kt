@@ -1,5 +1,6 @@
 package com.ascendance.dac
 
+import com.ascendance.dac.model.DspDefaults
 import com.ascendance.dac.model.DynamicsConfig
 import com.ascendance.dac.model.FilterType
 import com.ascendance.dac.model.LoudnessMode
@@ -162,5 +163,17 @@ class PeqPacketCodecTest {
         assertEquals(90, extMsg.dynamics.oledDimSec)
         assertEquals(256, extMsg.dynamics.firTapsL)
         assertEquals(128, extMsg.dynamics.firTapsR)
+    }
+
+    @Test
+    fun formatsDefaultAndCustomSlotLabels() {
+        val defaults = DspDefaults.defaultSlotNames()
+        assertEquals(8, defaults.size)
+        assertEquals("Slot 1", defaults[0])
+        assertEquals("Slot 8", defaults[7])
+        assertEquals("Slot 1", DspDefaults.formatSlotLabel(0, "Slot 1"))
+        assertEquals("Slot 2", DspDefaults.formatSlotLabel(1, ""))
+        assertEquals("1: HD600", DspDefaults.formatSlotLabel(0, "HD600"))
+        assertEquals("3: Bass", DspDefaults.formatSlotLabel(2, " Bass "))
     }
 }

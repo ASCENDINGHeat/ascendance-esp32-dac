@@ -37,9 +37,9 @@ typedef enum {
     WEBHID_CMD_SET_AB_BYPASS      = 0x08,  // Toggle instant preamp-normalized A/B bypass (band_idx: 0/1)
     WEBHID_CMD_SET_DUAL_MONO      = 0x09,  // Toggle linked stereo vs independent L/R (band_idx: 1=linked, 0=dual-mono)
     WEBHID_CMD_RENAME_SLOT        = 0x0A,  // Rename slot band_idx (0..7) using 16-byte UTF-8 name in reserved[0..15]
-    WEBHID_CMD_SET_DYNAMICS       = 0x0B,  // Configure Limiter, Fletcher-Munson Loudness, FIR enable, OLED view
+    WEBHID_CMD_SET_DYNAMICS       = 0x0B,  // Configure Limiter, Equal Loudness (ISO 226), FIR enable, OLED view
     WEBHID_CMD_SET_POWER_CFG      = 0x0C,  // Configure Auto-Mute silence sec & OLED dimmer sec
-    WEBHID_CMD_FACTORY_RESET_SLOT = 0x0D,  // Reset specified slot (0..7) to Reference Flat + "User N"
+    WEBHID_CMD_FACTORY_RESET_SLOT = 0x0D,  // Reset specified slot (0..7) to Reference Flat + "Slot N"
     WEBHID_CMD_SET_MIXER          = 0x13,  // Configure 2x2 Channel Matrix & Chu Moy Crossfeed
     WEBHID_CMD_UPLOAD_FIR_CHUNK   = 0x14,  // Stream float32 FIR impulse response chunks (up to 12 floats/report)
 } webhid_cmd_t;

@@ -239,7 +239,7 @@ static void update_playback_ui(void)
     uistate.is_playing = true;
     snprintf(uistate.mode_str, sizeof(uistate.mode_str), "%s", mode_str);
     snprintf(uistate.sample_rate_str, sizeof(uistate.sample_rate_str), "%.1fk 24b", (float)cur_sr / 1000.0f);
-    snprintf(uistate.title, sizeof(uistate.title), "ESP32-S3 Audio DSP");
+    snprintf(uistate.title, sizeof(uistate.title), "ASCENDANCE Hi-Fi");
     snprintf(uistate.subtitle, sizeof(uistate.subtitle), "%s", is_muted ? "[MUTED]" : cur_sname);
     snprintf(uistate.eq_preset, sizeof(uistate.eq_preset), "%.15s", cur_pname);
     oled_display_set_state(&uistate);
@@ -247,7 +247,7 @@ static void update_playback_ui(void)
 
 static void update_menu_ui(void)
 {
-    char cur_pname[24] = "User 1";
+    char cur_pname[24] = "Slot 1";
     peq_preset_id_t active_id = peq_dsp_get_current_preset(cur_pname);
 
     char cur_sname[20] = "USB DAC";
@@ -408,7 +408,7 @@ static void handle_playback_event(const control_event_t *evt)
     }
     case CONTROL_EVT_ENC_DOUBLE_CLICK: {
         peq_dsp_save_user_profile_nvs();
-        oled_display_show_eq_overlay("Saved to NVS");
+        oled_display_show_eq_overlay("Saved to DAC");
         break;
     }
     case CONTROL_EVT_ENC_LONG_PRESS: {
@@ -535,7 +535,7 @@ static void handle_menu_event(const control_event_t *evt)
             break;
         case MENU_ITEM_SAVE_NVS:
             peq_dsp_save_user_profile_nvs();
-            oled_display_show_eq_overlay("Saved to NVS");
+            oled_display_show_eq_overlay("Saved to DAC");
             break;
         case MENU_ITEM_EXIT:
             exit_to_playback_mode();
@@ -547,7 +547,7 @@ static void handle_menu_event(const control_event_t *evt)
     }
     case CONTROL_EVT_ENC_LONG_PRESS: {
         peq_dsp_save_user_profile_nvs();
-        oled_display_show_eq_overlay("Saved to NVS");
+        oled_display_show_eq_overlay("Saved to DAC");
         break;
     }
     default:

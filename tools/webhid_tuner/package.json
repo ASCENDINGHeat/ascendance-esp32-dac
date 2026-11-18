@@ -1,0 +1,23 @@
+{
+  "name": "ascendance-webhid-tuner",
+  "private": true,
+  "version": "0.2.0",
+  "type": "module",
+  "description": "ASCENDANCE Hi-Fi DAC React WebHID Live EQ Tuner",
+  "scripts": {
+    "dev": "node ./node_modules/vite/bin/vite.js",
+    "build": "node ./scripts/build-singlefile.mjs",
+    "preview": "node ./node_modules/vite/bin/vite.js preview",
+    "test": "node ./node_modules/vitest/vitest.mjs run"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.4.1",
+    "esbuild": "^0.25.0",
+    "vite": "^6.3.5",
+    "vitest": "^3.1.4"
+  }
+}

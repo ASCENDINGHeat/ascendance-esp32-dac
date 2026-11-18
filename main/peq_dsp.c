@@ -612,7 +612,7 @@ static void setup_default_slots(void)
 {
     for (int i = 0; i < PEQ_USER_SLOT_COUNT; i++) {
         char default_name[PEQ_SLOT_NAME_MAX];
-        snprintf(default_name, sizeof(default_name), "User %d", i + 1);
+        snprintf(default_name, sizeof(default_name), "Slot %d", i + 1);
         s_slots[i].linked_stereo = true;
         init_flat_profile(&s_slots[i].left, default_name);
         init_flat_profile(&s_slots[i].right, default_name);
@@ -1220,8 +1220,8 @@ esp_err_t peq_dsp_rename_slot(int slot_id, const char *new_name)
     snprintf(s_slots[slot_id].left.name, PEQ_SLOT_NAME_MAX, "%.23s", new_name);
     snprintf(s_slots[slot_id].right.name, PEQ_SLOT_NAME_MAX, "%.23s", new_name);
     if (s_slots[slot_id].left.name[0] == '\0') {
-        snprintf(s_slots[slot_id].left.name, PEQ_SLOT_NAME_MAX, "User %d", slot_id + 1);
-        snprintf(s_slots[slot_id].right.name, PEQ_SLOT_NAME_MAX, "User %d", slot_id + 1);
+        snprintf(s_slots[slot_id].left.name, PEQ_SLOT_NAME_MAX, "Slot %d", slot_id + 1);
+        snprintf(s_slots[slot_id].right.name, PEQ_SLOT_NAME_MAX, "Slot %d", slot_id + 1);
     }
     taskEXIT_CRITICAL(&s_peq_lock);
 
@@ -1233,7 +1233,7 @@ esp_err_t peq_dsp_reset_slot_to_flat(int slot_id)
     if (slot_id < 0 || slot_id >= PEQ_USER_SLOT_COUNT) return ESP_ERR_INVALID_ARG;
 
     char default_name[PEQ_SLOT_NAME_MAX];
-    snprintf(default_name, sizeof(default_name), "User %d", slot_id + 1);
+    snprintf(default_name, sizeof(default_name), "Slot %d", slot_id + 1);
 
     bool is_active = false;
     taskENTER_CRITICAL(&s_peq_lock);

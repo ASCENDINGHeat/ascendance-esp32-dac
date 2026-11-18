@@ -211,9 +211,9 @@ typedef enum {
     WEBHID_CMD_SET_AB_BYPASS      = 0x08,  // Instant A/B bypass toggle (transient, 15 ms crossfade)
     WEBHID_CMD_SET_DUAL_MONO      = 0x09,  // Linked Stereo (1) vs Independent Dual-Mono L/R (0)
     WEBHID_CMD_RENAME_SLOT        = 0x0A,  // Rename user slot (0..7) with 16-byte UTF-8 name
-    WEBHID_CMD_SET_DYNAMICS       = 0x0B,  // Set Limiter, Equal-Loudness, FIR enable & OLED view
-    WEBHID_CMD_SET_POWER_CFG      = 0x0C,  // Set Zero-Signal Auto-Mute sec & OLED burn-in dimmer sec
-    WEBHID_CMD_FACTORY_RESET_SLOT = 0x0D,  // Reset specific slot (0..7) to Reference Flat + "User N"
+    WEBHID_CMD_SET_DYNAMICS       = 0x0B,  // Set Limiter, Equal Loudness (ISO 226), FIR enable & OLED view
+    WEBHID_CMD_SET_POWER_CFG      = 0x0C,  // Set Auto-Mute on Silence sec & OLED Auto-Dim sec
+    WEBHID_CMD_FACTORY_RESET_SLOT = 0x0D,  // Reset specific slot (0..7) to Reference Flat + "Slot N"
     WEBHID_CMD_SET_MIXER          = 0x13,  // 2x2 Channel Matrix & Chu Moy Crossfeed configuration
     WEBHID_CMD_UPLOAD_FIR_CHUNK   = 0x14   // Stream float32 FIR impulse chunks (up to 12 floats/report)
 } webhid_cmd_t;
@@ -379,17 +379,17 @@ class UsbDacTuner {
 
 > [!TIP]
 > **Complete WebHID Tuner Web App & PWA:**  
-> A production, standalone single-page WebHID tuner & installable PWA is provided in [`tools/webhid_tuner/index.html`](../../tools/webhid_tuner/index.html) (`manifest.json`, `sw.js`, `icon.svg`). It features:
+> A modular React + Vite WebHID tuner & installable PWA (compiled via `npm run build` + `vite-plugin-singlefile` into standalone `dist/index.html`) lives in [`tools/webhid_tuner/`](../../tools/webhid_tuner/) (`src/`, `public/`). It features:
 > * **Interactive HTML5 Canvas Frequency Response, Phase & Group Delay Visualizer:**
 >   * **Draggable Control Nodes:** Direct manipulation of band center points across all **8 RBJ filter topologies** (`Bypass`, `Peaking`, `Low Shelf`, `High Shelf`, `High Pass`, `Low Pass`, `Notch`, `Band Pass`) plus optional Phase (`-180°..+180°`) and Group Delay (`ms`) traces.
 >   * **Mouse Wheel / Scroll Q Adjustment & Double-Click Actions:** Scroll to adjust `Q` (`0.10..10.00`) with `-3 dB` guides; double-click node to reset gain or empty canvas to add a band.
 > * **Dual-Mono L/R PEQ & Preamp-Normalized A/B Toggle:** Switch between **Linked Stereo** and independent **Left / Right** 10-band curves, or toggle **A/B Bypass** (`0x08`) transiently over 15 ms crossfade.
-> * **2×2 Channel Matrix & Chu Moy Crossfeed:** Stereo, Mono Mix, L-Only, R-Only, Swap L/R, Mid-Side Width (`0–200%`), L/R Balance, Custom `2×2` coefficients, and 3-level Chu Moy headphone crossfeed (`Off / Mild / Medium`).
+> * **Channel Matrix & Headphone Crossfeed:** Stereo, Mono Mix, L-Only, R-Only, Swap L/R, Mid-Side Width (`0–200%`), L/R Balance, **Custom Channel Matrix**, and 3-level **Headphone Crossfeed (Chu Moy)** (`Off / Low / High`).
 > * **Equalizer APO / AutoEQ Import & Export:** One-click `.txt` (APO syntax) and `.json` snapshot import/export with clamped `Freq` (`20..20,000 Hz`), `Gain` (`-24.0..+12.0 dB`), `Q` (`0.10..10.00`), and `Preamp` (`-12.0..0.0 dB`).
-> * **60 FPS Volatile Auditioning & NVS v2 Commit:** Streams live updates to SRAM with **0 flash wear**; commits Dual-Mono + Matrix settings to NVS (`user_cfg_v2`) via explicit Save with CRC32 and delta checks.
+> * **60 FPS Live Preview Tuning & DAC Preset Storage:** Streams live updates in volatile memory with **0 flash wear**; commits Dual-Mono, Matrix, and Dynamics settings (`nvs_meta_v3` / `peq_slot_0..7`) via explicit **Save to DAC** with CRC32 and delta checks.
 >
 > **Native Android Companion App (`tools/android_companion/`):**  
-> Because Android Chrome does not implement the WebHID API (`navigator.hid`), a native Kotlin + Jetpack Compose Android companion app (`com.ascendance.dac`, Android 8.0+) is provided in [`tools/android_companion/`](../../tools/android_companion/). It uses `android.hardware.usb.UsbManager` to claim **only USB HID Interface #2** (`EP 0x02 OUT` / `EP 0x82 IN`, `VID 0x303A` / `PID 0x4002`), keeping UAC 1.0 Interfaces `0`/`1` free so Spotify/Tidal/Android audio continues uninterrupted while tuning Dual-Mono L/R PEQ, Matrix/Crossfeed, A/B Toggle, AutoEQ/APO `.txt`/`.json` profiles, and an unlimited local phone preset library (plus Offline Demo Mode).
+> Because Android Chrome does not implement the WebHID API (`navigator.hid`), a native Kotlin + Jetpack Compose Android companion app (`com.ascendance.dac`, Android 8.0+) is provided in [`tools/android_companion/`](../../tools/android_companion/). It uses `android.hardware.usb.UsbManager` to claim **only USB control interface #2** (`EP 0x02 OUT` / `EP 0x82 IN`, `VID 0x303A` / `PID 0x4002`), keeping UAC 1.0 Audio Interfaces `0`/`1` free so Spotify/Tidal/Android audio continues uninterrupted while tuning Dual-Mono L/R PEQ, Channel Matrix & Crossfeed, A/B Toggle, **DAC Presets (1–8)**, AutoEQ/APO `.txt`/`.json` profiles, **FIR Impulse Filters**, and an unlimited local phone profile library (plus **Offline Preview Mode**).
 
 ---
 

@@ -138,7 +138,7 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
         if (!_uiState.value.usbInfo.connected) return
         viewModelScope.launch {
             suppressOfflineDraftTracking = true
-            appendLog("Querying hardware Dual-Mono PEQ, Matrix & Dynamics state...")
+            appendLog("Syncing EQ, Matrix & Dynamics from DAC...")
             for (b in 0 until DspDefaults.MAX_BANDS) {
                 transport.sendPacket(PeqPacketCodec.buildGetBand(b, PeqChannel.LEFT))
             }
@@ -159,7 +159,7 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
     fun pushCurrentStateToHardware(commitToNvs: Boolean = false) {
         val state = _uiState.value
         if (!state.usbInfo.connected) {
-            _uiState.update { it.copy(statusBanner = "Connect USB DAC first to push curves.") }
+            _uiState.update { it.copy(statusBanner = "Connect USB DAC first to preview curves.") }
             return
         }
         viewModelScope.launch {
@@ -187,18 +187,18 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update {
                     it.copy(
                         pendingOfflineDraft = false,
-                        statusBanner = "Pushed profile & committed to NVS v3 flash."
+                        statusBanner = "Applied profile & saved to DAC."
                     )
                 }
-                appendLog("Pushed active state & saved to Hardware NVS v3.")
+                appendLog("Applied active settings & saved to DAC.")
             } else {
                 _uiState.update {
                     it.copy(
                         pendingOfflineDraft = false,
-                        statusBanner = "Pushed draft curve to DAC volatile SRAM."
+                        statusBanner = "Previewing draft curve live on DAC."
                     )
                 }
-                appendLog("Pushed active state to DAC live SRAM.")
+                appendLog("Previewing active settings live on DAC.")
             }
         }
     }
@@ -494,8 +494,8 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
                 syncFromHardware()
             }
         }
-        val slotLabel = _uiState.value.slotNames.getOrElse(safeSlot) { "User ${safeSlot + 1}" }
-        appendLog("Selected hardware NVS v3 Slot ${safeSlot + 1} ($slotLabel).")
+        val slotLabel = DspDefaults.formatSlotLabel(safeSlot, _uiState.value.slotNames.getOrNull(safeSlot))
+        appendLog("Selected Slot ${safeSlot + 1} ($slotLabel).")
     }
 
     fun applyStarterCurve(curveKey: String) {
@@ -525,7 +525,7 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
                 rightBands = bands,
                 selectedBandIdx = 0,
                 pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft,
-                statusBanner = "Loaded '$curveKey' starter curve into Slot ${it.activePresetSlot + 1}."
+                statusBanner = "Loaded '$curveKey' template into Slot ${it.activePresetSlot + 1}."
             )
         }
         if (_uiState.value.usbInfo.connected) {
@@ -536,13 +536,13 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
                 transport.sendPacket(PeqPacketCodec.buildSetBandLive(idx, PeqChannel.LINKED, b))
             }
         }
-        appendLog("Applied '$curveKey' starter curve to active Slot ${_uiState.value.activePresetSlot + 1}.")
+        appendLog("Applied '$curveKey' template to Slot ${_uiState.value.activePresetSlot + 1}.")
     }
 
     fun renameActiveSlot(newName: String) {
         val state = _uiState.value
         val slot = state.activePresetSlot.coerceIn(0, DspDefaults.USER_SLOT_COUNT - 1)
-        val trimmed = newName.trim().take(16).ifEmpty { "User ${slot + 1}" }
+        val trimmed = newName.trim().take(16).ifEmpty { "Slot ${slot + 1}" }
         _uiState.update { cur ->
             val updated = cur.slotNames.toMutableList()
             if (slot in updated.indices) updated[slot] = trimmed
@@ -557,7 +557,7 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
     fun factoryResetActiveSlot() {
         val state = _uiState.value
         val slot = state.activePresetSlot.coerceIn(0, DspDefaults.USER_SLOT_COUNT - 1)
-        val defaultName = "User ${slot + 1}"
+        val defaultName = "Slot ${slot + 1}"
         val flatBands = DspDefaults.createDefaultBands(5)
         _uiState.update { cur ->
             val updated = cur.slotNames.toMutableList()
@@ -714,17 +714,17 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveToHardwareNvs() {
         if (!_uiState.value.usbInfo.connected) {
-            _uiState.update { it.copy(statusBanner = "Connect USB DAC to commit to hardware NVS.") }
+            _uiState.update { it.copy(statusBanner = "Connect USB DAC first to save settings.") }
             return
         }
         transport.sendPacket(PeqPacketCodec.buildSaveToPreset())
         _uiState.update {
             it.copy(
                 pendingOfflineDraft = false,
-                statusBanner = "Saved Slot ${it.activePresetSlot + 1} & Dynamics to NVS v3 flash!"
+                statusBanner = "Saved Slot ${it.activePresetSlot + 1} & Dynamics to DAC!"
             )
         }
-        appendLog("Committed active slot, Matrix & Studio Dynamics to ESP32-S3 NVS v3 flash.")
+        appendLog("Saved active slot, Matrix & Dynamics to DAC.")
     }
 
     fun resetActiveChannelFlat() {

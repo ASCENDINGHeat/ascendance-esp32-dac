@@ -85,24 +85,45 @@ jobs:
           if-no-files-found: error
 
   check-webhid-tuner:
-    name: Validate WebHID Tuner (HTML/JS)
+    name: Validate & Build WebHID Tuner (React + Vite)
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Check inline JavaScript syntax in tools/webhid_tuner/index.html
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+          cache-dependency-path: tools/webhid_tuner/package-lock.json
+
+      - name: Install, Test & Build Single-File WebHID Tuner
+        working-directory: tools/webhid_tuner
+        run: |
+          npm ci
+          npm test
+          npm run build
+
+      - name: Validate Bundled JavaScript in dist/index.html
         run: |
           python3 - <<'EOF'
           import re, subprocess, tempfile, pathlib
-          html = pathlib.Path("tools/webhid_tuner/index.html").read_text(encoding="utf-8")
+          html = pathlib.Path("tools/webhid_tuner/dist/index.html").read_text(encoding="utf-8")
           scripts = re.findall(r"<script[^>]*>(.*?)</script>", html, flags=re.DOTALL | re.IGNORECASE)
-          assert scripts, "No <script> block found in tools/webhid_tuner/index.html"
+          assert scripts, "No <script> block found in tools/webhid_tuner/dist/index.html"
           for idx, js in enumerate(scripts, 1):
               with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as tf:
                   tf.write(js)
                   path = tf.name
               subprocess.run(["node", "--check", path], check=True)
-              print(f"Script block #{idx} syntax OK ({len(js.splitlines())} lines)")
+              print(f"Script block #{idx} syntax OK ({len(js)} chars)")
           EOF
+
+      - name: Upload WebHID Single-File Bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: ascendance-webhid-tuner
+          path: tools/webhid_tuner/dist/index.html
+          if-no-files-found: error

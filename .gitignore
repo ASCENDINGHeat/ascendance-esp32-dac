@@ -28,3 +28,6 @@ local.properties
 *.jks
 *.keystore
 
+# WebHID Tuner (Node / Vite built single-file bundle)
+tools/webhid_tuner/node_modules/
+tools/webhid_tuner/dist/
