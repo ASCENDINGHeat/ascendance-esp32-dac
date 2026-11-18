@@ -117,6 +117,18 @@ private fun AscendanceCompanionApp(viewModel: DacViewModel) {
         }
     }
 
+    val firLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+            if (bytes != null) {
+                val name = uri.lastPathSegment?.substringAfterLast('/') ?: "impulse.txt"
+                viewModel.uploadFirFile(bytes, name)
+            }
+        }
+    }
+
     val exportApoLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.CreateDocument("text/plain")
     ) { uri ->
@@ -270,11 +282,19 @@ private fun AscendanceCompanionApp(viewModel: DacViewModel) {
                     )
                     CompanionTab.MATRIX -> MatrixTab(
                         mixer = state.mixer,
-                        onUpdateMixer = viewModel::updateMixer
+                        dynamics = state.dynamics,
+                        sampleRateHz = state.sampleRateHz,
+                        onUpdateMixer = viewModel::updateMixer,
+                        onUpdateDynamics = viewModel::updateDynamics,
+                        onUploadFirFile = { firLauncher.launch(arrayOf("text/plain", "text/csv", "audio/wav", "audio/x-wav", "*/*")) },
+                        onClearFir = viewModel::clearFirImpulse
                     )
                     CompanionTab.PRESETS -> PresetsTab(
                         state = state,
                         onSelectHardwarePreset = viewModel::selectHardwarePreset,
+                        onRenameHardwareSlot = viewModel::renameActiveSlot,
+                        onFactoryResetSlot = viewModel::factoryResetActiveSlot,
+                        onApplyStarterCurve = viewModel::applyStarterCurve,
                         onSaveToNvs = viewModel::saveToHardwareNvs,
                         onResetFlat = viewModel::resetActiveChannelFlat,
                         onImportFile = { importLauncher.launch(arrayOf("text/plain", "application/json", "*/*")) },
@@ -292,7 +312,9 @@ private fun AscendanceCompanionApp(viewModel: DacViewModel) {
                         onSyncFromHardware = viewModel::syncFromHardware,
                         onPushDraftLive = { viewModel.pushCurrentStateToHardware(commitToNvs = false) },
                         onPushDraftAndSave = { viewModel.pushCurrentStateToHardware(commitToNvs = true) },
-                        onToggleOfflineDemo = viewModel::setOfflineDemoMode
+                        onToggleOfflineDemo = viewModel::setOfflineDemoMode,
+                        onSetOledView = { v -> viewModel.updateDynamics(state.dynamics.copy(oledView = v)) },
+                        onSetPowerConfig = viewModel::updatePowerConfig
                     )
                 }
             }

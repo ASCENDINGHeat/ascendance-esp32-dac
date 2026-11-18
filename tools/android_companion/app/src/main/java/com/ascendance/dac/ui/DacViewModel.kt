@@ -8,8 +8,8 @@ import com.ascendance.dac.data.LocalPresetRepository
 import com.ascendance.dac.dsp.EqualizerApoCodec
 import com.ascendance.dac.dsp.WebHidSnapshotJson
 import com.ascendance.dac.model.DspDefaults
+import com.ascendance.dac.model.DynamicsConfig
 import com.ascendance.dac.model.FilterType
-import com.ascendance.dac.model.HardwarePreset
 import com.ascendance.dac.model.LocalPreset
 import com.ascendance.dac.model.MixerConfig
 import com.ascendance.dac.model.PeqBand
@@ -25,6 +25,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -35,7 +37,8 @@ data class DacUiState(
     val offlineDemoMode: Boolean = true,
     val linkedStereo: Boolean = true,
     val selectedChannel: PeqChannel = PeqChannel.LINKED,
-    val activePresetSlot: Int = HardwarePreset.USER_CUSTOM.slot,
+    val activePresetSlot: Int = 0,
+    val slotNames: List<String> = DspDefaults.defaultSlotNames(),
     val sampleRateHz: Int = 48000,
     val preampDb: Float = 0.0f,
     val abBypass: Boolean = false,
@@ -45,6 +48,7 @@ data class DacUiState(
     val showPhase: Boolean = false,
     val showGroupDelay: Boolean = false,
     val mixer: MixerConfig = MixerConfig(),
+    val dynamics: DynamicsConfig = DynamicsConfig(),
     val localPresets: List<LocalPreset> = emptyList(),
     val logs: List<String> = emptyList(),
     val statusBanner: String? = null,
@@ -134,7 +138,7 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
         if (!_uiState.value.usbInfo.connected) return
         viewModelScope.launch {
             suppressOfflineDraftTracking = true
-            appendLog("Querying hardware Dual-Mono PEQ & Matrix state...")
+            appendLog("Querying hardware Dual-Mono PEQ, Matrix & Dynamics state...")
             for (b in 0 until DspDefaults.MAX_BANDS) {
                 transport.sendPacket(PeqPacketCodec.buildGetBand(b, PeqChannel.LEFT))
             }
@@ -143,6 +147,9 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
             }
             transport.sendPacket(
                 PeqPacketCodec.buildGetBand(PeqPacketCodec.BAND_IDX_CUSTOM_MATRIX_QUERY, PeqChannel.LINKED)
+            )
+            transport.sendPacket(
+                PeqPacketCodec.buildGetBand(PeqPacketCodec.BAND_IDX_EXT_STATE_QUERY, PeqChannel.LINKED)
             )
             delay(150)
             suppressOfflineDraftTracking = false
@@ -174,15 +181,16 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
             transport.sendPacket(PeqPacketCodec.buildSetMixer(state.mixer))
+            transport.sendPacket(PeqPacketCodec.buildSetDynamics(state.dynamics))
             if (commitToNvs) {
                 transport.sendPacket(PeqPacketCodec.buildSaveToPreset())
                 _uiState.update {
                     it.copy(
                         pendingOfflineDraft = false,
-                        statusBanner = "Pushed profile and committed to NVS v2 flash."
+                        statusBanner = "Pushed profile & committed to NVS v3 flash."
                     )
                 }
-                appendLog("Pushed active state & saved to Hardware NVS.")
+                appendLog("Pushed active state & saved to Hardware NVS v3.")
             } else {
                 _uiState.update {
                     it.copy(
@@ -199,6 +207,19 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
         when (msg) {
             is HidIncomingMessage.MixerMatrixReport -> {
                 _uiState.update { it.copy(mixer = msg.mixer) }
+            }
+            is HidIncomingMessage.ExtendedStateReport -> {
+                _uiState.update { state ->
+                    val updatedNames = state.slotNames.toMutableList()
+                    if (msg.activeSlot in updatedNames.indices) {
+                        updatedNames[msg.activeSlot] = msg.slotName
+                    }
+                    state.copy(
+                        activePresetSlot = msg.activeSlot,
+                        slotNames = updatedNames,
+                        dynamics = msg.dynamics
+                    )
+                }
             }
             is HidIncomingMessage.BandProfileReport -> {
                 _uiState.update { state ->
@@ -327,7 +348,6 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 preampDb = clamped,
-                activePresetSlot = HardwarePreset.USER_CUSTOM.slot,
                 pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft
             )
         }
@@ -352,17 +372,14 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
                 cur.linkedStereo -> cur.copy(
                     leftBands = nextList,
                     rightBands = nextList,
-                    activePresetSlot = HardwarePreset.USER_CUSTOM.slot,
                     pendingOfflineDraft = draftFlag
                 )
                 ch == PeqChannel.RIGHT -> cur.copy(
                     rightBands = nextList,
-                    activePresetSlot = HardwarePreset.USER_CUSTOM.slot,
                     pendingOfflineDraft = draftFlag
                 )
                 else -> cur.copy(
                     leftBands = nextList,
-                    activePresetSlot = HardwarePreset.USER_CUSTOM.slot,
                     pendingOfflineDraft = draftFlag
                 )
             }
@@ -398,19 +415,16 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
                     leftBands = newList,
                     rightBands = newList,
                     selectedBandIdx = newList.lastIndex,
-                    activePresetSlot = HardwarePreset.USER_CUSTOM.slot,
                     pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft
                 )
                 ch == PeqChannel.RIGHT -> it.copy(
                     rightBands = newList,
                     selectedBandIdx = newList.lastIndex,
-                    activePresetSlot = HardwarePreset.USER_CUSTOM.slot,
                     pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft
                 )
                 else -> it.copy(
                     leftBands = newList,
                     selectedBandIdx = newList.lastIndex,
-                    activePresetSlot = HardwarePreset.USER_CUSTOM.slot,
                     pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft
                 )
             }
@@ -434,19 +448,16 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
                     leftBands = newList,
                     rightBands = newList,
                     selectedBandIdx = nextSel,
-                    activePresetSlot = HardwarePreset.USER_CUSTOM.slot,
                     pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft
                 )
                 ch == PeqChannel.RIGHT -> it.copy(
                     rightBands = newList,
                     selectedBandIdx = nextSel,
-                    activePresetSlot = HardwarePreset.USER_CUSTOM.slot,
                     pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft
                 )
                 else -> it.copy(
                     leftBands = newList,
                     selectedBandIdx = nextSel,
-                    activePresetSlot = HardwarePreset.USER_CUSTOM.slot,
                     pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft
                 )
             }
@@ -474,43 +485,231 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun selectHardwarePreset(slot: Int) {
-        _uiState.update { it.copy(activePresetSlot = slot) }
+        val safeSlot = slot.coerceIn(0, DspDefaults.USER_SLOT_COUNT - 1)
+        _uiState.update { it.copy(activePresetSlot = safeSlot) }
         if (_uiState.value.usbInfo.connected) {
-            transport.sendPacket(PeqPacketCodec.buildSelectProfile(slot))
+            transport.sendPacket(PeqPacketCodec.buildSelectProfile(safeSlot))
             viewModelScope.launch {
                 delay(80)
                 syncFromHardware()
             }
-        } else {
-            val presetBands = when (slot) {
-                HardwarePreset.FLAT.slot -> DspDefaults.createDefaultBands(5)
-                HardwarePreset.BASS_BOOST.slot -> listOf(
-                    PeqBand(FilterType.LOW_SHELF.code, 105, 4.5f, 0.71f),
-                    PeqBand(FilterType.PEAKING.code, 250, 0.0f, 1.00f),
-                    PeqBand(FilterType.PEAKING.code, 1000, 0.0f, 1.00f),
-                    PeqBand(FilterType.PEAKING.code, 4000, 0.0f, 1.00f),
-                    PeqBand(FilterType.HIGH_SHELF.code, 12000, 0.0f, 0.71f)
-                )
-                HardwarePreset.HARMAN.slot -> listOf(
-                    PeqBand(FilterType.LOW_SHELF.code, 105, 5.5f, 0.71f),
-                    PeqBand(FilterType.PEAKING.code, 200, -1.5f, 1.20f),
-                    PeqBand(FilterType.PEAKING.code, 1200, 1.0f, 1.40f),
-                    PeqBand(FilterType.PEAKING.code, 3000, 2.5f, 1.80f),
-                    PeqBand(FilterType.HIGH_SHELF.code, 8000, -1.0f, 0.71f)
-                )
-                else -> _uiState.value.leftBands
-            }
-            _uiState.update {
-                it.copy(
-                    leftBands = presetBands,
-                    rightBands = presetBands,
-                    linkedStereo = true,
-                    selectedChannel = PeqChannel.LINKED,
-                    selectedBandIdx = 0
-                )
+        }
+        val slotLabel = _uiState.value.slotNames.getOrElse(safeSlot) { "User ${safeSlot + 1}" }
+        appendLog("Selected hardware NVS v3 Slot ${safeSlot + 1} ($slotLabel).")
+    }
+
+    fun applyStarterCurve(curveKey: String) {
+        val (preamp, bands) = when (curveKey) {
+            "bass" -> -2.5f to listOf(
+                PeqBand(FilterType.LOW_SHELF.code, 80, 4.5f, 0.71f),
+                PeqBand(FilterType.PEAKING.code, 250, 1.5f, 1.00f),
+                PeqBand(FilterType.PEAKING.code, 1000, 0.0f, 1.00f),
+                PeqBand(FilterType.PEAKING.code, 4000, -1.0f, 1.00f),
+                PeqBand(FilterType.HIGH_SHELF.code, 10000, 0.5f, 0.71f)
+            )
+            "harman" -> -4.0f to listOf(
+                PeqBand(FilterType.LOW_SHELF.code, 105, 5.0f, 0.71f),
+                PeqBand(FilterType.PEAKING.code, 200, -1.5f, 1.20f),
+                PeqBand(FilterType.PEAKING.code, 1200, 1.0f, 1.40f),
+                PeqBand(FilterType.PEAKING.code, 3000, 2.5f, 1.80f),
+                PeqBand(FilterType.HIGH_SHELF.code, 8000, -1.0f, 0.71f)
+            )
+            else -> 0.0f to DspDefaults.createDefaultBands(5)
+        }
+        _uiState.update {
+            it.copy(
+                linkedStereo = true,
+                selectedChannel = PeqChannel.LINKED,
+                preampDb = preamp,
+                leftBands = bands,
+                rightBands = bands,
+                selectedBandIdx = 0,
+                pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft,
+                statusBanner = "Loaded '$curveKey' starter curve into Slot ${it.activePresetSlot + 1}."
+            )
+        }
+        if (_uiState.value.usbInfo.connected) {
+            transport.sendPacket(PeqPacketCodec.buildSetDualMono(true))
+            transport.sendPacket(PeqPacketCodec.buildSetBandCount(bands.size, PeqChannel.LINKED))
+            transport.sendPacket(PeqPacketCodec.buildSetPreampLive(preamp))
+            bands.forEachIndexed { idx, b ->
+                transport.sendPacket(PeqPacketCodec.buildSetBandLive(idx, PeqChannel.LINKED, b))
             }
         }
-        appendLog("Selected hardware preset slot #$slot (${HardwarePreset.fromSlot(slot).label}).")
+        appendLog("Applied '$curveKey' starter curve to active Slot ${_uiState.value.activePresetSlot + 1}.")
+    }
+
+    fun renameActiveSlot(newName: String) {
+        val state = _uiState.value
+        val slot = state.activePresetSlot.coerceIn(0, DspDefaults.USER_SLOT_COUNT - 1)
+        val trimmed = newName.trim().take(16).ifEmpty { "User ${slot + 1}" }
+        _uiState.update { cur ->
+            val updated = cur.slotNames.toMutableList()
+            if (slot in updated.indices) updated[slot] = trimmed
+            cur.copy(slotNames = updated, statusBanner = "Renamed Slot ${slot + 1} to '$trimmed'.")
+        }
+        if (state.usbInfo.connected) {
+            transport.sendPacket(PeqPacketCodec.buildRenameSlot(slot, trimmed))
+        }
+        appendLog("Renamed Slot ${slot + 1} to '$trimmed'.")
+    }
+
+    fun factoryResetActiveSlot() {
+        val state = _uiState.value
+        val slot = state.activePresetSlot.coerceIn(0, DspDefaults.USER_SLOT_COUNT - 1)
+        val defaultName = "User ${slot + 1}"
+        val flatBands = DspDefaults.createDefaultBands(5)
+        _uiState.update { cur ->
+            val updated = cur.slotNames.toMutableList()
+            if (slot in updated.indices) updated[slot] = defaultName
+            cur.copy(
+                slotNames = updated,
+                linkedStereo = true,
+                selectedChannel = PeqChannel.LINKED,
+                preampDb = 0.0f,
+                leftBands = flatBands,
+                rightBands = flatBands,
+                selectedBandIdx = 0,
+                statusBanner = "Reset Slot ${slot + 1} to Reference Flat."
+            )
+        }
+        if (state.usbInfo.connected) {
+            transport.sendPacket(PeqPacketCodec.buildFactoryResetSlot(slot))
+        }
+        appendLog("Factory reset Slot ${slot + 1} to Reference Flat.")
+    }
+
+    fun updateDynamics(config: DynamicsConfig) {
+        _uiState.update {
+            it.copy(
+                dynamics = config,
+                pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft
+            )
+        }
+        if (_uiState.value.usbInfo.connected) {
+            transport.sendPacket(PeqPacketCodec.buildSetDynamics(config))
+        }
+    }
+
+    fun updatePowerConfig(autoMuteSec: Int, oledDimSec: Int) {
+        val safeMute = autoMuteSec.coerceIn(0, 3600)
+        val safeDim = oledDimSec.coerceIn(0, 3600)
+        _uiState.update {
+            it.copy(dynamics = it.dynamics.copy(autoMuteSec = safeMute, oledDimSec = safeDim))
+        }
+        if (_uiState.value.usbInfo.connected) {
+            transport.sendPacket(PeqPacketCodec.buildSetPowerConfig(safeMute, safeDim))
+        }
+        appendLog("Updated Power Cfg: Auto-Mute=${safeMute}s, OLED Dim=${safeDim}s.")
+    }
+
+    fun uploadFirFile(bytes: ByteArray, fileName: String) {
+        val state = _uiState.value
+        val ch = state.selectedChannel
+        val parsed = parseFirImpulseBytes(bytes, fileName)
+        if (parsed.isEmpty()) {
+            _uiState.update { it.copy(statusBanner = "No valid FIR taps found in $fileName.") }
+            return
+        }
+        val maxCap = if (state.sampleRateHz > 48000) 128 else 256
+        val taps = if (parsed.size > maxCap) parsed.copyOf(maxCap) else parsed
+        _uiState.update { cur ->
+            val nextL = if (ch == PeqChannel.LINKED || ch == PeqChannel.LEFT) taps.size else cur.dynamics.firTapsL
+            val nextR = if (ch == PeqChannel.LINKED || ch == PeqChannel.RIGHT) taps.size else cur.dynamics.firTapsR
+            cur.copy(
+                dynamics = cur.dynamics.copy(
+                    firEnabled = true,
+                    firTapsL = nextL,
+                    firTapsR = nextR,
+                    firMaxTaps = maxCap
+                ),
+                statusBanner = "Uploaded ${taps.size}-tap FIR (${fileName}) to ${ch.label}."
+            )
+        }
+        if (state.usbInfo.connected) {
+            PeqPacketCodec.buildUploadFirChunks(ch, taps, commitNvs = true).forEach { pkt ->
+                transport.sendPacket(pkt)
+            }
+        }
+        appendLog("Uploaded ${taps.size}-tap FIR (${ch.label}) from $fileName.")
+    }
+
+    fun clearFirImpulse() {
+        val state = _uiState.value
+        val ch = state.selectedChannel
+        _uiState.update { cur ->
+            val nextL = if (ch == PeqChannel.LINKED || ch == PeqChannel.LEFT) 0 else cur.dynamics.firTapsL
+            val nextR = if (ch == PeqChannel.LINKED || ch == PeqChannel.RIGHT) 0 else cur.dynamics.firTapsR
+            cur.copy(
+                dynamics = cur.dynamics.copy(
+                    firEnabled = (nextL > 0 || nextR > 0),
+                    firTapsL = nextL,
+                    firTapsR = nextR
+                ),
+                statusBanner = "Cleared FIR taps on ${ch.label}."
+            )
+        }
+        if (state.usbInfo.connected) {
+            PeqPacketCodec.buildUploadFirChunks(ch, FloatArray(0), commitNvs = true).forEach { pkt ->
+                transport.sendPacket(pkt)
+            }
+        }
+        appendLog("Cleared FIR taps on ${ch.label}.")
+    }
+
+    private fun parseFirImpulseBytes(bytes: ByteArray, fileName: String): FloatArray {
+        val lower = fileName.lowercase(Locale.US)
+        if (lower.endsWith(".wav") && bytes.size >= 44) {
+            val bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN)
+            val riff = String(bytes, 0, 4, Charsets.US_ASCII)
+            val wave = String(bytes, 8, 4, Charsets.US_ASCII)
+            if (riff == "RIFF" && wave == "WAVE") {
+                var pos = 12
+                var audioFmt = 1
+                var channels = 1
+                var bits = 16
+                while (pos + 8 <= bytes.size) {
+                    val id = String(bytes, pos, 4, Charsets.US_ASCII)
+                    val sz = bb.getInt(pos + 4)
+                    val dataOff = pos + 8
+                    if (id == "fmt " && sz >= 16) {
+                        audioFmt = bb.getShort(dataOff).toInt() and 0xFFFF
+                        channels = bb.getShort(dataOff + 2).toInt() and 0xFFFF
+                        bits = bb.getShort(dataOff + 14).toInt() and 0xFFFF
+                    } else if (id == "data" && sz > 0) {
+                        val bps = maxOf(1, bits shr 3)
+                        val frameBytes = bps * maxOf(1, channels)
+                        val avail = minOf(sz, bytes.size - dataOff)
+                        val count = avail / frameBytes
+                        val out = FloatArray(count)
+                        for (f in 0 until count) {
+                            val off = dataOff + f * frameBytes
+                            out[f] = when {
+                                audioFmt == 3 && bits == 32 -> bb.getFloat(off)
+                                bits == 16 -> bb.getShort(off).toFloat() / 32768.0f
+                                bits == 24 -> {
+                                    val b0 = bytes[off].toInt() and 0xFF
+                                    val b1 = bytes[off + 1].toInt() and 0xFF
+                                    val b2 = bytes[off + 2].toInt()
+                                    ((b0 or (b1 shl 8) or (b2 shl 16)).toFloat()) / 8388608.0f
+                                }
+                                bits == 32 -> bb.getInt(off).toFloat() / 2147483648.0f
+                                else -> 0.0f
+                            }
+                        }
+                        return out
+                    }
+                    pos = dataOff + sz + (sz and 1)
+                }
+            }
+        }
+        val text = String(bytes, Charsets.UTF_8)
+        val list = ArrayList<Float>()
+        text.split(Regex("[\\s,;]+")).forEach { token ->
+            val v = token.trim().toFloatOrNull()
+            if (v != null && v.isFinite()) list.add(v)
+        }
+        return list.toFloatArray()
     }
 
     fun saveToHardwareNvs() {
@@ -522,10 +721,10 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 pendingOfflineDraft = false,
-                statusBanner = "Saved Dual-Mono PEQ & Matrix to NVS v2 flash!"
+                statusBanner = "Saved Slot ${it.activePresetSlot + 1} & Dynamics to NVS v3 flash!"
             )
         }
-        appendLog("Committed Dual-Mono PEQ & Matrix config to ESP32-S3 NVS v2 flash.")
+        appendLog("Committed active slot, Matrix & Studio Dynamics to ESP32-S3 NVS v3 flash.")
     }
 
     fun resetActiveChannelFlat() {
@@ -534,9 +733,9 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
         val ch = state.selectedChannel
         _uiState.update {
             when {
-                it.linkedStereo -> it.copy(leftBands = fresh, rightBands = fresh, preampDb = 0.0f, activePresetSlot = 3)
-                ch == PeqChannel.RIGHT -> it.copy(rightBands = fresh, preampDb = 0.0f, activePresetSlot = 3)
-                else -> it.copy(leftBands = fresh, preampDb = 0.0f, activePresetSlot = 3)
+                it.linkedStereo -> it.copy(leftBands = fresh, rightBands = fresh, preampDb = 0.0f)
+                ch == PeqChannel.RIGHT -> it.copy(rightBands = fresh, preampDb = 0.0f)
+                else -> it.copy(leftBands = fresh, preampDb = 0.0f)
             }
         }
         fresh.forEachIndexed { idx, b -> transport.sendPacket(PeqPacketCodec.buildSetBandLive(idx, ch, b)) }
@@ -578,7 +777,6 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
                 rightBands = if (preset.linkedStereo) preset.leftBands else preset.rightBands,
                 mixer = preset.mixer,
                 selectedBandIdx = 0,
-                activePresetSlot = HardwarePreset.USER_CUSTOM.slot,
                 statusBanner = "Loaded '${preset.name}'."
             )
         }
@@ -619,7 +817,6 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
                         rightBands = if (snap.linkedStereo) snap.leftBands else snap.rightBands,
                         mixer = snap.mixer,
                         selectedBandIdx = 0,
-                        activePresetSlot = HardwarePreset.USER_CUSTOM.slot,
                         pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft,
                         statusBanner = "Imported JSON snapshot ($fileName)."
                     )
@@ -647,7 +844,6 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
                 leftBands = nextLeft,
                 rightBands = nextRight,
                 selectedBandIdx = 0,
-                activePresetSlot = HardwarePreset.USER_CUSTOM.slot,
                 pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft,
                 statusBanner = "Imported ${parsed.bands.size} APO bands ($fileName)."
             )

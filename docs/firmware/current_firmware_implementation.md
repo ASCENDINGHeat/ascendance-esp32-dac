@@ -162,15 +162,16 @@ When parameters, channel mode, matrix/crossfeed, or A/B bypass state change:
    $$y[n] = (1.0 - \beta) \cdot y_{\text{active}}[n] + \beta \cdot y_{\text{target}}[n], \quad \beta \in [0.0, 1.0]$$
 3. **Preamp-Normalized Instant A/B Bypass:** `peq_dsp_set_ab_bypass()` toggles flat EQ comparison across the 15 ms crossfade while keeping `preamp_gain_db` engaged so A vs. B remains loudness-matched (transient only, never persisted to NVS).
 
-### 4.4 Saturation Protection & Pre-Gain Headroom
+### 4.4 Saturation Protection, Lookahead Limiter, Equal Loudness & FIR (`v0.2.0`)
 * **Pre-Gain Headroom:** Pre-attenuates digital input ($0.0\text{ to }-12.0\text{ dB}$) to prevent positive EQ boost stages from exceeding $0\text{ dBFS}$.
-* **Hard Saturation Clamping:** Non-finite samples are zeroed and every output sample is clamped to signed 24-bit full-scale bounds (`[-8388608.0f, 8388607.0f]`) before shifting MSB-aligned into 32-bit I2S slots (`int32_t`).
+* **Lookahead True-Peak Limiter & Soft Clipper:** `1.5 ms` circular stereo delay buffer (`LA_MAX_FRAMES = 144` frames @ 96 kHz), `-0.5 dBFS` (`7918595.0f`) ceiling with `0.4 ms` attack / `100 ms` release envelope, followed by asymptotic soft-knee saturation above `-0.2 dBFS` (`8196846.0f`) ahead of `clamp_s24_to_s32()`.
+* **Fletcher-Munson Equal-Loudness Contour:** Modes `0=Off`, `1=ISO Mild` (`+4.0 dB` @ 80 Hz / `+1.5 dB` @ 10 kHz), `2=ISO Full` (`+6.5 dB` / `+2.5 dB`), dynamically scaled when master volume `< 80%` and defeated cleanly during A/B bypass.
+* **ESP-DSP SIMD FIR Convolution:** `dsps_fir_f32` / PIE SIMD convolution with sample-rate adaptive tap limit (`256` taps/ch @ `44.1 / 48 kHz`, `128` taps/ch @ `96 kHz`) stored in 16-byte aligned internal DRAM and NVS keys `fir_taps_l`/`fir_taps_r`.
 
-### 4.5 Built-In Presets & Versioned NVS v2 Persistence
-1. **Preset 0 (Reference Flat):** 0.0 dB gain across all frequencies (bit-perfect passthrough).
-2. **Preset 1 (Warm Bass Boost):** +4.5 dB Low Shelf @ 80 Hz ($Q = 0.71$) plus multi-band contour.
-3. **Preset 2 (Harman OE2018 Target):** 5-band reference target curve matching Harman headphone standards.
-4. **Preset 3 (User Custom):** Persisted in NVS namespace `audio_peq`, versioned key `user_cfg_v2` (`PEQ_NVS_MAGIC_V2`, CRC32-verified struct storing `linked_stereo`, Left/Right profiles, and `peq_mixer_config_t`), with automatic one-way migration from legacy V1 `user_profile`. Snapshotted under `s_peq_lock` prior to flash I/O and saved with delta checks (`memcmp`).
+### 4.5 8-Slot Editable NVS v3 User Profiles
+All hardcoded factory presets (`Flat`, `Bass Boost`, `Harman`) have been removed in `v0.2.0`. The firmware initializes **8 fully editable, custom-named NVS v3 user slots (`Slot 0..7`)** (`peq_slot_0`..`peq_slot_7` + global `nvs_meta_v3` in namespace `audio_peq`):
+* On clean boot or `peq_dsp_reset_slot_to_flat()`, all 8 slots seed to **Reference Flat** (`"User 1"`..`"User 8"`, 5 ISO bands @ `0.0 dB`).
+* Legacy `v0.1.0` NVS v2 (`user_cfg_v2`) or V1 (`user_profile`) blobs automatically migrate into `Slot 0`. Every write uses CRC32 + `memcmp` delta verification to eliminate redundant flash wear.
 
 ---
 
@@ -186,11 +187,10 @@ Implemented in [`main/audio_pipeline.c`](../../main/audio_pipeline.c).
   - MCLK: Synthesized internally by PCM5102A's internal PLL from BCK.
 * **DMA Buffering:**
   - 8 DMA descriptors $\times$ 256 stereo frames $\times$ 8 bytes = 16,384 bytes DMA FIFO (~42.7 ms at 48 kHz, ~21.3 ms at 96 kHz).
-* **Hardware Soft-Mute Protocol (GPIO 7):**
-  - Pin pulled LOW on boot to isolate DAC analog output while internal rails charge.
-  - Asserted during source handover and sample-rate changes to guarantee zero audible pops or clicks.
+* **Hardware Soft-Mute, USB Suspend & Zero-Signal Auto-Mute (GPIO 7):**
+  - Pin pulled LOW on boot, during source handover/reclocking, on USB bus suspend (`tud_suspend_cb` releasing `ESP_PM_CPU_FREQ_MAX` down to `80 MHz`), and after configurable digital silence (`abs <= 2` on 24-bit, default `10 s`), waking smoothly with a `1 ms` linear soft ramp.
 * **Master Volume Engine:**
-  - Quadratic perceptual volume taper (`norm * norm` where `norm = volume_percent / 100.0f`), exposed via `audio_pipeline_get_volume_factor()` to Core 1's 24-bit->32-bit output stage.
+  - Quadratic perceptual volume taper (`norm * norm` where `norm = volume_percent / 100.0f`), coupled to `peq_dsp_notify_volume_pct()` for Fletcher-Munson equal-loudness compensation.
 * **Startup Verification Chime:**
   - Synthesizes an ascending four-note chime (C5 $523.25\text{ Hz}$, E5 $659.25\text{ Hz}$, G5 $783.99\text{ Hz}$, C6 $1046.50\text{ Hz}$) on boot to verify end-to-end analog hardware integrity.
 
@@ -224,34 +224,20 @@ The system coordinates three operational audio modes using the **4-Phase Zero-Po
 
 Implemented in [`main/controls.c`](../../main/controls.c), [`main/oled_display.c`](../../main/oled_display.c), and [`main/main.c`](../../main/main.c).
 
-### 7.1 Physical Controls: 2 Navigation Buttons + EC11 Quadrature Encoder (Core 0)
-The control subsystem operates as a clean modal state machine across 3 distinct operating modes (**Default Playback Mode**, **Main Menu Navigation Mode**, and **Live EQ Adjust Mode**):
+### 7.1 Physical Controls & SSD1306 OLED Engine (Core 0)
+* **I2C Auto-Probe, Hot-Plug & Burn-In Guard:** Auto-probes `0x3C` / `0x3D` (`10 ms` I2C timeout) with non-blocking `2 s` reconnect probe, `60 s` contrast dimmer (`0x81 0x1F`) + `±1 px` periodic shift, and `180 s` idle blank (`0xAE`).
+* **Cycleable Playback Visualizers (`OLED_VIEW_*`):** `0=HUD` (Classic), `1=CURVE` (`128×28` response plot), `2=VU` (dual horizontal Peak/RMS + `300 ms` peak hold + `CLIP`/`LIM` flags), `3=SPLIT` (`94 px` curve + `30 px` vertical VU).
 
 #### 1. Default Playback Mode (Normal Operation)
-* **Rotary Rotation (GPIO 15/16):** Decoded via ESP32-S3 hardware Pulse Counter (`PCNT Unit 0`). Adjusts master volume in $\pm 2\%$ increments with instant on-screen slider popup and dynamic WS2812B brightness scaling.
-* **Encoder Push Switch (GPIO 17):**
-  - **Short Click:** Toggles Master Mute (`audio_pipeline_set_mute`) and displays soft Red alert on the WS2812B LED.
-  - **Double Click:** Quick NVS Save of active PEQ profile to flash (`"Saved to NVS"`).
-  - **Long Press ($>800\text{ ms}$):** Cycles audio source (`DSP Standalone / USB DAC` $\rightarrow$ `Tone Test` $\rightarrow$ `Frequency Sweep`).
-* **Button 1 (GPIO 18 / ◄ / SW6):**
-  - **Short Click:** **Opens Main Menu** (`UI_MODE_MENU`).
-  - **Long Press ($>800\text{ ms}$):** Cycles EQ preset backward (Custom $\rightarrow$ Harman $\rightarrow$ Bass Boost $\rightarrow$ Flat).
-* **Button 2 (GPIO 10 / ► / SW_NAV2):**
-  - **Short Click:** Cycles EQ preset forward (Flat $\rightarrow$ Bass Boost $\rightarrow$ Harman $\rightarrow$ Custom).
+* **Rotary Rotation (GPIO 15/16):** Adjusts master volume in $\pm 2\%$ increments with instant HUD overlay and dynamic WS2812B scaling.
+* **Encoder Push Switch (GPIO 17):** Short Click toggles Master Mute; Double-Click commits active slot & dynamics to NVS v3; Long Press (`>800 ms`) cycles audio source.
+* **Button 1 (GPIO 18 / ◄ / SW6):** Short Click opens Main Menu; Long Press cycles NVS v3 slots backward (`Slot 7`..`0`).
+* **Button 2 (GPIO 10 / ► / SW_NAV2):** Short Click cycles NVS v3 slots forward (`Slot 0`..`7`); Double-Click cycles OLED Playback Visualizer (`HUD -> Curve -> VU -> Split`).
 
-#### 2. Main Menu Navigation Mode
-* **Rotary Rotation (GPIO 15/16):** Scrolls the cursor through selectable options (`1. Live EQ Adjust`, `2. Preset:<Name>`, `3. Src:<Source>`, `4. Preamp:<dB>`, `5. Save to NVS`, `6. Exit Menu`).
-* **Encoder Switch (GPIO 17):**
-  - **Short Click:** **Confirms / Enters** the highlighted menu item:
-    - `1. Live EQ Adjust`: Enters Live EQ Adjust Mode.
-    - `2. Preset`: Cycles EQ presets forward.
-    - `3. Src`: Cycles audio input source.
-    - `4. Preamp`: Cycles preamp attenuation (0.0 dB $\rightarrow$ -2.0 dB $\rightarrow$ -4.0 dB $\rightarrow$ -6.0 dB).
-    - `5. Save to NVS`: Commits active User Custom profile to NVS flash.
-    - `6. Exit Menu`: Returns to Playback Mode.
-  - **Long Press ($>800\text{ ms}$):** Instant NVS Save.
-* **Button 1 (GPIO 18 / ◄):** **Exit Menu / Back** to Playback Mode.
-* **Button 2 (GPIO 10 / ►):** Scroll down menu list.
+#### 2. Main Menu Navigation Mode (11 Items)
+* **Rotary Rotation / Button 2 (►):** Scrolls through all 11 options (`1. Live EQ Adjust`, `2. Slot:<Name>`, `3. A/B:<Active/Bypass>`, `4. Xfeed:<Off/Low/High>`, `5. Loud:<Off/Mild/Full>`, `6. Limiter:<On/Off>`, `7. OLED:<HUD/Curve/VU/Split>`, `8. Preamp:<dB>`, `9. Src:<Source>`, `10. Save to NVS`, `11. Exit Menu`).
+* **Encoder Switch (GPIO 17):** Confirms/cycles highlighted item; Long Press commits immediately to NVS v3.
+* **Button 1 (◄):** Exits menu back to Playback Mode.
 
 #### 3. On-Device Live EQ Adjust Mode (Digit-by-Digit Laboratory Synthesizer / PEQ Tuner)
 Triggered by selecting **"1. Live EQ Adjust"** in the Main Menu:

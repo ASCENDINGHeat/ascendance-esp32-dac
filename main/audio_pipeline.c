@@ -1,6 +1,7 @@
 #include "audio_pipeline.h"
 #include "board_pins.h"
 #include "led_indicator.h"
+#include "peq_dsp.h"
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -169,6 +170,7 @@ void audio_pipeline_set_volume(int volume_percent)
 
     // Update onboard WS2812B aRGB LED brightness and color
     led_indicator_set_volume(s_master_volume, s_is_muted);
+    peq_dsp_notify_volume_pct(s_master_volume);
 }
 
 int audio_pipeline_get_volume(void)

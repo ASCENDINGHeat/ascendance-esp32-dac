@@ -407,12 +407,26 @@
                             <input type="checkbox" id="chkGroupDelay"> <span style="color: var(--green);">Group Delay (ms)</span>
                         </label>
                     </div>
-                    <select id="presetSelect" style="width: auto; padding: 6px 10px;">
-                        <option value="3">User Custom (Live Audition)</option>
-                        <option value="0">Preset: Reference Flat</option>
-                        <option value="1">Preset: Warm Bass Boost (+4.5 dB)</option>
-                        <option value="2">Preset: Harman OE2018 Target</option>
-                    </select>
+                    <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+                        <select id="presetSelect" style="width: auto; padding: 6px 10px;">
+                            <option value="0">Slot 1: User 1</option>
+                            <option value="1">Slot 2: User 2</option>
+                            <option value="2">Slot 3: User 3</option>
+                            <option value="3">Slot 4: User 4</option>
+                            <option value="4">Slot 5: User 5</option>
+                            <option value="5">Slot 6: User 6</option>
+                            <option value="6">Slot 7: User 7</option>
+                            <option value="7">Slot 8: User 8</option>
+                        </select>
+                        <button id="btnRenameSlot" title="Rename active hardware slot (stored in NVS v3)" style="padding: 5px 8px; font-size: 0.78rem;">✏ Rename</button>
+                        <button id="btnResetSlot" title="Reset active hardware slot to Reference Flat" style="padding: 5px 8px; font-size: 0.78rem;">↺ Reset Slot</button>
+                        <select id="starterSelect" title="Load an optional starter curve into the current slot" style="width: auto; padding: 5px 8px; font-size: 0.78rem;">
+                            <option value="">✨ Load Starter...</option>
+                            <option value="flat">Reference Flat (0 dB)</option>
+                            <option value="bass">Warm Bass Boost (+4.5 dB)</option>
+                            <option value="harman">Harman OE2018 Target</option>
+                        </select>
+                    </div>
                 </div>
             </div>
             <canvas id="eqCanvas" width="880" height="210" style="cursor: crosshair;"></canvas>
@@ -520,6 +534,69 @@
             </div>
         </div>
 
+        <div class="card">
+            <div class="card-header">
+                <span>Studio Dynamics, ESP-DSP FIR &amp; Power Management (v0.2.0)</span>
+                <span id="firStatusBadge" style="font-family: monospace; font-size: 0.78rem; color: var(--text-secondary);">FIR: Off (0 taps)</span>
+            </div>
+            <div class="mixer-grid" style="margin-bottom: 12px;">
+                <div>
+                    <div class="control-label-row">
+                        <label><input type="checkbox" id="chkLimiter" checked> Lookahead True-Peak Limiter (-0.5 dBFS)</label>
+                    </div>
+                    <div style="font-size: 0.75rem; color: var(--text-secondary);">1.5 ms lookahead + soft-knee clipper above -0.2 dBFS</div>
+                </div>
+                <div>
+                    <div class="control-label-row">
+                        <span>Fletcher-Munson Equal Loudness:</span>
+                    </div>
+                    <select id="loudnessSelect">
+                        <option value="0">Off (Linear Reference)</option>
+                        <option value="1">ISO 226 Mild (+4.0 dB Bass / +1.5 dB Treble)</option>
+                        <option value="2">ISO 226 Full (+6.5 dB Bass / +2.5 dB Treble)</option>
+                    </select>
+                </div>
+                <div>
+                    <div class="control-label-row">
+                        <span>OLED Playback View:</span>
+                    </div>
+                    <select id="oledViewSelect">
+                        <option value="0">0: Classic HUD</option>
+                        <option value="1">1: 128×28 EQ Curve Plot</option>
+                        <option value="2">2: Dual Horizontal VU + CLIP/LIM</option>
+                        <option value="3">3: Split Curve + Vertical VU</option>
+                    </select>
+                </div>
+                <div>
+                    <div class="control-label-row">
+                        <span>Zero-Signal Auto-Mute / OLED Dimmer:</span>
+                    </div>
+                    <div style="display: flex; gap: 8px;">
+                        <select id="autoMuteSelect" style="flex: 1;">
+                            <option value="0">Mute: Off</option>
+                            <option value="10" selected>Mute: 10s</option>
+                            <option value="30">Mute: 30s</option>
+                            <option value="60">Mute: 60s</option>
+                        </select>
+                        <select id="oledDimSelect" style="flex: 1;">
+                            <option value="0">Dim: Off</option>
+                            <option value="60" selected>Dim: 60s / Blank 180s</option>
+                            <option value="120">Dim: 120s</option>
+                        </select>
+                    </div>
+                </div>
+            </div>
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; border-top: 1px solid var(--border); padding-top: 10px;">
+                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                    <label><input type="checkbox" id="chkFirEnabled"> Enable FIR Convolution (SIMD)</label>
+                    <input type="file" id="firFileInput" accept=".txt,.csv,.wav" style="display: none;">
+                    <button id="btnUploadFir" title="Load Impulse Response (.txt float taps or PCM .wav, capped 256@48k / 128@96k)">📐 Load FIR (.txt / .wav)</button>
+                    <button id="btnClearFir">✖ Clear FIR</button>
+                </div>
+                <span style="font-size: 0.74rem; color: var(--text-secondary);">Active target follows Dual-Mono channel selector (Linked / L / R)</span>
+            </div>
+        </div>
+
         <div class="card" style="padding: 12px;">
             <div class="card-header" style="margin-bottom: 8px; font-size: 0.85rem;">Hardware Event Log</div>
             <div class="log-box" id="logBox">Awaiting WebHID connection via Chrome/Edge...</div>
@@ -541,7 +618,14 @@
         const CMD_SET_BAND_COUNT     = 0x07;
         const CMD_SET_AB_BYPASS      = 0x08;
         const CMD_SET_DUAL_MONO      = 0x09;
+        const CMD_RENAME_SLOT        = 0x0A;
+        const CMD_SET_DYNAMICS       = 0x0B;
+        const CMD_SET_POWER_CFG      = 0x0C;
+        const CMD_FACTORY_RESET_SLOT = 0x0D;
         const CMD_SET_MIXER          = 0x13;
+        const CMD_UPLOAD_FIR_CHUNK   = 0x14;
+        const SUB_EXT_STATE          = 0xFD;
+        const SUB_MIXER              = 0xFE;
 
         const CH_LINKED = 0;
         const CH_LEFT   = 1;
@@ -621,6 +705,9 @@
         const btnChLeft = document.getElementById('btnChLeft');
         const btnChRight = document.getElementById('btnChRight');
         const presetSelect = document.getElementById('presetSelect');
+        const btnRenameSlot = document.getElementById('btnRenameSlot');
+        const btnResetSlot = document.getElementById('btnResetSlot');
+        const starterSelect = document.getElementById('starterSelect');
         const bandCountSelect = document.getElementById('bandCountSelect');
         const customBandCountInput = document.getElementById('customBandCountInput');
         const bandCountLabel = document.getElementById('bandCountLabel');
@@ -639,12 +726,62 @@
         const matRL = document.getElementById('matRL');
         const matLR = document.getElementById('matLR');
         const matRR = document.getElementById('matRR');
+        const chkLimiter = document.getElementById('chkLimiter');
+        const loudnessSelect = document.getElementById('loudnessSelect');
+        const oledViewSelect = document.getElementById('oledViewSelect');
+        const autoMuteSelect = document.getElementById('autoMuteSelect');
+        const oledDimSelect = document.getElementById('oledDimSelect');
+        const chkFirEnabled = document.getElementById('chkFirEnabled');
+        const firFileInput = document.getElementById('firFileInput');
+        const btnUploadFir = document.getElementById('btnUploadFir');
+        const btnClearFir = document.getElementById('btnClearFir');
+        const firStatusBadge = document.getElementById('firStatusBadge');
         const fileImportInput = document.getElementById('fileImportInput');
         const btnImportFile = document.getElementById('btnImportFile');
         const btnExportApo = document.getElementById('btnExportApo');
         const btnExportJson = document.getElementById('btnExportJson');
         const canvas = document.getElementById('eqCanvas');
         const ctx = canvas.getContext('2d');
+
+        let activeSlotIdx = 0;
+        const slotNames = Array.from({ length: 8 }, (_, i) => `User ${i + 1}`);
+        let dynamicsState = {
+            limiterEnabled: true,
+            loudnessMode: 0,
+            firEnabled: false,
+            oledView: 0,
+            autoMuteSec: 10,
+            oledDimSec: 60,
+            firTapsL: 0,
+            firTapsR: 0,
+            firMaxTaps: 256
+        };
+
+        function updateSlotOptionLabels() {
+            for (let i = 0; i < 8; i++) {
+                const opt = presetSelect.options[i];
+                if (opt) opt.textContent = `Slot ${i + 1}: ${slotNames[i] || `User ${i + 1}`}`;
+            }
+            presetSelect.value = String(activeSlotIdx);
+        }
+
+        function updateDynamicsUI() {
+            chkLimiter.checked = !!dynamicsState.limiterEnabled;
+            loudnessSelect.value = String(dynamicsState.loudnessMode);
+            oledViewSelect.value = String(dynamicsState.oledView);
+            chkFirEnabled.checked = !!dynamicsState.firEnabled;
+            if ([...autoMuteSelect.options].some(o => Number(o.value) === dynamicsState.autoMuteSec)) {
+                autoMuteSelect.value = String(dynamicsState.autoMuteSec);
+            }
+            if ([...oledDimSelect.options].some(o => Number(o.value) === dynamicsState.oledDimSec)) {
+                oledDimSelect.value = String(dynamicsState.oledDimSec);
+            }
+            const maxCap = (sampleRateHz > 48000) ? 128 : 256;
+            firStatusBadge.textContent = dynamicsState.firEnabled
+                ? `FIR: ON (L:${dynamicsState.firTapsL} / R:${dynamicsState.firTapsR} taps, cap ${maxCap})`
+                : `FIR: Off (L:${dynamicsState.firTapsL} / R:${dynamicsState.firTapsR} loaded, cap ${maxCap})`;
+            firStatusBadge.style.color = dynamicsState.firEnabled ? 'var(--green)' : 'var(--text-secondary)';
+        }
 
         function log(msg) {
             const time = new Date().toLocaleTimeString();
@@ -660,8 +797,8 @@
             return type === 1 || type === 2 || type === 3;
         }
 
-        const PRESET_DEFINITIONS = {
-            0: {
+        const STARTER_CURVES = {
+            flat: {
                 preamp: 0.0,
                 bands: [
                     { type: 2, freq: 80, gain: 0.0, q: 0.71 },
@@ -671,7 +808,7 @@
                     { type: 3, freq: 10000, gain: 0.0, q: 0.71 }
                 ]
             },
-            1: {
+            bass: {
                 preamp: -2.5,
                 bands: [
                     { type: 2, freq: 80, gain: 4.5, q: 0.71 },
@@ -681,7 +818,7 @@
                     { type: 3, freq: 10000, gain: 0.5, q: 0.71 }
                 ]
             },
-            2: {
+            harman: {
                 preamp: -4.0,
                 bands: [
                     { type: 2, freq: 105, gain: 5.0, q: 0.71 },
@@ -951,7 +1088,7 @@
                 q: 1.00
             });
             currentBandCount = activeBands.length;
-            presetSelect.value = "3";
+            /* edit in active slot */
             updateBandCountUI();
             renderBands();
             await sendSetBandCount(currentBandCount);
@@ -966,7 +1103,7 @@
             }
             activeBands.splice(idx, 1);
             currentBandCount = activeBands.length;
-            presetSelect.value = "3";
+            /* edit in active slot */
             hoveredBandIdx = -1;
             draggedBandIdx = -1;
             updateBandCountUI();
@@ -995,7 +1132,7 @@
                 }
             }
             currentBandCount = count;
-            presetSelect.value = "3";
+            /* edit in active slot */
             updateBandCountUI();
             renderBands();
             await sendSetBandCount(currentBandCount);
@@ -1080,7 +1217,7 @@
                 fSlider.oninput = (e) => {
                     activeBands[i].freq = parseFloat(e.target.value);
                     fNum.value = Math.round(activeBands[i].freq);
-                    presetSelect.value = "3";
+                    /* edit in active slot */
                     sendBandLive(i);
                     drawCurve();
                 };
@@ -1089,7 +1226,7 @@
                     if (!isNaN(val) && val >= 20 && val <= 20000) {
                         activeBands[i].freq = val;
                         fSlider.value = val;
-                        presetSelect.value = "3";
+                        /* edit in active slot */
                         sendBandLive(i);
                         drawCurve();
                     }
@@ -1099,7 +1236,7 @@
                     activeBands[i].freq = val;
                     fNum.value = val;
                     fSlider.value = val;
-                    presetSelect.value = "3";
+                    /* edit in active slot */
                     sendBandLive(i);
                     drawCurve();
                 };
@@ -1110,7 +1247,7 @@
                 gSlider.oninput = (e) => {
                     activeBands[i].gain = parseFloat(e.target.value);
                     gNum.value = activeBands[i].gain.toFixed(1);
-                    presetSelect.value = "3";
+                    /* edit in active slot */
                     sendBandLive(i);
                     drawCurve();
                 };
@@ -1119,7 +1256,7 @@
                     if (!isNaN(val) && val >= -24.0 && val <= 12.0) {
                         activeBands[i].gain = val;
                         gSlider.value = val;
-                        presetSelect.value = "3";
+                        /* edit in active slot */
                         sendBandLive(i);
                         drawCurve();
                     }
@@ -1129,7 +1266,7 @@
                     activeBands[i].gain = val;
                     gNum.value = val.toFixed(1);
                     gSlider.value = val;
-                    presetSelect.value = "3";
+                    /* edit in active slot */
                     sendBandLive(i);
                     drawCurve();
                 };
@@ -1140,7 +1277,7 @@
                 qSlider.oninput = (e) => {
                     activeBands[i].q = parseFloat(e.target.value);
                     qNum.value = activeBands[i].q.toFixed(2);
-                    presetSelect.value = "3";
+                    /* edit in active slot */
                     sendBandLive(i);
                     drawCurve();
                 };
@@ -1149,7 +1286,7 @@
                     if (!isNaN(val) && val >= 0.10 && val <= 10.00) {
                         activeBands[i].q = val;
                         qSlider.value = val;
-                        presetSelect.value = "3";
+                        /* edit in active slot */
                         sendBandLive(i);
                         drawCurve();
                     }
@@ -1159,7 +1296,7 @@
                     activeBands[i].q = val;
                     qNum.value = val.toFixed(2);
                     qSlider.value = val;
-                    presetSelect.value = "3";
+                    /* edit in active slot */
                     sendBandLive(i);
                     drawCurve();
                 };
@@ -1168,7 +1305,7 @@
                 const tSelect = card.querySelector(`#type_${i}`);
                 tSelect.onchange = (e) => {
                     activeBands[i].type = parseInt(e.target.value, 10);
-                    presetSelect.value = "3";
+                    /* edit in active slot */
                     sendBandLive(i);
                     renderBands();
                 };
@@ -1384,7 +1521,7 @@
                 rightBands = JSON.parse(JSON.stringify(leftBands));
             }
             currentBandCount = activeBands.length;
-            presetSelect.value = "3";
+            /* edit in active slot */
             updateBandCountUI();
             renderBands();
             await sendPreampLive(preampDb);
@@ -1435,7 +1572,7 @@
         preampSlider.oninput = (e) => {
             preampDb = parseFloat(e.target.value);
             preampNum.value = preampDb.toFixed(1);
-            presetSelect.value = "3";
+            /* edit in active slot */
             sendPreampLive(preampDb);
             drawCurve();
         };
@@ -1444,7 +1581,7 @@
             if (!isNaN(val) && val >= -12.0 && val <= 0.0) {
                 preampDb = val;
                 preampSlider.value = val;
-                presetSelect.value = "3";
+                /* edit in active slot */
                 sendPreampLive(preampDb);
                 drawCurve();
             }
@@ -1454,24 +1591,77 @@
             preampDb = val;
             preampNum.value = val.toFixed(1);
             preampSlider.value = val;
-            presetSelect.value = "3";
+            /* edit in active slot */
             sendPreampLive(preampDb);
             drawCurve();
         };
         preampNum.onkeydown = (e) => { if (e.key === 'Enter') preampNum.blur(); };
 
+        async function fetchAllSlotState() {
+            for (let b = 0; b < 10; b++) await sendGetBand(b, CH_LEFT);
+            for (let b = 0; b < 10; b++) await sendGetBand(b, CH_RIGHT);
+            await sendGetBand(SUB_MIXER, CH_LINKED);
+            await sendGetBand(SUB_EXT_STATE, CH_LINKED);
+        }
+
         presetSelect.onchange = async (e) => {
-            const slot = parseInt(e.target.value, 10);
-            if (PRESET_DEFINITIONS[slot]) {
-                const p = PRESET_DEFINITIONS[slot];
-                preampDb = p.preamp;
-                preampNum.value = preampDb.toFixed(1);
-                preampSlider.value = preampDb;
-                leftBands = JSON.parse(JSON.stringify(p.bands));
-                rightBands = JSON.parse(JSON.stringify(p.bands));
-                selectEditorChannel(CH_LINKED);
-            }
+            const slot = clamp(parseInt(e.target.value, 10), 0, 7);
+            activeSlotIdx = slot;
             await sendSelectProfile(slot);
+            if (hidDevice && hidDevice.opened) {
+                await fetchAllSlotState();
+            }
+            log(`Switched to Slot ${slot + 1}: ${slotNames[slot]}`);
+        };
+
+        starterSelect.onchange = async (e) => {
+            const key = e.target.value;
+            e.target.value = "";
+            const p = STARTER_CURVES[key];
+            if (!p) return;
+            preampDb = p.preamp;
+            preampNum.value = preampDb.toFixed(1);
+            preampSlider.value = preampDb;
+            leftBands = JSON.parse(JSON.stringify(p.bands));
+            rightBands = JSON.parse(JSON.stringify(p.bands));
+            linkedStereo = true;
+            selectEditorChannel(CH_LINKED);
+            if (hidDevice && hidDevice.opened) {
+                await sendDualMonoMode(true);
+                await sendSetBandCount(leftBands.length, CH_LINKED);
+                await sendPreampLive(preampDb);
+                for (let i = 0; i < leftBands.length; i++) await sendBandLive(i, CH_LINKED, leftBands[i]);
+            }
+            drawCurve();
+            log(`Loaded "${key}" starter template into active Slot ${activeSlotIdx + 1}.`);
+        };
+
+        btnRenameSlot.onclick = async () => {
+            const current = slotNames[activeSlotIdx] || `User ${activeSlotIdx + 1}`;
+            const entered = prompt(`Rename Slot ${activeSlotIdx + 1} (max 16 chars):`, current);
+            if (entered === null) return;
+            const trimmed = entered.trim().slice(0, 16) || `User ${activeSlotIdx + 1}`;
+            slotNames[activeSlotIdx] = trimmed;
+            updateSlotOptionLabels();
+            await sendRenameSlot(activeSlotIdx, trimmed);
+            log(`Renamed Slot ${activeSlotIdx + 1} to "${trimmed}" (saved to NVS v3).`);
+        };
+
+        btnResetSlot.onclick = async () => {
+            if (!confirm(`Factory-reset Slot ${activeSlotIdx + 1} (${slotNames[activeSlotIdx]}) to Reference Flat?`)) return;
+            slotNames[activeSlotIdx] = `User ${activeSlotIdx + 1}`;
+            const p = STARTER_CURVES.flat;
+            preampDb = 0.0;
+            preampNum.value = "0.0";
+            preampSlider.value = 0;
+            leftBands = JSON.parse(JSON.stringify(p.bands));
+            rightBands = JSON.parse(JSON.stringify(p.bands));
+            linkedStereo = true;
+            selectEditorChannel(CH_LINKED);
+            updateSlotOptionLabels();
+            await sendFactoryResetSlot(activeSlotIdx);
+            drawCurve();
+            log(`Reset Slot ${activeSlotIdx + 1} to Reference Flat.`);
         };
 
         // Pointer Handlers on Canvas
@@ -1496,7 +1686,7 @@
                 if (filterUsesGain(activeBands[draggedBandIdx].type)) {
                     activeBands[draggedBandIdx].gain = yToGain(coords.y);
                 }
-                presetSelect.value = "3";
+                /* edit in active slot */
                 syncBandControls(draggedBandIdx);
                 sendBandLive(draggedBandIdx);
                 drawCurve();
@@ -1536,7 +1726,7 @@
                 e.preventDefault();
                 const delta = e.deltaY < 0 ? 0.05 : -0.05;
                 activeBands[hitIdx].q = clamp(Math.round((activeBands[hitIdx].q + delta) * 100) / 100, 0.10, 10.00);
-                presetSelect.value = "3";
+                /* edit in active slot */
                 syncBandControls(hitIdx);
                 sendBandLive(hitIdx);
                 drawCurve();
@@ -1548,7 +1738,7 @@
             const hitIdx = findHoveredBand(coords.x, coords.y, 14);
             if (hitIdx !== -1) {
                 activeBands[hitIdx].gain = 0.0;
-                presetSelect.value = "3";
+                /* edit in active slot */
                 syncBandControls(hitIdx);
                 sendBandLive(hitIdx);
                 drawCurve();
@@ -1664,6 +1854,190 @@
             await sendReport64(buffer);
         }
 
+        async function sendRenameSlot(slot, nameStr) {
+            const buffer = new ArrayBuffer(64);
+            const view = new DataView(buffer);
+            view.setUint16(0, WEBHID_MAGIC_16, true);
+            view.setUint8(2, CMD_RENAME_SLOT);
+            view.setUint8(3, clamp(slot, 0, 7));
+            const bytes = new TextEncoder().encode(String(nameStr || "").slice(0, 16));
+            new Uint8Array(buffer, 12, 16).set(bytes);
+            await sendReport64(buffer);
+        }
+
+        async function sendDynamicsConfig() {
+            const buffer = new ArrayBuffer(64);
+            const view = new DataView(buffer);
+            view.setUint16(0, WEBHID_MAGIC_16, true);
+            view.setUint8(2, CMD_SET_DYNAMICS);
+            view.setUint8(3, clamp(dynamicsState.oledView, 0, 3));
+            view.setUint8(4, clamp(dynamicsState.loudnessMode, 0, 2));
+            const flags = (dynamicsState.limiterEnabled ? 0x01 : 0x00) |
+                          (dynamicsState.firEnabled ? 0x02 : 0x00);
+            view.setUint8(5, flags);
+            await sendReport64(buffer);
+        }
+
+        async function sendPowerConfig() {
+            const buffer = new ArrayBuffer(64);
+            const view = new DataView(buffer);
+            view.setUint16(0, WEBHID_MAGIC_16, true);
+            view.setUint8(2, CMD_SET_POWER_CFG);
+            view.setUint16(6, clamp(dynamicsState.autoMuteSec, 0, 3600), true);
+            view.setUint16(10, clamp(dynamicsState.oledDimSec, 0, 3600), true);
+            await sendReport64(buffer);
+        }
+
+        async function sendFactoryResetSlot(slot) {
+            const buffer = new ArrayBuffer(64);
+            const view = new DataView(buffer);
+            view.setUint16(0, WEBHID_MAGIC_16, true);
+            view.setUint8(2, CMD_FACTORY_RESET_SLOT);
+            view.setUint8(3, clamp(slot, 0, 7));
+            await sendReport64(buffer);
+        }
+
+        async function sendFirTaps(ch, floatArray, commitNvs = true) {
+            const total = floatArray.length;
+            if (total === 0) {
+                const buffer = new ArrayBuffer(64);
+                const view = new DataView(buffer);
+                view.setUint16(0, WEBHID_MAGIC_16, true);
+                view.setUint8(2, CMD_UPLOAD_FIR_CHUNK);
+                view.setUint8(3, ch);
+                view.setUint8(4, 0);
+                view.setUint8(5, commitNvs ? 1 : 0);
+                view.setUint16(6, 0, true);
+                view.setUint16(10, 0, true);
+                await sendReport64(buffer);
+                return;
+            }
+            for (let offset = 0; offset < total; offset += 12) {
+                const count = Math.min(12, total - offset);
+                const isLast = (offset + count >= total);
+                const buffer = new ArrayBuffer(64);
+                const view = new DataView(buffer);
+                view.setUint16(0, WEBHID_MAGIC_16, true);
+                view.setUint8(2, CMD_UPLOAD_FIR_CHUNK);
+                view.setUint8(3, ch);
+                view.setUint8(4, count);
+                view.setUint8(5, (commitNvs && isLast) ? 1 : 0);
+                view.setUint16(6, total, true);
+                view.setUint16(10, offset, true);
+                for (let k = 0; k < count; k++) {
+                    view.setFloat32(12 + k * 4, floatArray[offset + k], true);
+                }
+                await sendReport64(buffer);
+            }
+        }
+
+        function parseFirFileBuffer(fileName, arrayBuf) {
+            const lower = fileName.toLowerCase();
+            if (lower.endsWith('.wav') && arrayBuf.byteLength >= 44) {
+                const dv = new DataView(arrayBuf);
+                const riff = String.fromCharCode(dv.getUint8(0), dv.getUint8(1), dv.getUint8(2), dv.getUint8(3));
+                const wave = String.fromCharCode(dv.getUint8(8), dv.getUint8(9), dv.getUint8(10), dv.getUint8(11));
+                if (riff === 'RIFF' && wave === 'WAVE') {
+                    let pos = 12, audioFmt = 1, channels = 1, bits = 16;
+                    const taps = [];
+                    while (pos + 8 <= arrayBuf.byteLength) {
+                        const id = String.fromCharCode(dv.getUint8(pos), dv.getUint8(pos + 1), dv.getUint8(pos + 2), dv.getUint8(pos + 3));
+                        const sz = dv.getUint32(pos + 4, true);
+                        const dataOff = pos + 8;
+                        if (id === 'fmt ' && sz >= 16) {
+                            audioFmt = dv.getUint16(dataOff, true);
+                            channels = dv.getUint16(dataOff + 2, true);
+                            bits = dv.getUint16(dataOff + 14, true);
+                        } else if (id === 'data') {
+                            const bytesPerSample = Math.max(1, bits >> 3);
+                            const frameBytes = bytesPerSample * Math.max(1, channels);
+                            const numFrames = Math.floor(Math.min(sz, arrayBuf.byteLength - dataOff) / frameBytes);
+                            for (let f = 0; f < numFrames; f++) {
+                                const off = dataOff + f * frameBytes;
+                                let val = 0.0;
+                                if (audioFmt === 3 && bits === 32) {
+                                    val = dv.getFloat32(off, true);
+                                } else if (bits === 16) {
+                                    val = dv.getInt16(off, true) / 32768.0;
+                                } else if (bits === 24) {
+                                    const b0 = dv.getUint8(off), b1 = dv.getUint8(off + 1), b2 = dv.getInt8(off + 2);
+                                    val = ((b0 | (b1 << 8) | (b2 << 16))) / 8388608.0;
+                                } else if (bits === 32) {
+                                    val = dv.getInt32(off, true) / 2147483648.0;
+                                }
+                                taps.push(val);
+                            }
+                            break;
+                        }
+                        pos = dataOff + sz + (sz & 1);
+                    }
+                    return taps;
+                }
+            }
+            const text = new TextDecoder().decode(arrayBuf);
+            return text.split(/[\s,;]+/).map(s => parseFloat(s.trim())).filter(n => Number.isFinite(n));
+        }
+
+        chkLimiter.onchange = () => {
+            dynamicsState.limiterEnabled = chkLimiter.checked;
+            updateDynamicsUI();
+            sendDynamicsConfig();
+        };
+        loudnessSelect.onchange = () => {
+            dynamicsState.loudnessMode = clamp(parseInt(loudnessSelect.value, 10), 0, 2);
+            updateDynamicsUI();
+            sendDynamicsConfig();
+        };
+        oledViewSelect.onchange = () => {
+            dynamicsState.oledView = clamp(parseInt(oledViewSelect.value, 10), 0, 3);
+            updateDynamicsUI();
+            sendDynamicsConfig();
+        };
+        chkFirEnabled.onchange = () => {
+            dynamicsState.firEnabled = chkFirEnabled.checked;
+            updateDynamicsUI();
+            sendDynamicsConfig();
+        };
+        autoMuteSelect.onchange = () => {
+            dynamicsState.autoMuteSec = clamp(parseInt(autoMuteSelect.value, 10), 0, 3600);
+            sendPowerConfig();
+        };
+        oledDimSelect.onchange = () => {
+            dynamicsState.oledDimSec = clamp(parseInt(oledDimSelect.value, 10), 0, 3600);
+            sendPowerConfig();
+        };
+        btnUploadFir.onclick = () => firFileInput.click();
+        firFileInput.onchange = async (e) => {
+            const file = e.target.files[0];
+            e.target.value = "";
+            if (!file) return;
+            const buf = await file.arrayBuffer();
+            let taps = parseFirFileBuffer(file.name, buf);
+            if (taps.length === 0) {
+                alert("No valid FIR impulse samples found in file.");
+                return;
+            }
+            const maxCap = (sampleRateHz > 48000) ? 128 : 256;
+            if (taps.length > maxCap) {
+                log(`FIR notice: truncated ${taps.length} taps to ${maxCap} for ${sampleRateHz} Hz.`);
+                taps = taps.slice(0, maxCap);
+            }
+            if (selectedChannel === CH_LINKED || selectedChannel === CH_LEFT) dynamicsState.firTapsL = taps.length;
+            if (selectedChannel === CH_LINKED || selectedChannel === CH_RIGHT) dynamicsState.firTapsR = taps.length;
+            dynamicsState.firEnabled = true;
+            updateDynamicsUI();
+            await sendFirTaps(selectedChannel, taps, true);
+            log(`Uploaded ${taps.length}-tap FIR impulse from ${file.name} to Ch${selectedChannel}.`);
+        };
+        btnClearFir.onclick = async () => {
+            if (selectedChannel === CH_LINKED || selectedChannel === CH_LEFT) dynamicsState.firTapsL = 0;
+            if (selectedChannel === CH_LINKED || selectedChannel === CH_RIGHT) dynamicsState.firTapsR = 0;
+            if (dynamicsState.firTapsL === 0 && dynamicsState.firTapsR === 0) dynamicsState.firEnabled = false;
+            updateDynamicsUI();
+            await sendFirTaps(selectedChannel, [], true);
+            log(`Cleared FIR impulse on Ch${selectedChannel}.`);
+        };
+
         async function disconnectDevice() {
             if (hidDevice) {
                 await hidDevice.close();
@@ -1718,6 +2092,30 @@
                         return;
                     }
 
+                    if (cmd === CMD_SET_DYNAMICS && evt.data.byteLength >= 32) {
+                        const slotIdx = evt.data.getUint8(4);
+                        const dynFlags = evt.data.getUint8(5);
+                        dynamicsState.autoMuteSec = evt.data.getUint16(6, true);
+                        dynamicsState.oledDimSec = evt.data.getUint16(8, true);
+                        dynamicsState.firTapsL = evt.data.getUint16(10, true);
+                        dynamicsState.limiterEnabled = ((dynFlags & 0x01) !== 0);
+                        dynamicsState.loudnessMode = (dynFlags >> 1) & 0x03;
+                        dynamicsState.firEnabled = ((dynFlags & 0x08) !== 0);
+                        dynamicsState.oledView = (dynFlags >> 4) & 0x03;
+                        dynamicsState.firTapsR = evt.data.getUint16(28, true);
+                        dynamicsState.firMaxTaps = evt.data.getUint16(30, true);
+                        const nameBytes = new Uint8Array(evt.data.buffer, evt.data.byteOffset + 12, 16);
+                        const nul = nameBytes.indexOf(0);
+                        const decodedName = new TextDecoder().decode(nul >= 0 ? nameBytes.subarray(0, nul) : nameBytes);
+                        if (slotIdx < 8) {
+                            activeSlotIdx = slotIdx;
+                            if (decodedName) slotNames[slotIdx] = decodedName;
+                            updateSlotOptionLabels();
+                        }
+                        updateDynamicsUI();
+                        return;
+                    }
+
                     if (cmd !== CMD_GET_ACTIVE_PROFILE) return;
 
                     const bIdx = evt.data.getUint8(3);
@@ -1740,12 +2138,16 @@
                     if (sr === 44100 || sr === 48000 || sr === 96000) {
                         sampleRateHz = sr;
                         rateBadge.textContent = `${(sr / 1000).toFixed(1)} kHz / 24b`;
+                        updateDynamicsUI();
                     }
 
                     preampDb = preampX10 / 10.0;
                     preampNum.value = preampDb.toFixed(1);
                     preampSlider.value = preampDb;
-                    presetSelect.value = String(activeSlot);
+                    if (activeSlot < 8) {
+                        activeSlotIdx = activeSlot;
+                        presetSelect.value = String(activeSlot);
+                    }
 
                     mixerState.mode = evt.data.getUint8(18);
                     mixerState.balance = evt.data.getInt8(19);
@@ -1776,10 +2178,7 @@
                     }
                 };
 
-                // Fetch initial Left/Right bands + Custom 2x2 Matrix
-                for (let b = 0; b < 10; b++) await sendGetBand(b, CH_LEFT);
-                for (let b = 0; b < 10; b++) await sendGetBand(b, CH_RIGHT);
-                await sendGetBand(0xFE, CH_LINKED);
+                await fetchAllSlotState();
             } catch (err) {
                 log(`Connection error: ${err.message}`);
             }
@@ -1797,8 +2196,8 @@
             view.setUint16(0, WEBHID_MAGIC_16, true);
             view.setUint8(2, CMD_SAVE_TO_PRESET);
             await sendReport64(buffer);
-            log("Committed Dual-Mono PEQ & Matrix config to NVS v2 flash!");
-            alert("Settings permanently saved to ESP32-S3 NVS flash!");
+            log(`Committed Slot ${activeSlotIdx + 1} (${slotNames[activeSlotIdx]}) & Studio Dynamics to NVS v3 flash!`);
+            alert("Settings permanently saved to ESP32-S3 NVS v3 flash!");
         };
 
         btnReset.onclick = async () => {
@@ -1807,7 +2206,7 @@
             preampDb = 0.0;
             preampNum.value = "0.0";
             preampSlider.value = 0;
-            presetSelect.value = "3";
+            /* edit in active slot */
             updateBandCountUI();
             renderBands();
             for (let i = 0; i < currentBandCount; i++) await sendBandLive(i);
@@ -2035,6 +2434,8 @@
             }
         }
 
+        updateSlotOptionLabels();
+        updateDynamicsUI();
         updateChannelButtonsUI();
         updateAbButtonUI();
         updateMixerUI();

@@ -18,8 +18,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Usb
 import androidx.compose.material3.Button
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -31,6 +35,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.ascendance.dac.model.OledViewMode
 import com.ascendance.dac.ui.DacUiState
 import com.ascendance.dac.ui.theme.AscendanceColors
 import java.util.Locale
@@ -44,6 +49,8 @@ fun DeviceTab(
     onPushDraftLive: () -> Unit,
     onPushDraftAndSave: () -> Unit,
     onToggleOfflineDemo: (Boolean) -> Unit,
+    onSetOledView: (Int) -> Unit,
+    onSetPowerConfig: (Int, Int) -> Unit,
     modifier: Modifier = Modifier
 ) {
     Column(
@@ -163,6 +170,53 @@ fun DeviceTab(
                         onCheckedChange = onToggleOfflineDemo,
                         enabled = !state.usbInfo.connected
                     )
+                }
+            }
+        }
+
+        // OLED Playback View & Power / Burn-in Guard Settings
+        Surface(
+            color = AscendanceColors.CardDark,
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, AscendanceColors.BorderDark)
+        ) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("OLED Display & Power Management (v0.2.0)", color = AscendanceColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+
+                Text("Playback Screen Visualizer", color = AscendanceColors.TextSecondary, fontSize = 11.sp)
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    OledViewMode.entries.forEachIndexed { idx, view ->
+                        SegmentedButton(
+                            selected = state.dynamics.oledView == view.code,
+                            onClick = { onSetOledView(view.code) },
+                            shape = SegmentedButtonDefaults.itemShape(index = idx, count = OledViewMode.entries.size),
+                            label = { Text(view.label, fontSize = 10.sp) }
+                        )
+                    }
+                }
+
+                Text("Zero-Signal Auto-Mute (GPIO 7 Soft Mute)", color = AscendanceColors.TextSecondary, fontSize = 11.sp)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(0 to "Off", 10 to "10s", 30 to "30s", 60 to "60s").forEach { (sec, lbl) ->
+                        FilterChip(
+                            selected = state.dynamics.autoMuteSec == sec,
+                            onClick = { onSetPowerConfig(sec, state.dynamics.oledDimSec) },
+                            label = { Text(lbl, fontSize = 11.sp) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+
+                Text("OLED Burn-In Dimmer (Contrast 0x1F / 180s Blank)", color = AscendanceColors.TextSecondary, fontSize = 11.sp)
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    listOf(0 to "Off", 60 to "60s", 120 to "120s").forEach { (sec, lbl) ->
+                        FilterChip(
+                            selected = state.dynamics.oledDimSec == sec,
+                            onClick = { onSetPowerConfig(state.dynamics.autoMuteSec, sec) },
+                            label = { Text(lbl, fontSize = 11.sp) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
                 }
             }
         }

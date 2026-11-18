@@ -14,6 +14,7 @@
 
 #include "esp_log.h"
 #include "esp_err.h"
+#include "esp_pm.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 
@@ -26,12 +27,16 @@
 #include "peq_dsp.h"
 #include "audio_pipeline.h"
 #include "oled_display.h"
+#include "led_indicator.h"
 #include "board_pins.h"
 
 #define TAG "WEBHID_PEQ"
 
 static bool s_is_mounted = false;
 static bool s_is_streaming = false;
+static bool s_is_suspended = false;
+static esp_pm_lock_handle_t s_pm_lock = NULL;
+static bool s_pm_lock_acquired = false;
 
 // Audio Control States
 static portMUX_TYPE s_uac_rate_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -189,17 +194,52 @@ static void tinyusb_event_callback(tinyusb_event_t *event, void *arg)
     switch (event->id) {
     case TINYUSB_EVENT_ATTACHED:
         s_is_mounted = true;
+        s_is_suspended = false;
         ESP_LOGI(TAG, "USB Host attached and configured (UAC 1.0 DAC + WebHID).");
         oled_display_show_eq_overlay("USB Connected");
         break;
     case TINYUSB_EVENT_DETACHED:
         s_is_mounted = false;
         s_is_streaming = false;
+        s_is_suspended = false;
+        if (s_pm_lock && !s_pm_lock_acquired) {
+            esp_pm_lock_acquire(s_pm_lock);
+            s_pm_lock_acquired = true;
+        }
         ESP_LOGI(TAG, "USB Host detached.");
         break;
     default:
         break;
     }
+}
+
+void tud_suspend_cb(bool remote_wakeup_en)
+{
+    (void)remote_wakeup_en;
+    s_is_suspended = true;
+    s_is_streaming = false;
+    audio_pipeline_set_mute(true);
+    oled_display_sleep();
+    led_indicator_set_volume(0, true);
+    if (s_pm_lock && s_pm_lock_acquired) {
+        esp_pm_lock_release(s_pm_lock);
+        s_pm_lock_acquired = false;
+    }
+    ESP_LOGI(TAG, "USB Bus Suspended: DAC muted, OLED asleep, CPU frequency unlocked.");
+}
+
+void tud_resume_cb(void)
+{
+    if (s_pm_lock && !s_pm_lock_acquired) {
+        esp_pm_lock_acquire(s_pm_lock);
+        s_pm_lock_acquired = true;
+    }
+    s_is_suspended = false;
+    peq_dsp_trigger_wake_ramp();
+    oled_display_wake();
+    audio_pipeline_set_mute(false);
+    led_indicator_set_volume(audio_pipeline_get_volume(), audio_pipeline_is_muted());
+    ESP_LOGI(TAG, "USB Bus Resumed: CPU locked max, OLED awake.");
 }
 
 // -----------------------------------------------------------------------------
@@ -370,7 +410,7 @@ static bool webhid_build_band_packet(uint8_t band_idx, peq_channel_t ch, webhid_
         memset(&mixer, 0, sizeof(mixer));
     }
 
-    if (band_idx == 0xFE) {
+    if (band_idx == WEBHID_REPORT_SUB_MATRIX) {
         memset(pkt, 0, sizeof(*pkt));
         pkt->magic = WEBHID_MAGIC_16;
         pkt->cmd = WEBHID_CMD_SET_MIXER;
@@ -382,6 +422,34 @@ static bool webhid_build_band_packet(uint8_t band_idx, peq_channel_t ch, webhid_
         return true;
     }
 
+    if (band_idx == WEBHID_REPORT_SUB_EXT_STATE) {
+        peq_dynamics_cfg_t dyn;
+        peq_dsp_get_dynamics_cfg(&dyn);
+        char slot_name[PEQ_SLOT_NAME_MAX] = {0};
+        peq_preset_id_t active = peq_dsp_get_current_preset(slot_name);
+        uint32_t sr = webhid_peq_get_sample_rate();
+        uint16_t fir_max = peq_dsp_get_fir_max_taps_for_sr((int)sr);
+
+        uint8_t flags = (dyn.limiter_enabled ? 0x01 : 0x00) |
+                        (((uint8_t)dyn.loudness_mode & 0x03) << 1) |
+                        (dyn.fir_enabled ? 0x08 : 0x00) |
+                        (((uint8_t)dyn.oled_view & 0x03) << 4);
+
+        memset(pkt, 0, sizeof(*pkt));
+        pkt->magic = WEBHID_MAGIC_16;
+        pkt->cmd = WEBHID_CMD_SET_DYNAMICS;
+        pkt->band_idx = WEBHID_REPORT_SUB_EXT_STATE;
+        pkt->filter_type = (uint8_t)active;
+        pkt->enabled = flags;
+        pkt->freq_hz = dyn.auto_mute_sec;
+        pkt->gain_db_x10 = (int16_t)dyn.oled_dim_sec;
+        pkt->q_x100 = dyn.fir_taps_l;
+        memcpy(&pkt->reserved[0], slot_name, 16);
+        memcpy(&pkt->reserved[16], &dyn.fir_taps_r, sizeof(uint16_t));
+        memcpy(&pkt->reserved[18], &fir_max, sizeof(uint16_t));
+        return true;
+    }
+
     if (band_idx >= PEQ_MAX_BANDS) {
         return false;
     }
@@ -389,10 +457,7 @@ static bool webhid_build_band_packet(uint8_t band_idx, peq_channel_t ch, webhid_
     peq_profile_t profile;
     peq_preset_id_t active = peq_dsp_get_current_preset(NULL);
     if (peq_dsp_get_profile_ch(active, ch, &profile) != ESP_OK) {
-        if (active == PEQ_PRESET_USER_CUSTOM ||
-            peq_dsp_get_profile_ch(PEQ_PRESET_USER_CUSTOM, ch, &profile) != ESP_OK) {
-            return false;
-        }
+        return false;
     }
 
     uint32_t sr = webhid_peq_get_sample_rate();
@@ -464,8 +529,8 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
         switch (pkt->cmd) {
         case WEBHID_CMD_GET_ACTIVE_PROFILE: {
             peq_channel_t ch = (pkt->reserved[1] <= PEQ_CH_RIGHT) ? (peq_channel_t)pkt->reserved[1] : PEQ_CH_LINKED;
-            if (pkt->band_idx == 0xFE) {
-                webhid_peq_send_band_report_ch(0xFE, ch);
+            if (pkt->band_idx == WEBHID_REPORT_SUB_MATRIX || pkt->band_idx == WEBHID_REPORT_SUB_EXT_STATE) {
+                webhid_peq_send_band_report_ch(pkt->band_idx, ch);
             } else {
                 uint8_t b_idx = (pkt->band_idx < PEQ_MAX_BANDS) ? pkt->band_idx : 0;
                 webhid_peq_send_band_report_ch(b_idx, ch);
@@ -484,18 +549,9 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
                     .enabled = (pkt->enabled != 0)
                 };
 
-                // Automatically engage User Custom preset in volatile SRAM for live auditioning
-                if (peq_dsp_get_current_preset(NULL) != PEQ_PRESET_USER_CUSTOM) {
-                    peq_dsp_select_preset(PEQ_PRESET_USER_CUSTOM);
-                    oled_display_set_eq_preset("User Custom");
-                }
-
-                // Zero flash wear: updates volatile biquad coefficients in SRAM only!
                 peq_dsp_update_user_band_ch(ch, pkt->band_idx, &band);
-                oled_display_show_eq_overlay("WebHID Audition");
-
-                ESP_LOGD(TAG, "Live Ch%d Band %d: %.1fHz, %.1fdB, Q=%.2f (type=%d)",
-                         ch, pkt->band_idx, band.freq_hz, band.gain_db, band.q_factor, band.type);
+                oled_display_invalidate_curve();
+                oled_display_notify_activity();
             }
             break;
         }
@@ -505,35 +561,31 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
             peq_channel_t ch = (pkt->reserved[1] <= PEQ_CH_RIGHT) ? (peq_channel_t)pkt->reserved[1] : PEQ_CH_LINKED;
             if (count >= 1 && count <= PEQ_MAX_BANDS) {
                 peq_dsp_set_band_count_ch(ch, count);
+                oled_display_invalidate_curve();
                 char msg[24];
                 snprintf(msg, sizeof(msg), "%d Bands Active", count);
                 oled_display_show_eq_overlay(msg);
-                ESP_LOGI(TAG, "WebHID configured ch%d active band count: %d", ch, count);
             }
             break;
         }
 
         case WEBHID_CMD_SET_PREAMP_LIVE: {
             float preamp_db = (float)pkt->gain_db_x10 / 10.0f;
-            if (peq_dsp_get_current_preset(NULL) != PEQ_PRESET_USER_CUSTOM) {
-                peq_dsp_select_preset(PEQ_PRESET_USER_CUSTOM);
-                oled_display_set_eq_preset("User Custom");
-            }
             peq_dsp_set_preamp(preamp_db);
-            oled_display_show_eq_overlay("Preamp Tuned");
-            ESP_LOGI(TAG, "WebHID live preamp updated: %.1f dB", preamp_db);
+            oled_display_invalidate_curve();
+            oled_display_notify_activity();
             break;
         }
 
         case WEBHID_CMD_SELECT_PROFILE: {
             peq_preset_id_t slot = (peq_preset_id_t)pkt->band_idx;
-            if (slot < PEQ_PRESET_COUNT) {
+            if (slot < PEQ_USER_SLOT_COUNT) {
                 peq_dsp_select_preset(slot);
                 char name[24] = {0};
                 peq_dsp_get_current_preset(name);
                 oled_display_set_eq_preset(name);
                 oled_display_show_eq_overlay(name);
-                ESP_LOGI(TAG, "WebHID switched active preset to [%d]: %s", slot, name);
+                ESP_LOGI(TAG, "WebHID switched active slot to [%d]: %s", (int)slot, name);
             }
             break;
         }
@@ -541,47 +593,90 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
         case WEBHID_CMD_SAVE_TO_PRESET: {
             peq_dsp_save_user_profile_nvs();
             oled_display_show_eq_overlay("Saved to NVS");
-            ESP_LOGI(TAG, "WebHID explicit commit: User Custom profile persisted to NVS.");
+            ESP_LOGI(TAG, "WebHID explicit commit: Active slot & dynamics saved to NVS.");
             break;
         }
 
         case WEBHID_CMD_RESET_TO_PRESET: {
-            peq_band_param_t flat_band = {
-                .type = PEQ_FILTER_PEAKING,
-                .freq_hz = 1000.0f,
-                .gain_db = 0.0f,
-                .q_factor = 0.707f,
-                .enabled = true
-            };
-            const float default_freqs[PEQ_MAX_BANDS] = {
-                31.0f, 63.0f, 125.0f, 250.0f, 500.0f, 1000.0f, 2000.0f, 4000.0f, 8000.0f, 16000.0f
-            };
-            for (int b = 0; b < PEQ_MAX_BANDS; b++) {
-                flat_band.freq_hz = default_freqs[b];
-                flat_band.type = (b == 0) ? PEQ_FILTER_LOW_SHELF : ((b == PEQ_MAX_BANDS - 1) ? PEQ_FILTER_HIGH_SHELF : PEQ_FILTER_PEAKING);
-                peq_dsp_update_user_band_ch(PEQ_CH_LINKED, b, &flat_band);
-            }
-            peq_dsp_set_band_count_ch(PEQ_CH_LINKED, PEQ_DEFAULT_NUM_BANDS);
-            oled_display_show_eq_overlay("Reset Custom");
-            ESP_LOGI(TAG, "WebHID reset user profile to default curves.");
+            int cur_slot = (int)peq_dsp_get_current_preset(NULL);
+            peq_dsp_reset_slot_to_flat(cur_slot);
+            char name[24] = {0};
+            peq_dsp_get_current_preset(name);
+            oled_display_set_eq_preset(name);
+            oled_display_show_eq_overlay("Reset Slot Flat");
             break;
         }
 
         case WEBHID_CMD_SET_AB_BYPASS: {
             bool bypass = (pkt->band_idx != 0);
             peq_dsp_set_ab_bypass(bypass);
+            oled_display_invalidate_curve();
             oled_display_show_eq_overlay(bypass ? "A/B: EQ Bypass" : "A/B: EQ Active");
             break;
         }
 
         case WEBHID_CMD_SET_DUAL_MONO: {
             bool linked = (pkt->band_idx != 0);
-            if (peq_dsp_get_current_preset(NULL) != PEQ_PRESET_USER_CUSTOM) {
-                peq_dsp_select_preset(PEQ_PRESET_USER_CUSTOM);
-                oled_display_set_eq_preset("User Custom");
-            }
             peq_dsp_set_linked_stereo(linked);
+            oled_display_invalidate_curve();
             oled_display_show_eq_overlay(linked ? "Stereo Linked" : "Dual-Mono L/R");
+            break;
+        }
+
+        case WEBHID_CMD_RENAME_SLOT: {
+            uint8_t slot_id = pkt->band_idx;
+            if (slot_id < PEQ_USER_SLOT_COUNT) {
+                char new_name[17];
+                memcpy(new_name, &pkt->reserved[0], 16);
+                new_name[16] = '\0';
+                peq_dsp_rename_slot(slot_id, new_name);
+                if ((int)slot_id == (int)peq_dsp_get_current_preset(NULL)) {
+                    char cur_name[24] = {0};
+                    peq_dsp_get_current_preset(cur_name);
+                    oled_display_set_eq_preset(cur_name);
+                    oled_display_show_eq_overlay(cur_name);
+                }
+            }
+            break;
+        }
+
+        case WEBHID_CMD_SET_DYNAMICS: {
+            bool lim_en = (pkt->enabled & 0x01) != 0;
+            bool fir_en = (pkt->enabled & 0x02) != 0;
+            uint8_t loud = (pkt->filter_type < PEQ_LOUDNESS_COUNT) ? pkt->filter_type : 0;
+            uint8_t view = (uint8_t)(pkt->band_idx & 0x03);
+
+            peq_dsp_set_limiter_enabled(lim_en);
+            peq_dsp_set_loudness_mode((peq_loudness_mode_t)loud);
+            peq_dsp_set_fir_enabled(fir_en);
+            peq_dsp_set_oled_view(view);
+            oled_display_set_playback_view((oled_playback_view_t)view);
+            oled_display_invalidate_curve();
+            oled_display_show_eq_overlay("Dynamics Updated");
+            break;
+        }
+
+        case WEBHID_CMD_SET_POWER_CFG: {
+            uint16_t auto_mute = pkt->freq_hz;
+            uint16_t oled_dim  = pkt->q_x100;
+            peq_dsp_set_auto_mute_sec(auto_mute);
+            peq_dsp_set_oled_dim_sec(oled_dim);
+            oled_display_set_dim_sec(oled_dim);
+            oled_display_show_eq_overlay("Power Cfg Set");
+            break;
+        }
+
+        case WEBHID_CMD_FACTORY_RESET_SLOT: {
+            uint8_t slot_id = pkt->band_idx;
+            if (slot_id < PEQ_USER_SLOT_COUNT) {
+                peq_dsp_reset_slot_to_flat(slot_id);
+                if ((int)slot_id == (int)peq_dsp_get_current_preset(NULL)) {
+                    char cur_name[24] = {0};
+                    peq_dsp_get_current_preset(cur_name);
+                    oled_display_set_eq_preset(cur_name);
+                    oled_display_show_eq_overlay("Slot Reset");
+                }
+            }
             break;
         }
 
@@ -595,6 +690,23 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
             memcpy(&cfg.custom_matrix[0][0], &pkt->reserved[0], sizeof(float) * 4);
             peq_dsp_set_mixer(&cfg);
             oled_display_show_eq_overlay("Mixer Updated");
+            break;
+        }
+
+        case WEBHID_CMD_UPLOAD_FIR_CHUNK: {
+            peq_channel_t ch = (pkt->band_idx <= PEQ_CH_RIGHT) ? (peq_channel_t)pkt->band_idx : PEQ_CH_LINKED;
+            uint8_t count = (pkt->filter_type <= 12) ? pkt->filter_type : 0;
+            bool commit = (pkt->enabled & 0x01) != 0;
+            uint16_t total_taps = pkt->freq_hz;
+            uint16_t offset = pkt->q_x100;
+            float taps_buf[12] = {0};
+            if (count > 0) {
+                memcpy(taps_buf, &pkt->reserved[0], sizeof(float) * count);
+            }
+            esp_err_t ferr = peq_dsp_upload_fir_chunk(ch, total_taps, offset, count, taps_buf, commit);
+            if (ferr == ESP_OK && (total_taps == 0 || (uint32_t)offset + count >= total_taps)) {
+                oled_display_show_eq_overlay(total_taps == 0 ? "FIR Cleared" : "FIR Loaded");
+            }
             break;
         }
 
@@ -625,17 +737,11 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
                 .q_factor = q,
                 .enabled = true
             };
-            if (peq_dsp_get_current_preset(NULL) != PEQ_PRESET_USER_CUSTOM) {
-                peq_dsp_select_preset(PEQ_PRESET_USER_CUSTOM);
-                oled_display_set_eq_preset("User Custom");
-            }
             peq_dsp_update_user_band(band_idx, &band);
-            oled_display_show_eq_overlay("WebHID Audition");
-            ESP_LOGD(TAG, "Schema B Live Band %d: %.1fHz, %.1fdB, Q=%.2f", band_idx, freq, gain, q);
+            oled_display_invalidate_curve();
         } else if (cmd == 0x02) {
             peq_dsp_save_user_profile_nvs();
             oled_display_show_eq_overlay("Saved to NVS");
-            ESP_LOGI(TAG, "Schema B: Explicit commit to NVS.");
         }
     }
 }
@@ -648,6 +754,23 @@ esp_err_t webhid_peq_init(void)
 {
     ESP_LOGI(TAG, "Initializing TinyUSB UAC 1.0 (24-bit 44.1/48/96kHz) + WebHID on GPIO %d/%d...",
              BOARD_USB_DM_PIN, BOARD_USB_DP_PIN);
+
+#ifdef CONFIG_PM_ENABLE
+    esp_pm_config_t pm_cfg = {
+        .max_freq_mhz = 240,
+        .min_freq_mhz = 80,
+        .light_sleep_enable = false
+    };
+    esp_err_t pm_ret = esp_pm_configure(&pm_cfg);
+    if (pm_ret == ESP_OK) {
+        if (esp_pm_lock_create(ESP_PM_CPU_FREQ_MAX, 0, "dac_dsp_max", &s_pm_lock) == ESP_OK && s_pm_lock) {
+            esp_pm_lock_acquire(s_pm_lock);
+            s_pm_lock_acquired = true;
+        }
+    } else {
+        ESP_LOGW(TAG, "esp_pm_configure warning: %s", esp_err_to_name(pm_ret));
+    }
+#endif
 
     tinyusb_config_t const tusb_cfg = {
         .port = TINYUSB_PORT_FULL_SPEED_0,
@@ -687,7 +810,11 @@ esp_err_t webhid_peq_init(void)
 
 esp_err_t webhid_peq_send_band_report_ch(uint8_t band_idx, peq_channel_t ch)
 {
-    if (band_idx != 0xFE && band_idx >= PEQ_MAX_BANDS) return ESP_ERR_INVALID_ARG;
+    if (band_idx != WEBHID_REPORT_SUB_MATRIX &&
+        band_idx != WEBHID_REPORT_SUB_EXT_STATE &&
+        band_idx >= PEQ_MAX_BANDS) {
+        return ESP_ERR_INVALID_ARG;
+    }
     if (!tud_hid_n_ready(0)) return ESP_ERR_NOT_FOUND;
 
     webhid_peq_packet_t pkt;
@@ -707,6 +834,11 @@ esp_err_t webhid_peq_send_band_report(uint8_t band_idx)
 bool webhid_peq_is_mounted(void)
 {
     return s_is_mounted;
+}
+
+bool webhid_peq_is_suspended(void)
+{
+    return s_is_suspended;
 }
 
 bool webhid_peq_is_streaming(void)

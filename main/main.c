@@ -73,23 +73,29 @@ static void audio_dsp_task(void *pvParameters)
     static const float arpeggio_notes[] = {440.00f, 523.25f, 659.25f, 880.00f};
     int arp_idx = 0;
     int arp_counter = 0;
+    bool auto_muted_by_silence = false;
+    uint32_t usb_idle_ms = 0;
 
     while (1) {
         // Safely execute host-requested sample rate switches on Core 1 outside active DMA writes
         uint32_t new_sr = 0;
         if (webhid_peq_consume_pending_sample_rate(&new_sr)) {
             ESP_LOGI(TAG, "Core 1 zero-pop reclocking to %lu Hz", (unsigned long)new_sr);
+            auto_muted_by_silence = false;
+            usb_idle_ms = 0;
             audio_pipeline_set_mute(true);
             vTaskDelay(pdMS_TO_TICKS(15));
             audio_pipeline_set_sample_rate((int)new_sr);
             peq_dsp_set_sample_rate((int)new_sr);
             oled_display_set_sample_rate((int)new_sr);
             vTaskDelay(pdMS_TO_TICKS(15));
+            peq_dsp_trigger_wake_ramp();
             audio_pipeline_set_mute(false);
         }
 
         audio_source_t source = audio_source_arbiter_get_current(NULL);
         float vol_factor = audio_pipeline_get_volume_factor();
+        uint16_t am_sec = peq_dsp_get_auto_mute_sec();
 
         if (source == AUDIO_SOURCE_STANDALONE) {
             // Standalone / USB DAC Mode: Read 24-bit packed stereo frames (6 bytes/frame)
@@ -101,16 +107,51 @@ static void audio_dsp_task(void *pvParameters)
                     uint16_t n_read = webhid_peq_audio_read(s_usb_raw_buf, to_read);
                     uint16_t pairs = n_read / 6;
                     if (pairs > 0) {
+                        usb_idle_ms = 0;
                         peq_dsp_process_interleaved_s24_to_s32(s_usb_raw_buf, s_dsp_s32_buf, pairs, vol_factor);
+                        if (am_sec > 0 && peq_dsp_is_signal_silent()) {
+                            if (!auto_muted_by_silence && !webhid_peq_is_suspended() && !audio_pipeline_is_muted()) {
+                                auto_muted_by_silence = true;
+                                audio_pipeline_set_mute(true);
+                                ESP_LOGI(TAG, "Zero-signal auto-mute engaged (%us silence).", am_sec);
+                            }
+                        } else if (auto_muted_by_silence && !webhid_peq_is_suspended()) {
+                            auto_muted_by_silence = false;
+                            peq_dsp_trigger_wake_ramp();
+                            audio_pipeline_set_mute(false);
+                            ESP_LOGI(TAG, "Signal resumed: auto-mute released (1ms wake ramp).");
+                        }
                         audio_pipeline_write_s32(s_dsp_s32_buf, pairs * 2 * sizeof(int32_t));
                         continue;
                     }
                 }
             }
+
+            if (am_sec > 0 && !webhid_peq_is_suspended()) {
+                if (usb_idle_ms < ((uint32_t)am_sec * 1000UL)) {
+                    usb_idle_ms++;
+                } else if (!auto_muted_by_silence && !audio_pipeline_is_muted()) {
+                    auto_muted_by_silence = true;
+                    audio_pipeline_set_mute(true);
+                    ESP_LOGI(TAG, "USB stream idle auto-mute engaged (%us).", am_sec);
+                }
+            } else if (am_sec == 0 && auto_muted_by_silence && !webhid_peq_is_suspended()) {
+                auto_muted_by_silence = false;
+                peq_dsp_trigger_wake_ramp();
+                audio_pipeline_set_mute(false);
+            }
+
             // CONFIG_FREERTOS_HZ=1000 -> 1 ms sleep keeps 96 kHz / 24-bit FIFO responsive
             vTaskDelay(pdMS_TO_TICKS(1));
             continue;
         }
+
+        if (auto_muted_by_silence && !webhid_peq_is_suspended()) {
+            auto_muted_by_silence = false;
+            peq_dsp_trigger_wake_ramp();
+            audio_pipeline_set_mute(false);
+        }
+        usb_idle_ms = 0;
 
         int sample_rate = audio_pipeline_get_sample_rate();
         if (sample_rate <= 0) sample_rate = 48000;
@@ -206,16 +247,32 @@ static void update_playback_ui(void)
 
 static void update_menu_ui(void)
 {
-    char cur_pname[24] = "Flat";
-    peq_dsp_get_current_preset(cur_pname);
+    char cur_pname[24] = "User 1";
+    peq_preset_id_t active_id = peq_dsp_get_current_preset(cur_pname);
 
     char cur_sname[20] = "USB DAC";
     audio_source_arbiter_get_current(cur_sname);
 
     peq_profile_t prof;
-    peq_dsp_get_profile(PEQ_PRESET_USER_CUSTOM, &prof);
+    peq_dsp_get_profile(active_id, &prof);
 
-    oled_display_update_menu(s_menu_selection, cur_pname, cur_sname, prof.preamp_gain_db);
+    peq_mixer_config_t mixer;
+    if (peq_dsp_get_mixer(&mixer) != ESP_OK) {
+        memset(&mixer, 0, sizeof(mixer));
+    }
+
+    ui_menu_state_t ms;
+    memset(&ms, 0, sizeof(ms));
+    ms.selected_idx = s_menu_selection;
+    snprintf(ms.current_preset, sizeof(ms.current_preset), "%.23s", cur_pname);
+    snprintf(ms.current_source, sizeof(ms.current_source), "%.19s", cur_sname);
+    ms.preamp_gain_db = prof.preamp_gain_db;
+    ms.ab_bypass = peq_dsp_get_ab_bypass();
+    ms.crossfeed_level = mixer.crossfeed_level;
+    ms.loudness_mode = (uint8_t)peq_dsp_get_loudness_mode();
+    ms.limiter_enabled = peq_dsp_is_limiter_enabled();
+    ms.oled_view = (uint8_t)oled_display_get_playback_view();
+    oled_display_update_menu_ex(&ms);
 }
 
 static void enter_menu_mode(void)
@@ -240,27 +297,15 @@ static void enter_eq_adjust_mode(void)
     char pname[24];
     peq_preset_id_t active_id = peq_dsp_get_current_preset(pname);
 
-    // If currently listening to a factory preset, copy it to User Custom as starting baseline
-    if (active_id != PEQ_PRESET_USER_CUSTOM) {
-        peq_profile_t active_prof;
-        peq_dsp_get_profile(active_id, &active_prof);
-        for (int i = 0; i < active_prof.num_bands; i++) {
-            peq_dsp_update_user_band(i, &active_prof.bands[i]);
-        }
-        peq_dsp_set_band_count(active_prof.num_bands);
-        peq_dsp_set_preamp(active_prof.preamp_gain_db);
-        peq_dsp_select_preset(PEQ_PRESET_USER_CUSTOM);
-    }
-
-    // Save snapshot of profile for cancellation / revert
-    peq_dsp_get_profile(PEQ_PRESET_USER_CUSTOM, &s_revert_profile_snapshot);
+    // Save snapshot of active slot for cancellation / revert
+    peq_dsp_get_profile(active_id, &s_revert_profile_snapshot);
 
     peq_profile_t cur_prof;
-    peq_dsp_get_profile(PEQ_PRESET_USER_CUSTOM, &cur_prof);
+    peq_dsp_get_profile(active_id, &cur_prof);
 
     s_eq_adjust_state.active_band = 0;
     s_eq_adjust_state.num_bands = cur_prof.num_bands;
-    s_eq_adjust_state.cursor = EQ_CURSOR_FREQ_1K; // Default to 1kHz digit for instant tuning
+    s_eq_adjust_state.cursor = EQ_CURSOR_FREQ_1K;
     s_eq_adjust_state.band = cur_prof.bands[0];
     s_eq_adjust_state.saved_notification = false;
     s_saved_popup_ticks = 0;
@@ -268,17 +313,19 @@ static void enter_eq_adjust_mode(void)
     s_ui_mode = UI_MODE_EQ_ADJUST;
     oled_display_set_ui_mode(UI_MODE_EQ_ADJUST);
     oled_display_update_eq_adjust(&s_eq_adjust_state);
-    ESP_LOGI(TAG, "Entered Live EQ Adjust mode (Bands: %d).", cur_prof.num_bands);
+    ESP_LOGI(TAG, "Entered Live EQ Adjust mode on slot %d (\"%s\", Bands: %d).",
+             (int)active_id, pname, cur_prof.num_bands);
 }
 
 static void trigger_eq_saved_notification(void)
 {
+    peq_preset_id_t active_id = peq_dsp_get_current_preset(NULL);
     peq_dsp_save_user_profile_nvs();
-    peq_dsp_get_profile(PEQ_PRESET_USER_CUSTOM, &s_revert_profile_snapshot);
+    peq_dsp_get_profile(active_id, &s_revert_profile_snapshot);
     s_eq_adjust_state.saved_notification = true;
-    s_saved_popup_ticks = 15; // 1.5 seconds at 100ms poll
+    s_saved_popup_ticks = 15;
     oled_display_update_eq_adjust(&s_eq_adjust_state);
-    ESP_LOGI(TAG, "PEQ User Custom Profile saved to NVS.");
+    ESP_LOGI(TAG, "PEQ Slot %d Profile saved to NVS.", (int)active_id);
 }
 
 static void cancel_and_revert_eq(void)
@@ -289,6 +336,7 @@ static void cancel_and_revert_eq(void)
     }
     peq_dsp_set_band_count(s_revert_profile_snapshot.num_bands);
     peq_dsp_set_preamp(s_revert_profile_snapshot.preamp_gain_db);
+    oled_display_invalidate_curve();
 
     exit_to_playback_mode();
 }
@@ -296,7 +344,7 @@ static void cancel_and_revert_eq(void)
 static void eq_editor_add_band(void)
 {
     peq_profile_t prof;
-    peq_dsp_get_profile(PEQ_PRESET_USER_CUSTOM, &prof);
+    peq_dsp_get_profile(peq_dsp_get_current_preset(NULL), &prof);
     if (prof.num_bands < PEQ_MAX_BANDS) {
         int new_idx = prof.num_bands;
         peq_band_param_t new_b = {
@@ -314,14 +362,14 @@ static void eq_editor_add_band(void)
         s_eq_adjust_state.band = new_b;
         s_eq_adjust_state.cursor = EQ_CURSOR_FREQ_1K;
         oled_display_update_eq_adjust(&s_eq_adjust_state);
-        ESP_LOGI(TAG, "Added EQ Band %d (total: %d)", new_idx + 1, new_idx + 1);
     }
 }
 
 static void eq_editor_remove_band(void)
 {
     peq_profile_t prof;
-    peq_dsp_get_profile(PEQ_PRESET_USER_CUSTOM, &prof);
+    peq_preset_id_t active_id = peq_dsp_get_current_preset(NULL);
+    peq_dsp_get_profile(active_id, &prof);
     if (prof.num_bands > 1) {
         int act = s_eq_adjust_state.active_band;
         for (int i = act; i < prof.num_bands - 1; i++) {
@@ -334,12 +382,11 @@ static void eq_editor_remove_band(void)
         if (act >= new_total) {
             act = new_total - 1;
         }
-        peq_dsp_get_profile(PEQ_PRESET_USER_CUSTOM, &prof);
+        peq_dsp_get_profile(active_id, &prof);
         s_eq_adjust_state.active_band = act;
         s_eq_adjust_state.num_bands = new_total;
         s_eq_adjust_state.band = prof.bands[act];
         oled_display_update_eq_adjust(&s_eq_adjust_state);
-        ESP_LOGI(TAG, "Removed EQ Band (new total: %d, active: %d)", new_total, act + 1);
     }
 }
 
@@ -347,7 +394,7 @@ static void handle_playback_event(const control_event_t *evt)
 {
     switch (evt->type) {
     case CONTROL_EVT_ROTARY_DELTA: {
-        int delta_pct = evt->value * 2; // 2% volume per encoder detent
+        int delta_pct = evt->value * 2;
         int vol = audio_pipeline_adjust_volume(delta_pct);
         oled_display_show_volume_overlay(vol);
         break;
@@ -355,50 +402,51 @@ static void handle_playback_event(const control_event_t *evt)
     case CONTROL_EVT_ENC_CLICK: {
         bool is_muted = audio_pipeline_is_muted();
         audio_pipeline_set_mute(!is_muted);
+        if (is_muted) peq_dsp_trigger_wake_ramp();
         update_playback_ui();
-        ESP_LOGI(TAG, "Playback: Encoder SW Click: %s", !is_muted ? "MUTED" : "UNMUTED");
         break;
     }
     case CONTROL_EVT_ENC_DOUBLE_CLICK: {
-        ESP_LOGI(TAG, "Playback: Saving active user profile to NVS...");
         peq_dsp_save_user_profile_nvs();
         oled_display_show_eq_overlay("Saved to NVS");
         break;
     }
     case CONTROL_EVT_ENC_LONG_PRESS: {
-        audio_source_t next_src = audio_source_arbiter_cycle();
+        audio_source_arbiter_cycle();
         char sname[20];
         audio_source_arbiter_get_current(sname);
         oled_display_show_eq_overlay(sname);
         update_playback_ui();
-        ESP_LOGI(TAG, "Playback: Cycled audio source to [%d]: %s", next_src, sname);
         break;
     }
     case CONTROL_EVT_BTN1_CLICK: {
-        // Button 1 (GPIO 18 / SW6): Open Main Menu
         enter_menu_mode();
         break;
     }
     case CONTROL_EVT_BTN2_CLICK: {
-        // Button 2 (GPIO 10): Cycle EQ preset forward
-        peq_preset_id_t next = peq_dsp_cycle_preset();
+        peq_dsp_cycle_preset();
         char pname[24];
         peq_dsp_get_current_preset(pname);
         oled_display_show_eq_overlay(pname);
         update_playback_ui();
-        ESP_LOGI(TAG, "Playback: Cycled PEQ preset forward to [%d]: %s", next, pname);
+        break;
+    }
+    case CONTROL_EVT_BTN2_DOUBLE_CLICK: {
+        oled_playback_view_t next_view = (oled_playback_view_t)((oled_display_get_playback_view() + 1) % OLED_VIEW_COUNT);
+        peq_dsp_set_oled_view((uint8_t)next_view);
+        oled_display_set_playback_view(next_view);
+        static const char *view_labels[OLED_VIEW_COUNT] = { "View: HUD", "View: EQ Curve", "View: VU Meter", "View: Split" };
+        oled_display_show_eq_overlay(view_labels[next_view]);
         break;
     }
     case CONTROL_EVT_BTN1_LONG_PRESS: {
-        // Button 1 Long Press: Cycle EQ preset backward
         char pname[24];
         peq_preset_id_t cur = peq_dsp_get_current_preset(pname);
-        peq_preset_id_t prev = (cur + PEQ_PRESET_COUNT - 1) % PEQ_PRESET_COUNT;
+        peq_preset_id_t prev = (cur + PEQ_USER_SLOT_COUNT - 1) % PEQ_USER_SLOT_COUNT;
         peq_dsp_select_preset(prev);
         peq_dsp_get_current_preset(pname);
         oled_display_show_eq_overlay(pname);
         update_playback_ui();
-        ESP_LOGI(TAG, "Playback: Cycled PEQ preset backward to [%d]: %s", prev, pname);
         break;
     }
     default:
@@ -416,46 +464,79 @@ static void handle_menu_event(const control_event_t *evt)
         break;
     }
     case CONTROL_EVT_BTN1_CLICK: {
-        // Button 1 (◄): Exit Menu back to Playback mode
         exit_to_playback_mode();
         break;
     }
     case CONTROL_EVT_BTN2_CLICK: {
-        // Button 2 (►): Navigate down menu list
         s_menu_selection = (s_menu_selection + 1) % MENU_ITEM_COUNT;
         update_menu_ui();
         break;
     }
     case CONTROL_EVT_ENC_CLICK: {
-        // Rotary Push Switch: Confirm selected item
         switch (s_menu_selection) {
         case MENU_ITEM_EQ_ADJUST:
             enter_eq_adjust_mode();
             break;
-        case MENU_ITEM_EQ_PRESET: {
+        case MENU_ITEM_EQ_PRESET:
             peq_dsp_cycle_preset();
+            oled_display_invalidate_curve();
+            update_menu_ui();
+            break;
+        case MENU_ITEM_AB_BYPASS:
+            peq_dsp_set_ab_bypass(!peq_dsp_get_ab_bypass());
+            oled_display_invalidate_curve();
+            update_menu_ui();
+            break;
+        case MENU_ITEM_CROSSFEED: {
+            peq_mixer_config_t mixer;
+            if (peq_dsp_get_mixer(&mixer) == ESP_OK) {
+                mixer.crossfeed_level = (uint8_t)((mixer.crossfeed_level + 1) % 3);
+                if (mixer.crossfeed_level > 0 && mixer.mode == MIXER_MODE_STEREO) {
+                    mixer.mode = MIXER_MODE_CROSSFEED;
+                } else if (mixer.crossfeed_level == 0 && mixer.mode == MIXER_MODE_CROSSFEED) {
+                    mixer.mode = MIXER_MODE_STEREO;
+                }
+                peq_dsp_set_mixer(&mixer);
+            }
             update_menu_ui();
             break;
         }
-        case MENU_ITEM_AUDIO_SOURCE: {
-            audio_source_arbiter_cycle();
+        case MENU_ITEM_LOUDNESS: {
+            peq_loudness_mode_t next_ld = (peq_loudness_mode_t)((peq_dsp_get_loudness_mode() + 1) % PEQ_LOUDNESS_COUNT);
+            peq_dsp_set_loudness_mode(next_ld);
+            oled_display_invalidate_curve();
+            update_menu_ui();
+            break;
+        }
+        case MENU_ITEM_LIMITER:
+            peq_dsp_set_limiter_enabled(!peq_dsp_is_limiter_enabled());
+            update_menu_ui();
+            break;
+        case MENU_ITEM_OLED_VIEW: {
+            oled_playback_view_t nv = (oled_playback_view_t)((oled_display_get_playback_view() + 1) % OLED_VIEW_COUNT);
+            peq_dsp_set_oled_view((uint8_t)nv);
+            oled_display_set_playback_view(nv);
             update_menu_ui();
             break;
         }
         case MENU_ITEM_PREAMP_GAIN: {
             peq_profile_t prof;
-            peq_dsp_get_profile(PEQ_PRESET_USER_CUSTOM, &prof);
+            peq_dsp_get_profile(peq_dsp_get_current_preset(NULL), &prof);
             float g = prof.preamp_gain_db - 2.0f;
             if (g < -6.5f) g = 0.0f;
             peq_dsp_set_preamp(g);
+            oled_display_invalidate_curve();
             update_menu_ui();
             break;
         }
-        case MENU_ITEM_SAVE_NVS: {
+        case MENU_ITEM_AUDIO_SOURCE:
+            audio_source_arbiter_cycle();
+            update_menu_ui();
+            break;
+        case MENU_ITEM_SAVE_NVS:
             peq_dsp_save_user_profile_nvs();
             oled_display_show_eq_overlay("Saved to NVS");
             break;
-        }
         case MENU_ITEM_EXIT:
             exit_to_playback_mode();
             break;
@@ -578,7 +659,7 @@ static void handle_eq_adjust_event(const control_event_t *evt)
                 // Save current band before switching
                 peq_dsp_update_user_band(s_eq_adjust_state.active_band, &s_eq_adjust_state.band);
                 peq_profile_t prof;
-                peq_dsp_get_profile(PEQ_PRESET_USER_CUSTOM, &prof);
+                peq_dsp_get_profile(peq_dsp_get_current_preset(NULL), &prof);
                 s_eq_adjust_state.active_band = new_band;
                 s_eq_adjust_state.band = prof.bands[new_band];
                 oled_display_update_eq_adjust(&s_eq_adjust_state);
@@ -729,8 +810,9 @@ void app_main(void)
     // Initialize I2S peripheral and PCM5102A hardware soft mute on GPIO 7
     ESP_ERROR_CHECK(audio_pipeline_init(48000));
 
-    // Initialize 5-band Parametric Equalizer (PEQ) DSP engine
+    // Initialize Parametric Equalizer (PEQ) DSP engine & sync boot volume for loudness
     ESP_ERROR_CHECK(peq_dsp_init(48000));
+    peq_dsp_notify_volume_pct(audio_pipeline_get_volume());
 
     // Initialize Audio Source Arbiter (Default: Standalone DSP DAC mode)
     ESP_ERROR_CHECK(audio_source_arbiter_init(AUDIO_SOURCE_STANDALONE));
@@ -738,8 +820,9 @@ void app_main(void)
     // Play verification chime on startup (C5 - E5 - G5 - C6)
     audio_pipeline_play_startup_chime();
 
-    // Initialize SSD1306 128x64 OLED Display (I2C on GPIO 8/9 @ 0x3C)
+    // Initialize SSD1306 128x64 OLED Display (auto-probing 0x3C/0x3D) and sync state
     ESP_ERROR_CHECK(oled_display_init());
+    update_playback_ui();
 
     // Initialize EC11 Rotary Encoder (PCNT on GPIO 15/16) and Buttons (GPIO 17/18/10)
     ESP_ERROR_CHECK(controls_init(&s_ctrl_queue));

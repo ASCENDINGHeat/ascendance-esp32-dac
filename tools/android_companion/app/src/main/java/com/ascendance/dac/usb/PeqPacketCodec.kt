@@ -1,7 +1,10 @@
 package com.ascendance.dac.usb
 
 import com.ascendance.dac.model.DspDefaults
+import com.ascendance.dac.model.DynamicsConfig
+import com.ascendance.dac.model.LoudnessMode
 import com.ascendance.dac.model.MixerConfig
+import com.ascendance.dac.model.OledViewMode
 import com.ascendance.dac.model.PeqBand
 import com.ascendance.dac.model.PeqChannel
 import java.nio.ByteBuffer
@@ -28,6 +31,12 @@ sealed interface HidIncomingMessage {
     data class MixerMatrixReport(
         val mixer: MixerConfig
     ) : HidIncomingMessage
+
+    data class ExtendedStateReport(
+        val activeSlot: Int,
+        val slotName: String,
+        val dynamics: DynamicsConfig
+    ) : HidIncomingMessage
 }
 
 object PeqPacketCodec {
@@ -46,8 +55,14 @@ object PeqPacketCodec {
     const val CMD_SET_BAND_COUNT = 0x07
     const val CMD_SET_AB_BYPASS = 0x08
     const val CMD_SET_DUAL_MONO = 0x09
+    const val CMD_RENAME_SLOT = 0x0A
+    const val CMD_SET_DYNAMICS = 0x0B
+    const val CMD_SET_POWER_CFG = 0x0C
+    const val CMD_FACTORY_RESET_SLOT = 0x0D
     const val CMD_SET_MIXER = 0x13
+    const val CMD_UPLOAD_FIR_CHUNK = 0x14
 
+    const val BAND_IDX_EXT_STATE_QUERY = 0xFD
     const val BAND_IDX_CUSTOM_MATRIX_QUERY = 0xFE
 
     private fun newPacket(cmd: Int): ByteBuffer =
@@ -93,7 +108,7 @@ object PeqPacketCodec {
 
     fun buildSelectProfile(slot: Int): ByteArray {
         val bb = newPacket(CMD_SELECT_PROFILE)
-        bb.put(3, slot.coerceIn(0, 3).toByte())
+        bb.put(3, slot.coerceIn(0, DspDefaults.USER_SLOT_COUNT - 1).toByte())
         return bb.array()
     }
 
@@ -109,6 +124,71 @@ object PeqPacketCodec {
         val bb = newPacket(CMD_SET_DUAL_MONO)
         bb.put(3, if (linkedStereo) 1.toByte() else 0.toByte())
         return bb.array()
+    }
+
+    fun buildRenameSlot(slot: Int, name: String): ByteArray {
+        val bb = newPacket(CMD_RENAME_SLOT)
+        bb.put(3, slot.coerceIn(0, DspDefaults.USER_SLOT_COUNT - 1).toByte())
+        val encoded = name.trim().toByteArray(Charsets.UTF_8)
+        val len = minOf(encoded.size, 16)
+        for (i in 0 until len) {
+            bb.put(12 + i, encoded[i])
+        }
+        return bb.array()
+    }
+
+    fun buildFactoryResetSlot(slot: Int): ByteArray {
+        val bb = newPacket(CMD_FACTORY_RESET_SLOT)
+        bb.put(3, slot.coerceIn(0, DspDefaults.USER_SLOT_COUNT - 1).toByte())
+        return bb.array()
+    }
+
+    fun buildSetDynamics(config: DynamicsConfig): ByteArray {
+        val bb = newPacket(CMD_SET_DYNAMICS)
+        bb.put(3, config.oledView.coerceIn(0, OledViewMode.entries.lastIndex).toByte())
+        bb.put(4, config.loudnessMode.coerceIn(0, LoudnessMode.entries.lastIndex).toByte())
+        val flags = (if (config.limiterEnabled) 0x01 else 0x00) or
+                    (if (config.firEnabled) 0x02 else 0x00)
+        bb.put(5, flags.toByte())
+        return bb.array()
+    }
+
+    fun buildSetPowerConfig(autoMuteSec: Int, oledDimSec: Int): ByteArray {
+        val bb = newPacket(CMD_SET_POWER_CFG)
+        bb.putShort(6, autoMuteSec.coerceIn(0, 3600).toShort())
+        bb.putShort(10, oledDimSec.coerceIn(0, 3600).toShort())
+        return bb.array()
+    }
+
+    fun buildUploadFirChunks(channel: PeqChannel, taps: FloatArray, commitNvs: Boolean = true): List<ByteArray> {
+        val total = taps.size
+        if (total == 0) {
+            val bb = newPacket(CMD_UPLOAD_FIR_CHUNK)
+            bb.put(3, channel.code.toByte())
+            bb.put(4, 0)
+            bb.put(5, if (commitNvs) 1.toByte() else 0.toByte())
+            bb.putShort(6, 0)
+            bb.putShort(10, 0)
+            return listOf(bb.array())
+        }
+        val chunks = ArrayList<ByteArray>((total + 11) / 12)
+        var offset = 0
+        while (offset < total) {
+            val count = minOf(12, total - offset)
+            val isLast = (offset + count >= total)
+            val bb = newPacket(CMD_UPLOAD_FIR_CHUNK)
+            bb.put(3, channel.code.toByte())
+            bb.put(4, count.toByte())
+            bb.put(5, if (commitNvs && isLast) 1.toByte() else 0.toByte())
+            bb.putShort(6, total.toShort())
+            bb.putShort(10, offset.toShort())
+            for (k in 0 until count) {
+                bb.putFloat(12 + k * 4, taps[offset + k])
+            }
+            chunks.add(bb.array())
+            offset += count
+        }
+        return chunks
     }
 
     fun buildSetMixer(config: MixerConfig): ByteArray {
@@ -145,6 +225,40 @@ object PeqPacketCodec {
             return HidIncomingMessage.MixerMatrixReport(mixer)
         }
 
+        if (cmd == CMD_SET_DYNAMICS && raw.size >= 32) {
+            val activeSlot = (bb.get(4).toInt() and 0xFF).coerceIn(0, DspDefaults.USER_SLOT_COUNT - 1)
+            val dynFlags = bb.get(5).toInt() and 0xFF
+            val autoMuteSec = bb.getShort(6).toInt() and 0xFFFF
+            val oledDimSec = bb.getShort(8).toInt() and 0xFFFF
+            val firTapsL = bb.getShort(10).toInt() and 0xFFFF
+            val firTapsR = bb.getShort(28).toInt() and 0xFFFF
+            val firMaxTaps = bb.getShort(30).toInt() and 0xFFFF
+            val nameBytes = raw.copyOfRange(12, 28)
+            val nulIdx = nameBytes.indexOf(0.toByte())
+            val slotName = String(
+                nameBytes,
+                0,
+                if (nulIdx >= 0) nulIdx else nameBytes.size,
+                Charsets.UTF_8
+            ).ifBlank { "User ${activeSlot + 1}" }
+            val cfg = DynamicsConfig(
+                limiterEnabled = (dynFlags and 0x01) != 0,
+                loudnessMode = (dynFlags shr 1) and 0x03,
+                firEnabled = (dynFlags and 0x08) != 0,
+                oledView = (dynFlags shr 4) and 0x03,
+                autoMuteSec = autoMuteSec,
+                oledDimSec = oledDimSec,
+                firTapsL = firTapsL,
+                firTapsR = firTapsR,
+                firMaxTaps = if (firMaxTaps > 0) firMaxTaps else 256
+            )
+            return HidIncomingMessage.ExtendedStateReport(
+                activeSlot = activeSlot,
+                slotName = slotName,
+                dynamics = cfg
+            )
+        }
+
         if (cmd != CMD_GET_ACTIVE_PROFILE) return null
 
         val bandIdx = bb.get(3).toInt() and 0xFF
@@ -156,7 +270,7 @@ object PeqPacketCodec {
         val numBands = bb.get(12).toInt() and 0xFF
         val repCh = PeqChannel.fromCode(bb.get(13).toInt() and 0xFF)
         val flags = bb.get(14).toInt() and 0xFF
-        val activeSlot = bb.get(15).toInt() and 0xFF
+        val activeSlot = (bb.get(15).toInt() and 0xFF).coerceIn(0, DspDefaults.USER_SLOT_COUNT - 1)
         val preampDb = bb.getShort(16).toFloat() / 10.0f
         val mixerMode = bb.get(18).toInt() and 0xFF
         val mixerBalance = bb.get(19).toInt() // signed int8

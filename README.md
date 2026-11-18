@@ -110,27 +110,25 @@ The active band count scales dynamically from **1 to 10 bands** (`PEQ_MAX_BANDS 
 2. **Hard Saturation Clamping:** Floating-point audio buffers are explicitly bounded to signed 24-bit full-scale `[-8388608.0f, 8388607.0f]` (with non-finite samples zeroed) and MSB-aligned into 32-bit I2S slots, preventing harsh digital wrap-around clipping.
 3. **Pre-Gain Headroom Management:** Configurable pre-attenuation (0.0 to -12.0 dB) provides digital headroom to prevent clipping during positive EQ boosts and ensures level-matched Instant A/B comparison.
 4. **Subnormal Float Flushing & Coefficient Validation:** Delay states smaller than $1 \times 10^{-15}$ are flushed to zero to prevent subnormal CPU penalties, and `calculate_biquad()` validates finite inputs/coefficients and non-zero `a0` across all **8 topologies** (`Bypass`, `Peaking`, `Low Shelf`, `High Shelf`, `High Pass`, `Low Pass`, `Notch`, `Band Pass`) with safe passthrough fallback.
-5. **Dual-Mono L/R, Matrix Mixer & Crossfeed:** Supports Linked Stereo or independent Left/Right 10-band EQ (`peq_dsp_set_linked_stereo`), versioned NVS v2 storage with CRC32 + automatic V1 migration, plus a post-EQ 2×2 channel matrix (Stereo, Mono Mix, L-Only, R-Only, Swap L/R, Mid-Side Width `0–200%`, L/R Balance, Custom Matrix) and 3-level Chu Moy acoustic crossfeed (`Off / Mild / Medium`).
-6. **Built-in Presets:**
-   * **Preset 0 (Reference Flat):** Bit-perfect bypass (0 dB gain across the entire audio spectrum).
-   * **Preset 1 (Warm Bass Boost):** Low Shelf +4.5 dB @ 105 Hz ($Q = 0.71$) for warm, punchy low-end response.
-   * **Preset 2 (Harman OE2018 Target):** Multi-band target curve tuned for standard over-ear headphone acoustic profiles.
-   * **Preset 3 (User Custom):** Fully editable custom Dual-Mono L/R profile and Matrix/Crossfeed state saved in NVS v2 (`user_cfg_v2`).
+5. **Dual-Mono L/R, Matrix Mixer & Crossfeed:** Supports Linked Stereo or independent Left/Right 10-band EQ (`peq_dsp_set_linked_stereo`), post-EQ 2×2 channel matrix (Stereo, Mono Mix, L-Only, R-Only, Swap L/R, Mid-Side Width `0–200%`, L/R Balance, Custom Matrix), and 3-level Chu Moy acoustic crossfeed (`Off / Low / High`).
+6. **Lookahead True-Peak Limiter & Equal Loudness (`v0.2.0`):** `1.5 ms` lookahead stereo limiter (`-0.5 dBFS` ceiling, `0.4 ms` attack / `100 ms` release + soft-knee saturation above `-0.2 dBFS`), coupled with optional ISO Fletcher-Munson Equal-Loudness shelves (`Off / Mild / Full`) for master volume `< 80%`.
+7. **ESP-DSP SIMD FIR Convolution (`v0.2.0`):** Hardware PIE-accelerated `dsps_fir_f32` engine (`256` taps/ch @ `44.1 / 48 kHz`, `128` taps/ch @ `96 kHz`) persisted to NVS (`fir_taps_l`/`fir_taps_r`).
+8. **8-Slot Editable NVS v3 User Profiles (`v0.2.0`):** All hardcoded factory presets (`Flat`, `Bass Boost`, `Harman`) are replaced by **8 independently editable, custom-named NVS v3 user slots (`Slot 0..7`)**, seeded on clean boot to **Reference Flat** (`User 1`..`User 8`) with automatic `v0.1.0` NVS v1/v2 migration into `Slot 0` (client UIs also retain optional starter templates).
 
 ---
 
 ## 3. Physical User Interface & Hardware Controls
 
-The physical interface features a 128×64 SSD1306 monochrome OLED display, an EC11 quadrature rotary encoder, and two tactile navigation buttons:
+The physical interface features a 128×64 SSD1306 monochrome OLED display (auto-probing `0x3C` / `0x3D` with hot-plug recovery and burn-in dimmer), an EC11 quadrature rotary encoder, and two tactile navigation buttons:
 
 ```
                   ┌──────────────────────────────────────────────┐
-                  │ 128x64 SSD1306 OLED DISPLAY                  │
+                  │ 128x64 SSD1306 OLED DISPLAY (HUD/Curve/VU)   │
                   │   ┌────────────────────────────────────────┐ │
-                  │   │ [USB DAC]  48.0k 24b       ((•))  82%  │ │
+                  │   │ [USB DAC]  48.0k 24b            V:80%  │ │
                   │   │ -------------------------------------- │ │
                   │   │ ESP32-S3 Audio DSP                     │ │
-                  │   │ Harman OE2018                          │ │
+                  │   │ User 1                                 │ │
                   │   │ [████████████████████████░░░░░░]       │ │
                   │   └────────────────────────────────────────┘ │
                   └──────────────────────────────────────────────┘
@@ -145,21 +143,22 @@ The system provides **three operating UI modes**:
 | :--- | :--- | :--- |
 | **Rotary Turn** | Rotate clockwise / counter-clockwise | Adjusts master volume (0–100%, 2% per detent) with temporary pop-up HUD overlay. |
 | **Rotary Push (SW)** | Short Click | Toggles audio mute/unmute; triggers hardware soft mute (`GPIO 7`) and red/cyan LED feedback. |
-| **Rotary Push (SW)** | Double-Click | Instantly commits active custom EQ profile to persistent NVS flash. |
+| **Rotary Push (SW)** | Double-Click | Instantly commits active slot & dynamics config to persistent NVS v3 flash. |
 | **Rotary Push (SW)** | Long Press (>800 ms) | Cycles active audio source: **USB DAC** $\rightarrow$ **Tone Test** $\rightarrow$ **Freq Sweep**. |
 | **Button 1 (◄ / SW6)** | Short Click | Opens the **Main Menu**. |
-| **Button 1 (◄ / SW6)** | Long Press (>800 ms) | Cycles PEQ preset backward (Custom $\leftarrow$ Harman $\leftarrow$ Bass $\leftarrow$ Flat). |
-| **Button 2 (► / SW8)** | Short Click | Cycles PEQ preset forward (Flat $\rightarrow$ Bass $\rightarrow$ Harman $\rightarrow$ Custom). |
+| **Button 1 (◄ / SW6)** | Long Press (>800 ms) | Cycles PEQ slot backward (`Slot 7` $\leftarrow$ ... $\leftarrow$ `Slot 0`). |
+| **Button 2 (► / SW8)** | Short Click | Cycles PEQ slot forward (`Slot 0` $\rightarrow$ ... $\rightarrow$ `Slot 7`). |
+| **Button 2 (► / SW8)** | Double-Click | Cycles OLED Playback Visualizer (`HUD` $\rightarrow$ `EQ Curve` $\rightarrow$ `VU Meter` $\rightarrow$ `Split`). |
 
 ### 3.2 Mode 2: Main Menu Screen
 
 | Input Control | Hardware Action | Firmware Response |
 | :--- | :--- | :--- |
-| **Rotary Turn** | Rotate clockwise / counter-clockwise | Scrolls up/down through menu items. |
+| **Rotary Turn** | Rotate clockwise / counter-clockwise | Scrolls up/down through all 11 menu items. |
 | **Button 2 (► / SW8)** | Short Click | Advances down the menu list. |
 | **Button 1 (◄ / SW6)** | Short Click | Exits the menu and returns to the Playback Screen. |
-| **Rotary Push (SW)** | Short Click | Selects the highlighted item: <br>• **Live EQ Adjust:** Enters the on-device Digit-by-Digit PEQ Editor.<br>• **EQ Preset:** Cycles active preset.<br>• **Audio Source:** Cycles active audio source.<br>• **Preamp Headroom:** Cycles pre-gain attenuation (0.0 to -6.0 dB in 2 dB steps).<br>• **Save to NVS:** Commits current EQ settings to flash.<br>• **Exit:** Returns to Playback Screen. |
-| **Rotary Push (SW)** | Long Press (>800 ms) | Instantly commits current settings to NVS flash. |
+| **Rotary Push (SW)** | Short Click | Selects the highlighted item: <br>• **1. Live EQ Adjust** • **2. Slot** (`0..7`) • **3. A/B Bypass** • **4. Crossfeed** • **5. Loudness** • **6. Limiter** • **7. OLED View** • **8. Preamp** • **9. Source** • **10. Save to NVS** • **11. Exit**. |
+| **Rotary Push (SW)** | Long Press (>800 ms) | Instantly commits current slot & dynamics config to NVS v3 flash. |
 
 ### 3.3 Mode 3: Standalone On-Device Digit-by-Digit PEQ Editor
 

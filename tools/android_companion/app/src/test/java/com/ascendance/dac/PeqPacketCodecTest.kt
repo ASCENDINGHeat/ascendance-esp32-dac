@@ -1,8 +1,11 @@
 package com.ascendance.dac
 
+import com.ascendance.dac.model.DynamicsConfig
 import com.ascendance.dac.model.FilterType
+import com.ascendance.dac.model.LoudnessMode
 import com.ascendance.dac.model.MixerConfig
 import com.ascendance.dac.model.MixerMode
+import com.ascendance.dac.model.OledViewMode
 import com.ascendance.dac.model.PeqBand
 import com.ascendance.dac.model.PeqChannel
 import com.ascendance.dac.usb.HidIncomingMessage
@@ -75,7 +78,7 @@ class PeqPacketCodecTest {
             put(12, 7) // num_bands @ byte 12 (reserved[0])
             put(13, PeqChannel.RIGHT.code.toByte())
             put(14, 0x02) // dual-mono (linked=0) + ab_bypass=1
-            put(15, 3) // User Custom
+            put(15, 6) // Slot 7 (0..7)
             putShort(16, (-40).toShort()) // -4.0 dB preamp
             put(18, MixerMode.CROSSFEED.code.toByte())
             put(19, (-25).toByte())
@@ -90,11 +93,74 @@ class PeqPacketCodecTest {
         assertEquals(PeqChannel.RIGHT, msg.channel)
         assertTrue(!msg.linkedStereo)
         assertTrue(msg.abBypass)
-        assertEquals(3, msg.activePresetSlot)
+        assertEquals(6, msg.activePresetSlot)
         assertEquals(-4.0f, msg.preampDb, 0.01f)
         assertEquals(-25, msg.mixerBalance)
         assertEquals(96000, msg.sampleRateHz)
         assertEquals(-3.5f, msg.band.gain, 0.01f)
         assertEquals(1.41f, msg.band.q, 0.01f)
+    }
+
+    @Test
+    fun encodesV020SlotDynamicsPowerFirAndDecodesExtState() {
+        val selPkt = PeqPacketCodec.buildSelectProfile(7)
+        assertEquals(7, selPkt[3].toInt() and 0xFF)
+
+        val renamePkt = PeqPacketCodec.buildRenameSlot(5, "HD600 Harman")
+        assertEquals(PeqPacketCodec.CMD_RENAME_SLOT, renamePkt[2].toInt() and 0xFF)
+        assertEquals(5, renamePkt[3].toInt() and 0xFF)
+        assertEquals('H'.code.toByte(), renamePkt[12])
+
+        val dynPkt = PeqPacketCodec.buildSetDynamics(
+            DynamicsConfig(
+                limiterEnabled = true,
+                loudnessMode = LoudnessMode.FULL.code,
+                firEnabled = true,
+                oledView = OledViewMode.SPLIT.code
+            )
+        )
+        assertEquals(PeqPacketCodec.CMD_SET_DYNAMICS, dynPkt[2].toInt() and 0xFF)
+        assertEquals(OledViewMode.SPLIT.code, dynPkt[3].toInt() and 0xFF)
+        assertEquals(LoudnessMode.FULL.code, dynPkt[4].toInt() and 0xFF)
+        assertEquals(0x03, dynPkt[5].toInt() and 0xFF)
+
+        val pwrPkt = ByteBuffer.wrap(PeqPacketCodec.buildSetPowerConfig(30, 120)).order(ByteOrder.LITTLE_ENDIAN)
+        assertEquals(30, pwrPkt.getShort(6).toInt() and 0xFFFF)
+        assertEquals(120, pwrPkt.getShort(10).toInt() and 0xFFFF)
+
+        val taps = FloatArray(14) { i -> i * 0.05f }
+        val chunks = PeqPacketCodec.buildUploadFirChunks(PeqChannel.LEFT, taps, commitNvs = true)
+        assertEquals(2, chunks.size)
+        assertEquals(12, chunks[0][4].toInt() and 0xFF)
+        assertEquals(0, chunks[0][5].toInt() and 0xFF)
+        assertEquals(2, chunks[1][4].toInt() and 0xFF)
+        assertEquals(1, chunks[1][5].toInt() and 0xFF)
+
+        val extRaw = ByteBuffer.allocate(64).order(ByteOrder.LITTLE_ENDIAN).apply {
+            putShort(0, 0x4551)
+            put(2, PeqPacketCodec.CMD_SET_DYNAMICS.toByte())
+            put(3, PeqPacketCodec.BAND_IDX_EXT_STATE_QUERY.toByte())
+            put(4, 5)
+            put(5, (0x01 or (2 shl 1) or 0x08 or (3 shl 4)).toByte())
+            putShort(6, 15)
+            putShort(8, 90)
+            putShort(10, 256)
+            "HD600 Harman".toByteArray(Charsets.UTF_8).forEachIndexed { idx, b -> put(12 + idx, b) }
+            putShort(28, 128)
+            putShort(30, 256)
+        }.array()
+
+        val extMsg = PeqPacketCodec.parseReport(extRaw) as? HidIncomingMessage.ExtendedStateReport
+        assertNotNull(extMsg)
+        assertEquals(5, extMsg!!.activeSlot)
+        assertEquals("HD600 Harman", extMsg.slotName)
+        assertTrue(extMsg.dynamics.limiterEnabled)
+        assertEquals(2, extMsg.dynamics.loudnessMode)
+        assertTrue(extMsg.dynamics.firEnabled)
+        assertEquals(3, extMsg.dynamics.oledView)
+        assertEquals(15, extMsg.dynamics.autoMuteSec)
+        assertEquals(90, extMsg.dynamics.oledDimSec)
+        assertEquals(256, extMsg.dynamics.firTapsL)
+        assertEquals(128, extMsg.dynamics.firTapsR)
     }
 }

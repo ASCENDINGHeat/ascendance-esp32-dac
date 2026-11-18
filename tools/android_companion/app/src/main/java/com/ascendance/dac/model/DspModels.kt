@@ -45,17 +45,41 @@ enum class MixerMode(val code: Int, val label: String) {
     }
 }
 
-enum class HardwarePreset(val slot: Int, val label: String) {
-    FLAT(0, "Reference Flat"),
-    BASS_BOOST(1, "Warm Bass Boost"),
-    HARMAN(2, "Harman OE2018"),
-    USER_CUSTOM(3, "User Custom (NVS)");
+enum class LoudnessMode(val code: Int, val label: String) {
+    OFF(0, "Off"),
+    MILD(1, "ISO Mild"),
+    FULL(2, "ISO Full");
 
     companion object {
-        fun fromSlot(slot: Int): HardwarePreset =
-            entries.firstOrNull { it.slot == slot } ?: USER_CUSTOM
+        fun fromCode(code: Int): LoudnessMode =
+            entries.firstOrNull { it.code == code } ?: OFF
     }
 }
+
+enum class OledViewMode(val code: Int, val label: String) {
+    HUD(0, "HUD"),
+    CURVE(1, "EQ Curve"),
+    VU(2, "VU Meter"),
+    SPLIT(3, "Split");
+
+    companion object {
+        fun fromCode(code: Int): OledViewMode =
+            entries.firstOrNull { it.code == code } ?: HUD
+    }
+}
+
+@Serializable
+data class DynamicsConfig(
+    val limiterEnabled: Boolean = true,
+    val loudnessMode: Int = LoudnessMode.OFF.code,
+    val firEnabled: Boolean = false,
+    val oledView: Int = OledViewMode.HUD.code,
+    val autoMuteSec: Int = 10,
+    val oledDimSec: Int = 60,
+    val firTapsL: Int = 0,
+    val firTapsR: Int = 0,
+    val firMaxTaps: Int = 256
+)
 
 @Serializable
 data class PeqBand(
@@ -116,6 +140,7 @@ data class LocalPreset(
 )
 
 object DspDefaults {
+    const val USER_SLOT_COUNT = 8
     const val MIN_BANDS = 1
     const val MAX_BANDS = 10
     const val MIN_FREQ_HZ = 20
@@ -129,6 +154,8 @@ object DspDefaults {
 
     val SUPPORTED_SAMPLE_RATES = listOf(44100, 48000, 96000)
 
+    fun defaultSlotNames(): List<String> = List(USER_SLOT_COUNT) { "User ${it + 1}" }
+
     val BAND_COLORS_ARGB = listOf(
         0xFF58A6FFL, 0xFF3FB950L, 0xFFD29922L, 0xFFF85149L, 0xFFBC8CFFL,
         0xFF39C5BBL, 0xFFF0883EL, 0xFF79C0FFL, 0xFF56D364L, 0xFFE3B341L
@@ -139,7 +166,7 @@ object DspDefaults {
         2 to listOf(150, 4000),
         3 to listOf(100, 1000, 10000),
         4 to listOf(100, 500, 2500, 10000),
-        5 to listOf(80, 250, 1000, 4000, 12000),
+        5 to listOf(80, 250, 1000, 4000, 10000),
         6 to listOf(80, 200, 800, 2500, 6300, 14000),
         7 to listOf(63, 160, 400, 1000, 2500, 6300, 16000),
         8 to listOf(40, 100, 250, 630, 1600, 4000, 10000, 16000),

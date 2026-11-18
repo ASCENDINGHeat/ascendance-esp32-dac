@@ -194,15 +194,12 @@ To eliminate clicks, pops, or zipper noise when dragging sliders or switching pr
 * **Preamp Attenuation:** Provides $0.0\text{ to }-12.0\text{ dB}$ digital pre-attenuation to prevent large positive biquad boosts from exceeding $0\text{ dBFS}$.
 * **Hard Saturation Clamping:** Non-finite samples are zeroed and all floating-point audio samples are clamped to signed 24-bit full-scale bounds (`[-8388608.0f, 8388607.0f]`) before MSB-aligned 32-bit I2S slot output (`(int32_t)((uint32_t)(int32_t)lrintf(val) << 8)`).
 
-### 3.5 Factory Presets & Versioned NVS v2 Persistence
-| Preset ID | Name | Configuration |
-| :---: | :--- | :--- |
-| `0` | **Reference Flat** | 0.0 dB across all bands (bit-perfect passthrough) |
-| `1` | **Warm Bass Boost** | +4.5 dB Low Shelf @ 80 Hz ($Q = 0.71$) + multi-band contour |
-| `2` | **Harman OE2018** | 5-band reference target matching Harman headphone curves |
-| `3` | **User Custom** | Persisted in NVS namespace `audio_peq`, key `user_cfg_v2` (CRC32 + V1 migration from `user_profile`) |
+### 3.5 8-Slot Editable NVS v3 Persistence & Studio Dynamics
+All hardcoded factory presets (`Flat`, `Bass Boost`, `Harman`) have been removed in `v0.2.0`. Instead, `peq_dsp_init()` provisions **8 independently editable, custom-named NVS v3 user slots (`Slot 0..7`)** (`"User 1"`..`"User 8"` seeded to Reference Flat on clean boot, with one-way migration from `v0.1.0` `user_cfg_v2` / V1 into `Slot 0`).
 
-* **Zero Flash Wear During Tuning:** Real-time WebHID slider adjustments stream exclusively into volatile SRAM. Committing to NVS v2 snapshots Left/Right profiles and `peq_mixer_config_t` under `s_peq_lock`, computes CRC32, and performs a `memcmp()` delta check to skip redundant flash writes.
+* **Per-Slot NVS Keys:** `peq_slot_0`..`peq_slot_7` storing `linked_stereo`, Left/Right profiles, and CRC32.
+* **Global Meta & FIR Keys:** `nvs_meta_v3` stores `active_slot`, Lookahead Limiter enable, Equal-Loudness mode (`Off / Mild / Full`), OLED playback view, `auto_mute_sec`, `oled_dim_sec`, FIR enable, and `peq_mixer_config_t`; `fir_taps_l`/`fir_taps_r` store up to 256 float32 impulse taps per channel (`128` active max at `96 kHz`).
+* **Zero Flash Wear During Tuning:** Live WebHID / Android Companion slider updates modify SRAM only. Commits (`WEBHID_CMD_SAVE_TO_PRESET` or long-press Save) check `memcmp()` before writing flash.
 
 ---
 
@@ -222,9 +219,9 @@ Implemented in [`main/audio_source_arbiter.c`](../../main/audio_source_arbiter.c
 
 | Source Identifier | Name | Description |
 | :--- | :--- | :--- |
-| `AUDIO_SOURCE_STANDALONE` | **USB DAC / DSP** *(Default)* | Consumes incoming UAC 1.0 stream from TinyUSB FIFO, runs PEQ biquads, and outputs to I2S. |
+| `AUDIO_SOURCE_STANDALONE` | **USB DAC / DSP** *(Default)* | Consumes incoming UAC 1.0 stream from TinyUSB FIFO, runs PEQ biquads, loudness, FIR, mixer, and lookahead limiter, and outputs 32-bit slots to I2S. |
 | `AUDIO_SOURCE_TONE_TEST` | **Tone Generator** | Synthesizes an A minor arpeggio (A4, C5, E5, A5) cycling every 250 ms to evaluate EQ curves without host audio. |
-| `AUDIO_SOURCE_SWEEP` | **Frequency Sweep** | Generates a continuous linear/logarithmic sweep from 100 Hz to 4,000 Hz for acoustic diagnostics. |
+| `AUDIO_SOURCE_SWEEP` | **Frequency Sweep** | Generates a continuous sweep from 100 Hz to 4,000 Hz for acoustic diagnostics. |
 
 ---
 
@@ -234,46 +231,43 @@ Implemented in [`main/controls.c`](../../main/controls.c) and [`main/oled_displa
 
 ### 5.1 Physical Controls Interaction Matrix
 
-The control subsystem operates as a clean modal state machine across three distinct modes (**Default Playback Mode**, **Main Menu Navigation Mode**, and **On-Device Live EQ Adjust Mode**):
+The control subsystem operates across three modes (**Default Playback**, **Main Menu**, and **Live EQ Adjust**):
 
 #### 1. Default Playback Mode (Normal Operation)
-In the default playback state, the rotary encoder and switch dedicatedly serve real-time listening controls:
 
 | Control Input | Action | Function | UI Response | WS2812B aRGB LED Response |
 | :--- | :--- | :--- | :--- | :--- |
 | **Rotary Turn** | CW / CCW | Adjust master volume ($\pm 2\%$ per detent) | Volume Slider Overlay (1.5s auto-hide) | Dynamic brightness & color scaling ($1\%\dots 100\%$) |
 | **Encoder SW** | Short Click | Toggle Master Mute (`audio_pipeline_set_mute`) | `[MUTED]` flag on OLED header | Soft Red alert (when muted) / restores volume color |
-| **Encoder SW** | Double Click | Quick Save to NVS (commits active profile to flash) | `"Saved to NVS"` popup overlay | Maintained at current volume loudness |
+| **Encoder SW** | Double Click | Quick Save to NVS (commits active slot & dynamics) | `"Saved to NVS"` popup overlay | Maintained at current volume loudness |
 | **Encoder SW** | Long Press ($>800\text{ ms}$) | Cycle Audio Source (USB DAC $\rightarrow$ Tone Test $\rightarrow$ Sweep) | Audio Source popup overlay | Maintained at current volume loudness |
 | **Button 1 (◄)** | Short Click | **Open On-Screen Menu** (enters Main Menu Mode) | Switches OLED body to interactive Menu List | Maintained at current volume loudness |
-| **Button 1 (◄)** | Long Press ($>800\text{ ms}$) | Cycle EQ Preset backward | Preset overlay popup | Maintained at current volume loudness |
-| **Button 2 (►)** | Short Click | Cycle EQ Preset forward (Flat $\rightarrow$ Bass Boost $\rightarrow$ Harman $\rightarrow$ Custom) | Preset overlay popup | Maintained at current volume loudness |
+| **Button 1 (◄)** | Long Press ($>800\text{ ms}$) | Cycle User Slot backward (`Slot 7..0`) | Slot overlay popup | Maintained at current volume loudness |
+| **Button 2 (►)** | Short Click | Cycle User Slot forward (`Slot 0..7`) | Slot overlay popup | Maintained at current volume loudness |
+| **Button 2 (►)** | Double-Click | Cycle OLED Playback Visualizer (`HUD -> Curve -> VU -> Split`) | View popup overlay & live renderer | Maintained at current volume loudness |
 
 #### 2. Main Menu Navigation Mode (Modal Menu Active)
-Triggered by clicking **Button 1 (◄)** (GPIO 18). In this mode, the rotary knob and buttons navigate system parameters:
 
 | Control Input | Action | Function | UI Response | WS2812B aRGB LED Response |
 | :--- | :--- | :--- | :--- | :--- |
-| **Rotary Turn** | CW / CCW | **Scroll Menu Items** up / down | Inverse highlight bar moves across menu options | Maintained at current volume loudness |
+| **Rotary Turn** | CW / CCW | **Scroll Menu Items** up / down | Inverse highlight bar moves across 11 menu options | Maintained at current volume loudness |
 | **Button 2 (►)** | Short Click | **Move Down** menu item list | Selection bar advances to next item | Maintained at current volume loudness |
 | **Button 1 (◄)** | Short Click | **Exit Menu / Back** to Playback Mode | Reverts immediately to Default Playback display | Maintained at current volume loudness |
-| **Encoder SW** | Short Click | **Confirm / Enter Selection** | Enters editor, cycles parameter, or exits | Maintained at current volume loudness |
+| **Encoder SW** | Short Click | **Confirm / Cycle** | Enters Live EQ Editor or cycles parameter | Maintained at current volume loudness |
 | **Encoder SW** | Long Press ($>800\text{ ms}$) | **Quick Save to NVS** | `"Saved to NVS"` popup overlay | Maintained at current volume loudness |
 
-#### 3. Menu Architecture & Selectable Options
-When the Menu is opened, the EC11 rotary knob scrolls through the following options:
-1. **1. Live EQ Adjust:**
-   - Enters on-device live digit-by-digit PEQ editor.
-2. **2. Preset:<Name>:**
-   - Cycles: `Flat` $\rightarrow$ `Bass Boost` $\rightarrow$ `Harman` $\rightarrow$ `User Custom`.
-3. **3. Src:<Source>:**
-   - Cycles: `USB DAC` $\rightarrow$ `Tone Test` $\rightarrow$ `Frequency Sweep`.
-4. **4. Preamp:<dB>:**
-   - Cycles headroom attenuation: $0.0\text{ dB} \rightarrow -2.0\text{ dB} \rightarrow -4.0\text{ dB} \rightarrow -6.0\text{ dB}$.
-5. **5. Save to NVS:**
-   - Commits active User Custom PEQ profile to persistent flash.
-6. **6. Exit Menu:**
-   - Closes the menu and returns to the standard playback dashboard.
+#### 3. Menu Architecture (11 Selectable Options)
+1. **1. Live EQ Adjust:** Enters on-device digit-by-digit PEQ editor on active slot.
+2. **2. Slot:<Name>:** Cycles NVS v3 User Slots `0..7`.
+3. **3. A/B:<Active/Bypass>:** Toggles transient preamp-normalized A/B comparison.
+4. **4. Xfeed:<Off/Low/High>:** Cycles Chu Moy headphone crossfeed level.
+5. **5. Loud:<Off/Mild/Full>:** Cycles Fletcher-Munson equal-loudness mode.
+6. **6. Limiter:<On/Off>:** Toggles 1.5 ms lookahead true-peak limiter (`-0.5 dBFS`).
+7. **7. OLED:<HUD/Curve/VU/Split>:** Cycles Playback Body visualizer mode.
+8. **8. Preamp:<dB>:** Cycles headroom attenuation ($0.0, -2.0, -4.0, -6.0\text{ dB}$).
+9. **9. Src:<Source>:** Cycles `USB DAC` $\rightarrow$ `Tone Generator` $\rightarrow$ `Frequency Sweep`.
+10. **10. Save to NVS:** Commits active slot & dynamics config to NVS v3 flash.
+11. **11. Exit Menu:** Closes menu and returns to Playback Mode.
 
 #### 4. On-Device EQ Adjust Mode (Live Digit-by-Digit PEQ Tuner)
 Triggered by selecting **"1. Live EQ Adjust"** from the Main Menu. Allows comprehensive, standalone tuning of the parametric equalizer without needing a PC or WebHID connection:

@@ -21,6 +21,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -34,6 +35,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.ascendance.dac.model.DynamicsConfig
+import com.ascendance.dac.model.LoudnessMode
 import com.ascendance.dac.model.MixerConfig
 import com.ascendance.dac.model.MixerMode
 import com.ascendance.dac.ui.theme.AscendanceColors
@@ -43,7 +46,12 @@ import kotlin.math.roundToInt
 @Composable
 fun MatrixTab(
     mixer: MixerConfig,
+    dynamics: DynamicsConfig,
+    sampleRateHz: Int,
     onUpdateMixer: (MixerConfig) -> Unit,
+    onUpdateDynamics: (DynamicsConfig) -> Unit,
+    onUploadFirFile: () -> Unit,
+    onClearFir: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showModeMenu by remember { mutableStateOf(false) }
@@ -142,6 +150,74 @@ fun MatrixTab(
                             shape = SegmentedButtonDefaults.itemShape(index = idx, count = cfLabels.size),
                             label = { Text(lbl, fontSize = 11.sp) }
                         )
+                    }
+                }
+            }
+        }
+
+        // Studio Dynamics, Equal Loudness & ESP-DSP FIR Convolution
+        Surface(
+            color = AscendanceColors.CardDark,
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, AscendanceColors.BorderDark)
+        ) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Studio Dynamics & FIR (v0.2.0)", color = AscendanceColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Lookahead True-Peak Limiter", color = AscendanceColors.TextPrimary, fontSize = 13.sp)
+                        Text("-0.5 dBFS ceiling (1.5 ms lookahead + soft clip)", color = AscendanceColors.TextSecondary, fontSize = 11.sp)
+                    }
+                    Switch(
+                        checked = dynamics.limiterEnabled,
+                        onCheckedChange = { onUpdateDynamics(dynamics.copy(limiterEnabled = it)) }
+                    )
+                }
+
+                Text("Fletcher-Munson Equal Loudness (Vol < 80%)", color = AscendanceColors.TextSecondary, fontSize = 12.sp)
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    LoudnessMode.entries.forEachIndexed { idx, mode ->
+                        SegmentedButton(
+                            selected = dynamics.loudnessMode == mode.code,
+                            onClick = { onUpdateDynamics(dynamics.copy(loudnessMode = mode.code)) },
+                            shape = SegmentedButtonDefaults.itemShape(index = idx, count = LoudnessMode.entries.size),
+                            label = { Text(mode.label, fontSize = 11.sp) }
+                        )
+                    }
+                }
+
+                val maxCap = if (sampleRateHz > 48000) 128 else 256
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("ESP-DSP SIMD FIR Convolution", color = AscendanceColors.TextPrimary, fontSize = 13.sp)
+                        Text(
+                            "Loaded L:${dynamics.firTapsL} / R:${dynamics.firTapsR} taps (cap $maxCap @ ${sampleRateHz / 1000}k)",
+                            color = AscendanceColors.TextSecondary,
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                    Switch(
+                        checked = dynamics.firEnabled,
+                        onCheckedChange = { onUpdateDynamics(dynamics.copy(firEnabled = it)) }
+                    )
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(onClick = onUploadFirFile, modifier = Modifier.weight(1f)) {
+                        Text("Upload FIR (.txt/.wav)", fontSize = 11.sp)
+                    }
+                    OutlinedButton(onClick = onClearFir, modifier = Modifier.weight(0.75f)) {
+                        Text("Clear FIR", fontSize = 11.sp)
                     }
                 }
             }

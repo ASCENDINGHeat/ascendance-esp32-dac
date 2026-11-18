@@ -43,9 +43,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.ascendance.dac.model.HardwarePreset
 import com.ascendance.dac.model.LocalPreset
 import com.ascendance.dac.ui.DacUiState
 import com.ascendance.dac.ui.theme.AscendanceColors
@@ -55,6 +55,9 @@ import java.util.Locale
 fun PresetsTab(
     state: DacUiState,
     onSelectHardwarePreset: (Int) -> Unit,
+    onRenameHardwareSlot: (String) -> Unit,
+    onFactoryResetSlot: () -> Unit,
+    onApplyStarterCurve: (String) -> Unit,
     onSaveToNvs: () -> Unit,
     onResetFlat: () -> Unit,
     onImportFile: () -> Unit,
@@ -68,6 +71,8 @@ fun PresetsTab(
 ) {
     var showNewPresetDialog by remember { mutableStateOf(false) }
     var newPresetName by remember { mutableStateOf("") }
+    var showRenameSlotDialog by remember { mutableStateOf(false) }
+    var slotRenameText by remember { mutableStateOf("") }
     var renamingPreset by remember { mutableStateOf<LocalPreset?>(null) }
     var renameText by remember { mutableStateOf("") }
 
@@ -77,38 +82,73 @@ fun PresetsTab(
             .verticalScroll(rememberScrollState()),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        // Hardware On-Device Preset Slots + NVS Save
+        // 8-Slot Editable NVS v3 User Profiles + Slot Rename / Reset / NVS Save
         Surface(
             color = AscendanceColors.CardDark,
             shape = RoundedCornerShape(12.dp),
             border = BorderStroke(1.dp, AscendanceColors.BorderDark)
         ) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("DAC Hardware Presets", color = AscendanceColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
                 Row(
                     modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    HardwarePreset.entries.take(2).forEach { hp ->
+                    Text("NVS v3 User Slots (0–7)", color = AscendanceColors.TextSecondary, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+                    Text(
+                        text = "Active: S${state.activePresetSlot + 1}",
+                        color = AscendanceColors.AccentBlue,
+                        fontSize = 11.sp,
+                        fontFamily = FontFamily.Monospace
+                    )
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    (0 until 4).forEach { slot ->
+                        val lbl = state.slotNames.getOrElse(slot) { "User ${slot + 1}" }
                         FilterChip(
-                            selected = state.activePresetSlot == hp.slot,
-                            onClick = { onSelectHardwarePreset(hp.slot) },
-                            label = { Text(hp.label, fontSize = 11.sp) },
+                            selected = state.activePresetSlot == slot,
+                            onClick = { onSelectHardwarePreset(slot) },
+                            label = { Text(lbl, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             modifier = Modifier.weight(1f)
                         )
                     }
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
-                ) {
-                    HardwarePreset.entries.drop(2).forEach { hp ->
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    (4 until 8).forEach { slot ->
+                        val lbl = state.slotNames.getOrElse(slot) { "User ${slot + 1}" }
                         FilterChip(
-                            selected = state.activePresetSlot == hp.slot,
-                            onClick = { onSelectHardwarePreset(hp.slot) },
-                            label = { Text(hp.label, fontSize = 11.sp) },
+                            selected = state.activePresetSlot == slot,
+                            onClick = { onSelectHardwarePreset(slot) },
+                            label = { Text(lbl, fontSize = 10.sp, maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             modifier = Modifier.weight(1f)
                         )
+                    }
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedButton(
+                        onClick = {
+                            slotRenameText = state.slotNames.getOrElse(state.activePresetSlot) { "User ${state.activePresetSlot + 1}" }
+                            showRenameSlotDialog = true
+                        },
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Icon(Icons.Outlined.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("Rename Slot", fontSize = 11.sp)
+                    }
+                    OutlinedButton(onClick = onFactoryResetSlot, modifier = Modifier.weight(1f)) {
+                        Text("Reset Slot", fontSize = 11.sp)
+                    }
+                }
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    OutlinedButton(onClick = { onApplyStarterCurve("flat") }, modifier = Modifier.weight(1f)) {
+                        Text("Seed Flat", fontSize = 10.sp)
+                    }
+                    OutlinedButton(onClick = { onApplyStarterCurve("bass") }, modifier = Modifier.weight(1f)) {
+                        Text("Seed Bass", fontSize = 10.sp)
+                    }
+                    OutlinedButton(onClick = { onApplyStarterCurve("harman") }, modifier = Modifier.weight(1f)) {
+                        Text("Seed Harman", fontSize = 10.sp)
                     }
                 }
                 Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -122,7 +162,7 @@ fun PresetsTab(
                         Text("Save to DAC NVS", fontSize = 12.sp)
                     }
                     OutlinedButton(onClick = onResetFlat, modifier = Modifier.weight(0.75f)) {
-                        Text("Reset Flat", fontSize = 12.sp)
+                        Text("Flatten Band", fontSize = 11.sp)
                     }
                 }
             }
@@ -311,6 +351,31 @@ fun PresetsTab(
             },
             dismissButton = {
                 TextButton(onClick = { renamingPreset = null }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showRenameSlotDialog) {
+        AlertDialog(
+            onDismissRequest = { showRenameSlotDialog = false },
+            title = { Text("Rename Slot ${state.activePresetSlot + 1}", fontSize = 15.sp) },
+            text = {
+                OutlinedTextField(
+                    value = slotRenameText,
+                    onValueChange = { slotRenameText = it.take(16) },
+                    label = { Text("Slot Name (max 16 chars)") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    onRenameHardwareSlot(slotRenameText)
+                    showRenameSlotDialog = false
+                }) { Text("Save") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showRenameSlotDialog = false }) { Text("Cancel") }
             }
         )
     }

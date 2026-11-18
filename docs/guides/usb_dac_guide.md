@@ -195,33 +195,39 @@ enum {
 Tuning commands and profile queries travel in fixed 64-byte packets (`webhid_peq_packet_t` in [`main/webhid_peq.h`](../../main/webhid_peq.h)):
 
 ```c
-#define WEBHID_PEQ_REPORT_SIZE  64
-#define WEBHID_MAGIC_16         0x4551  // "EQ" in ASCII
+#define WEBHID_PEQ_REPORT_SIZE      64
+#define WEBHID_MAGIC_16             0x4551  // "EQ" in ASCII
+#define WEBHID_REPORT_SUB_EXT_STATE 0xFD    // Extended State / Dynamics / Slot Name telemetry
+#define WEBHID_REPORT_SUB_MATRIX    0xFE    // 2x2 Channel Matrix & Crossfeed query
 
 typedef enum {
-    WEBHID_CMD_GET_ACTIVE_PROFILE = 0x01,  // Request current settings (band_idx=0xFE queries custom matrix)
-    WEBHID_CMD_SET_BAND_LIVE      = 0x02,  // Real-time slider move (volatile in SRAM only, 0 flash writes)
-    WEBHID_CMD_SET_PREAMP_LIVE    = 0x03,  // Preamp headroom change (volatile in SRAM only)
-    WEBHID_CMD_SELECT_PROFILE     = 0x04,  // Switch active slot (0=Flat, 1=Bass Boost, 2=Harman, 3=User Custom)
-    WEBHID_CMD_SAVE_TO_PRESET     = 0x05,  // Explicit flash commit to NVS v2 (CRC32 + Delta-checked)
-    WEBHID_CMD_RESET_TO_PRESET    = 0x06,  // Reset user slot from factory preset
+    WEBHID_CMD_GET_ACTIVE_PROFILE = 0x01,  // Query band profile, 0xFE mixer, or 0xFD extended state
+    WEBHID_CMD_SET_BAND_LIVE      = 0x02,  // Real-time slider move (volatile SRAM only, 0 flash writes)
+    WEBHID_CMD_SET_PREAMP_LIVE    = 0x03,  // Preamp headroom change (volatile SRAM only)
+    WEBHID_CMD_SELECT_PROFILE     = 0x04,  // Switch active user slot (0..7)
+    WEBHID_CMD_SAVE_TO_PRESET     = 0x05,  // Explicit flash commit to NVS v3 (CRC32 + Delta-checked)
+    WEBHID_CMD_RESET_TO_PRESET    = 0x06,  // Reset active slot to Reference Flat
     WEBHID_CMD_SET_BAND_COUNT     = 0x07,  // Dynamically configure active band count (1 to 10 bands)
     WEBHID_CMD_SET_AB_BYPASS      = 0x08,  // Instant A/B bypass toggle (transient, 15 ms crossfade)
     WEBHID_CMD_SET_DUAL_MONO      = 0x09,  // Linked Stereo (1) vs Independent Dual-Mono L/R (0)
-    WEBHID_CMD_SET_MIXER          = 0x13   // 2x2 Channel Matrix & Chu Moy Crossfeed configuration
+    WEBHID_CMD_RENAME_SLOT        = 0x0A,  // Rename user slot (0..7) with 16-byte UTF-8 name
+    WEBHID_CMD_SET_DYNAMICS       = 0x0B,  // Set Limiter, Equal-Loudness, FIR enable & OLED view
+    WEBHID_CMD_SET_POWER_CFG      = 0x0C,  // Set Zero-Signal Auto-Mute sec & OLED burn-in dimmer sec
+    WEBHID_CMD_FACTORY_RESET_SLOT = 0x0D,  // Reset specific slot (0..7) to Reference Flat + "User N"
+    WEBHID_CMD_SET_MIXER          = 0x13,  // 2x2 Channel Matrix & Chu Moy Crossfeed configuration
+    WEBHID_CMD_UPLOAD_FIR_CHUNK   = 0x14   // Stream float32 FIR impulse chunks (up to 12 floats/report)
 } webhid_cmd_t;
 
 typedef struct __attribute__((packed)) {
     uint16_t magic;         // WEBHID_MAGIC_16 (0x4551) [bytes 0..1]
     uint8_t  cmd;           // webhid_cmd_t             [byte 2]
-    uint8_t  band_idx;      // Band/mode/toggle arg     [byte 3]
-    uint8_t  filter_type;   // 0=Bypass..7=BPF (or int8 balance for 0x13) [byte 4]
-    uint8_t  enabled;       // 1=Active, 0=Bypass (or width_pct for 0x13) [byte 5]
-    uint16_t freq_hz;       // 20 to 20,000 Hz (or crossfeed_level for 0x13) [bytes 6..7]
-    int16_t  gain_db_x10;   // e.g. +35 = +3.5 dB       [bytes 8..9]
-    uint16_t q_x100;        // e.g. 141 = 1.41          [bytes 10..11]
-    uint8_t  reserved[52];  // bytes 12..63: [12]=num_bands, [13]=ch, [14]=flags, [15]=preset,
-                            //   [16..17]=preamp_x10, [18..21]=mixer, [22..25]=sample_rate_hz (u32 LE)
+    uint8_t  band_idx;      // Band/slot/toggle/sub arg [byte 3]
+    uint8_t  filter_type;   // 0=Bypass..7=BPF (or int8 balance / loudness / FIR count) [byte 4]
+    uint8_t  enabled;       // 1=Active, 0=Bypass (or width_pct / dynamics flags)    [byte 5]
+    uint16_t freq_hz;       // 20..20000 Hz (or crossfeed / auto_mute_sec / fir_total) [bytes 6..7]
+    int16_t  gain_db_x10;   // e.g. +35 = +3.5 dB (or oled_dim_sec)                   [bytes 8..9]
+    uint16_t q_x100;        // e.g. 141 = 1.41 (or fir_taps_l / fir_offset)            [bytes 10..11]
+    uint8_t  reserved[52];  // bytes 12..63: metadata, slot name UTF-8, matrix or FIR floats
 } webhid_peq_packet_t;
 ```
 

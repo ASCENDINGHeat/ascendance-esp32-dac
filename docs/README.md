@@ -5,7 +5,7 @@
 > **Production Hardware Baseline:** Schematic 2 (`docs/schematics/DSP+DAC+SCREEN.svg` Rev 1.1)  
 > **DAC & Headphone Output:** Texas Instruments GY-PCM5102A (32-bit / 384 kHz) + NXP/Philips TDA1308 Class-AB Amp  
 > **Firmware Framework:** ESP-IDF v6.1 (C / FreeRTOS SMP / TinyUSB / esp-dsp)  
-> **Control Interfaces:** EC11 Hardware Rotary Encoder + Dual Navigation Buttons (`SW6` & `SW8`) + Driverless WebHID Browser Tuner (Chrome / Edge)
+> **Control Interfaces:** EC11 Hardware Rotary Encoder + Dual Navigation Buttons (`SW6` & `SW8`) + WebHID PWA (`tools/webhid_tuner/`) + Native Android Companion (`tools/android_companion/`)
 
 ---
 
@@ -22,11 +22,11 @@ To ensure rapid navigation for embedded engineers, system architects, and autono
  │ TIER 2: ACTIVE SUBSYSTEM DEEP-DIVE GUIDES                                              │
  │ • USB DAC & WebHID Stack   • Parametric EQ Engine   • UI & OLED Display  • Arbiter     │
  ├────────────────────────────────────────────────────────────────────────────────────────┤
- │ TIER 3: ENGINEERING TOOLS, DIAGNOSTICS & AI MANUALS                                    │
- │ • Master AI Reference      • Troubleshooting & RCA  • WebHID Live Tuner Client App     │
+ │ TIER 3: ENGINEERING TOOLS, DIAGNOSTICS & CLIENT APPS                                   │
+ │ • Master AI Reference      • Troubleshooting & RCA  • WebHID PWA   • Android Companion │
  ├────────────────────────────────────────────────────────────────────────────────────────┤
- │ TIER 4: FUTURE ENHANCEMENTS & ARCHITECTURAL ROADMAP                                    │
- │ • Matrix Mixer & Crossfeed • 24-bit/96kHz Pipeline  • OLED EQ Curves    • PWA Offline  │
+ │ TIER 4: PLANNED v0.2.0 ROADMAP & ARCHITECTURAL BLUEPRINTS                              │
+ │ • Studio DSP (Limiter/Loudness/FIR) • 8-Slot NVS v3 • OLED Curve/VU • USB Sleep/Mute  │
  ├────────────────────────────────────────────────────────────────────────────────────────┤
  │ TIER 5: MODULAR PER-FUNCTION SPECIFICATIONS (docs/software_functions/)                 │
  │ • 01: Audio Pipeline / I2S • 03: Parametric EQ DSP  • 04: USB Audio / HID • 06: UI/Ctl │
@@ -45,7 +45,7 @@ To ensure rapid navigation for embedded engineers, system architects, and autono
 
 | Document | Primary Focus | Key Subsystems & Topics Covered |
 | :--- | :--- | :--- |
-| **[Current Firmware Implementation](firmware/current_firmware_implementation.md)** | **Definitive Production Record** | Verified operational state: UAC 1.0 + WebHID composite device (`303A:4002`), 1-to-10 band PEQ, SSD1306 OLED, PCNT rotary encoder, I2S0 DMA pipeline, memory sizing, and flash commands. |
+| **[Current Firmware Implementation](firmware/current_firmware_implementation.md)** | **Definitive Production Record** | Verified operational state: UAC 1.0 + WebHID composite device (`303A:4002`), Dual-Mono 1-to-10 band PEQ, Matrix/Crossfeed, SSD1306 OLED, PCNT rotary encoder, 32-bit I2S0 DMA pipeline, NVS v2, and flash commands. |
 | **[Software Architecture](firmware/software.md)** | **Software Architecture & HAL** | Modular C subsystems, ESP-IDF v6.1 `driver/i2s_std.h`, FreeRTOS dual-core task layout (Core 0 control vs Core 1 audio), memory model, and developer invariants. |
 | **[Hardware & Wiring Guide](hardware/hardware.md)** | **Electrical & Physical Assembly** | Complete Bill of Materials (BOM), **100% Through-Hole recommendations**, YD-ESP32-S3 physical header pinouts, 5V power routing (`IN-OUT` jumper), DAC solder jumpers, and star-grounding rules. |
 | **[Hardware Schematics Guide](hardware/schematics.md)** | **Circuit Schematics & Verification** | Netlists, CLC Pi-filter calculations, pre-assembly sign-off checklists, and verified vector schematics: [`DSP+DAC+SCREEN.svg`](schematics/DSP+DAC+SCREEN.svg) (Rev 1.1, Production), [`DSP+DAC.svg`](schematics/DSP+DAC.svg) (Rev 1.3), and [`DSP+DAC+LOCAL.svg`](schematics/DSP+DAC+LOCAL.svg) (Rev 1.2). |
@@ -57,7 +57,7 @@ To ensure rapid navigation for embedded engineers, system architects, and autono
 
 | Document | Primary Focus | Key Subsystems & Topics Covered |
 | :--- | :--- | :--- |
-| **[USB Audio Class (UAC) DAC Guide](guides/usb_dac_guide.md)** | **USB Audio & WebHID Stack** | Native USB OTG (GPIO 19/20), TinyUSB UAC 1.0 isochronous streaming (48 kHz / 16-bit stereo), host volume/mute synchronization, and bidirectional 64-byte raw WebHID protocol. |
+| **[USB Audio Class (UAC) DAC Guide](guides/usb_dac_guide.md)** | **USB Audio & HID Stack** | Native USB OTG (GPIO 19/20), TinyUSB UAC 1.0 tri-rate 24-bit isochronous streaming (`44.1 / 48.0 / 96.0 kHz`), host volume/mute synchronization, 64-byte raw WebHID protocol, and Android `UsbManager` HID-only coexistence. |
 | **[Parametric Equalizer (PEQ) DSP Guide](guides/parametric_eq_guide.md)** | **DSP Audio Engine** | Robert Bristow-Johnson (RBJ) Audio EQ Cookbook biquad mathematics, 1-to-10 dynamic band scaling, 15 ms click-free crossfade, pre-gain headroom, saturation clamping, and NVS flash persistence. |
 | **[User Interface, Display & Controls](guides/ui_and_controls_guide.md)** | **Physical UI & Visualizer** | SSD1306 128x64 OLED graphics driver (I2C 400 kHz @ `0x3C`), 3 operating modes (Playback HUD, Main Menu, and On-Device Digit-by-Digit PEQ Editor), hardware PCNT rotary decoding (GPIO 15/16), WS2812B aRGB RMT loudness/mute LED, and debounced dual navigation buttons. |
 | **[Audio Switching & Handover Guide](guides/mode_switching_guide.md)** | **Source Arbiter & Muting** | Central audio source arbiter, 4-phase zero-pop hardware muting protocol (`GPIO 7: XMT`), diagnostic tone arpeggio generator, and continuous frequency sweep. |
@@ -65,22 +65,23 @@ To ensure rapid navigation for embedded engineers, system architects, and autono
 ---
 
 ### Tier 3: Engineering Tools, Diagnostics & AI Reference
-*Development manuals, automated diagnostic workflows, and browser tooling.*
+*Development manuals, automated diagnostic workflows, and client applications.*
 
 | Document | Primary Focus | Key Subsystems & Topics Covered |
 | :--- | :--- | :--- |
 | **[Master Agentic AI Developer Reference](reference/agentic_ai_reference.md)** | **Autonomous AI Developer Manual** | The 10 Golden Invariants, master pinout definitions, FreeRTOS task affinities, memory caps, automated diagnostic triage tree, and coding rules for autonomous AI agents. |
 | **[Troubleshooting & Root Cause Analysis](guides/troubleshooting.md)** | **Post-Mortems & Preventative Eng** | Deep-dive post-mortems: eliminating 1 kHz USB frame buzz, star-grounding architecture, subnormal float DSP slowdowns, Core 1 cache panics during NVS commits, and brownout resets. |
-| **[WebHID Live Tuner Application](../tools/webhid_tuner/index.html)** | **Driverless Web Client Tool** | Browser-based interactive client: HTML5 Canvas logarithmic curve visualizer, draggable nodes, mouse-wheel Q factor adjustment, dynamic band scaling, and volatile SRAM auditioning. |
+| **[WebHID Live Tuner Application](../tools/webhid_tuner/index.html)** | **Driverless Desktop PWA** | Chromium browser interactive client: HTML5 Canvas magnitude/phase/GD curve visualizer, Dual-Mono L/R, Matrix/Crossfeed, Equalizer APO import/export, and volatile SRAM auditioning. |
+| **[Android Companion Application](../tools/android_companion/)** | **Native Mobile USB OTG App** | Kotlin + Jetpack Compose Android app claiming HID Interface #2 without interrupting UAC OS audio; pinch-to-Q Canvas, Offline Demo Mode, and Unlimited Local Phone Preset Library. |
 
 ---
 
 ### Tier 4: Future Enhancements & Architectural Roadmap
-*Implementation-ready specifications for future development cycles.*
+*Implementation-ready blueprints for `v0.2.0` development cycles alongside `v0.1.0` completed specs.*
 
 | Document | Primary Focus | Key Subsystems & Topics Covered |
 | :--- | :--- | :--- |
-| **[Future Enhancements Roadmap](firmware/future_enhancements.md)** | **Feature Roadmap & Blueprints** | **Section 1.6 Channel Matrix Mixer & Headphone Crossfeed (Chu Moy/Bauer)**, 24-bit / 96 kHz high-res pipeline, bit-perfect dual-rate (44.1k/48k) dynamic reclocking, independent dual-mono L/R PEQ, OLED live curve rendering, stereo VU meter, rotary PEQ editor, AutoEQ import, and PWA offline deployment. |
+| **[Future Enhancements Roadmap](firmware/future_enhancements.md)** | **`v0.2.0` Blueprint & Tracker** | **Studio DSP (`v0.2.0`):** Lookahead True-Peak Limiter, Fletcher-Munson Loudness Contour, adaptive ESP-DSP SIMD FIR Convolution (`256/128` taps), **8 Editable Flat-Seeded NVS v3 User Slots** (replacing factory presets); **OLED & Power (`v0.2.0`):** Cycleable Live EQ Curve & Stereo Peak/RMS VU Meter, Menu A/B + Crossfeed, I2C Hot-Plug, OLED Dimmer/Screensaver, USB Suspend sleep (`<15 mA`), and 10s Zero-Signal Auto-Mute. |
 
 ---
 
