@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Espressif Systems (0x303A = 12346), Composite UAC + WebHID DAC (0x4002 = 16386) -->
+    <usb-device
+        product-id="16386"
+        vendor-id="12346" />
+</resources>

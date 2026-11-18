@@ -18,3 +18,13 @@ __pycache__/
 *$py.class
 .venv/
 venv/
+
+# Android / Gradle
+.gradle/
+**/build/
+local.properties
+*.apk
+*.aab
+*.jks
+*.keystore
+

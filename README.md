@@ -13,7 +13,7 @@
 **DSP Engine:** Dynamic 1-to-10 Band Dual-Mono L/R Parametric Equalizer (8 RBJ Biquad Topologies) + 2×2 Channel Matrix & Chu Moy Crossfeed + Instant A/B Bypass + 15 ms Linear Crossfader  
 **Audio Backend:** Master I2S0 DMA (32-bit slots) $\rightarrow$ Texas Instruments GY-PCM5102A 32-bit DAC $\rightarrow$ NXP/Philips TDA1308 Class-AB Headphone Amplifier $\rightarrow$ 3.5 mm TRS Headphone Jack  
 **Display & Control:** 0.96" SSD1306 128×64 Monochrome OLED (I2C @ `0x3C`) + EC11 Quadrature Rotary Encoder (Hardware PCNT) + Dual Navigation Buttons (`SW6` / `SW8`) + Onboard WS2812B aRGB LED (RMT driver)  
-**Tuning Interface:** Driverless 60 FPS USB WebHID Live Tuner & Offline PWA (`tools/webhid_tuner/index.html`) for Chromium browsers + On-Device Digit-by-Digit PEQ Editor  
+**Tuning Interface:** Driverless 60 FPS USB WebHID Live Tuner & PWA (`tools/webhid_tuner/`) for Desktop + Native Kotlin/Compose Android Companion App (`tools/android_companion/`) + On-Device Digit-by-Digit PEQ Editor  
 
 ---
 
@@ -290,8 +290,9 @@ An onboard WS2812B aRGB LED on `GPIO 48` provides visual status feedback using t
 ```
 ascendance-esp32-dac/
 ├── .github/workflows/
+│   ├── android.yml               # Android unit tests, lintDebug & APK CI build
 │   ├── build.yml                 # ESP-IDF v6.1 CI build, merged bin, size report & WebHID JS check
-│   └── release.yml               # Tagged GitHub Release firmware & WebHID tuner packaging
+│   └── release.yml               # Tagged GitHub Release firmware, WebHID HTML & Android APK packaging
 ├── CMakeLists.txt                # Root CMakeLists (Project ASCENDANCE, TinyUSB UAC flags)
 ├── dependencies.lock             # ESP Component Manager locked versions
 ├── pytest_hello_world.py         # Pytest target verification script
@@ -312,6 +313,7 @@ ascendance-esp32-dac/
 │   ├── led_indicator.c/.h        # WS2812B aRGB LED via RMT with optical safety cap
 │   └── minimp3.h                 # Standalone MP3 decoding engine (research)
 ├── tools/                        # Development & Tuning Tools
+│   ├── android_companion/        # Native Kotlin + Jetpack Compose Android OTG HID companion app
 │   └── webhid_tuner/
 │       ├── index.html            # Driverless WebHID live browser tuner app (RBJ/APO/Matrix)
 │       ├── manifest.json         # PWA manifest for standalone installability
@@ -383,7 +385,7 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 ### 8.6 Using the WebHID Live Tuner
 
-1. Connect the YD-ESP32-S3 **Native USB port** (GPIO 19/20) to your PC, Mac, or Android device using a USB Type-C cable.
+1. Connect the YD-ESP32-S3 **Native USB port** (GPIO 19/20) to your PC or Mac using a USB Type-C cable.
 2. Open [`tools/webhid_tuner/index.html`](tools/webhid_tuner/index.html) in Google Chrome or Microsoft Edge.
 3. Click **"Connect USB DAC"** and select **ESP32-S3 Hi-Fi DSP DAC** from the browser device prompt.
 4. Tune your sound in real-time (60 FPS volatile SRAM auditioning, zero flash wear):
@@ -393,6 +395,15 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
    * **Dynamic Bands (1 to 10):** Add custom bands via `+ Add Band`, remove via `✕`, or enter a count in the stepper.
    * **Direct Value Typing:** Type exact values within safety bounds for Frequency, Gain, Q Factor, and Preamp.
 5. Click **"💾 Save to Hardware NVS"** to permanently store your profile in non-volatile flash.
+
+### 8.7 Using the Android Companion App (`tools/android_companion/`)
+
+Since Android Chrome does not expose `navigator.hid` (WebHID), mobile users can install the native Kotlin + Jetpack Compose companion app (`com.ascendance.dac`, Android 8.0+ / API 26+) built via [`.github/workflows/android.yml`](.github/workflows/android.yml) or Android Studio:
+
+1. **Zero Audio Interruption:** Plug in the ESP32-S3 DAC via USB-C OTG and approve the Android USB prompt. The app claims **only USB HID Interface #2**, leaving UAC 1.0 Audio (`#0`/`#1`) bound to Android OS so Spotify, Tidal, and system audio continue playing smoothly.
+2. **Touch & Pinch Canvas:** Drag EQ control nodes (`Freq`/`Gain`), two-finger pinch anywhere on the graph to adjust `Q`, double-tap nodes to reset gain, or double-tap empty canvas to add bands.
+3. **Full DSP & Matrix Parity:** Switch Dual-Mono L/R channels, toggle instant preamp-normalized A/B Bypass, tune the 2×2 Channel Matrix and Chu Moy Crossfeed, and import/export AutoEQ `.txt` or `.json` files.
+4. **Offline Demo Mode & Phone Preset Library:** Design or import headphone curves offline without the DAC plugged in, maintain an unlimited local library of named phone profiles, and push them live or commit to NVS v2 once attached.
 
 ---
 

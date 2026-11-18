@@ -381,6 +381,9 @@ class UsbDacTuner {
 > * **2×2 Channel Matrix & Chu Moy Crossfeed:** Stereo, Mono Mix, L-Only, R-Only, Swap L/R, Mid-Side Width (`0–200%`), L/R Balance, Custom `2×2` coefficients, and 3-level Chu Moy headphone crossfeed (`Off / Mild / Medium`).
 > * **Equalizer APO / AutoEQ Import & Export:** One-click `.txt` (APO syntax) and `.json` snapshot import/export with clamped `Freq` (`20..20,000 Hz`), `Gain` (`-24.0..+12.0 dB`), `Q` (`0.10..10.00`), and `Preamp` (`-12.0..0.0 dB`).
 > * **60 FPS Volatile Auditioning & NVS v2 Commit:** Streams live updates to SRAM with **0 flash wear**; commits Dual-Mono + Matrix settings to NVS (`user_cfg_v2`) via explicit Save with CRC32 and delta checks.
+>
+> **Native Android Companion App (`tools/android_companion/`):**  
+> Because Android Chrome does not implement the WebHID API (`navigator.hid`), a native Kotlin + Jetpack Compose Android companion app (`com.ascendance.dac`, Android 8.0+) is provided in [`tools/android_companion/`](../../tools/android_companion/). It uses `android.hardware.usb.UsbManager` to claim **only USB HID Interface #2** (`EP 0x02 OUT` / `EP 0x82 IN`, `VID 0x303A` / `PID 0x4002`), keeping UAC 1.0 Interfaces `0`/`1` free so Spotify/Tidal/Android audio continues uninterrupted while tuning Dual-Mono L/R PEQ, Matrix/Crossfeed, A/B Toggle, AutoEQ/APO `.txt`/`.json` profiles, and an unlimited local phone preset library (plus Offline Demo Mode).
 
 ---
 
