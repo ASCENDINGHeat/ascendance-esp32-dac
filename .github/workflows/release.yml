@@ -1,0 +1,78 @@
+name: Publish ASCENDANCE Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: 'Release tag (e.g. v1.0.0)'
+        required: true
+        default: 'v1.0.0'
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.tag_name || github.ref_name }}
+
+jobs:
+  build-firmware:
+    name: Build Release Firmware (ESP-IDF v6.1)
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v6.1
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Compile ESP32-S3 ASCENDANCE Binaries
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          . /opt/esp/idf/export.sh
+          idf.py set-target esp32s3
+          idf.py build
+          (cd build && esptool.py --chip esp32s3 merge_bin -o ascendance-firmware-${RELEASE_TAG}-merged.bin @flash_args)
+          cp build/ASCENDANCE.bin build/ascendance-firmware-${RELEASE_TAG}.bin
+
+      - name: Upload Firmware Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-firmware
+          path: |
+            build/ascendance-firmware-*-merged.bin
+            build/ascendance-firmware-*.bin
+
+  publish-release:
+    name: Create GitHub Release
+    needs: [build-firmware]
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download Built Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: release-firmware
+          path: release-assets
+
+      - name: Package WebHID Tuner
+        run: cp tools/webhid_tuner/index.html release-assets/ascendance-webhid-tuner-${RELEASE_TAG}.html
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: "Project ASCENDANCE ${{ env.RELEASE_TAG }}"
+          generate_release_notes: true
+          files: |
+            release-assets/ascendance-firmware-*-merged.bin
+            release-assets/ascendance-firmware-*.bin
+            release-assets/ascendance-webhid-tuner-*.html
+          draft: false
+          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}

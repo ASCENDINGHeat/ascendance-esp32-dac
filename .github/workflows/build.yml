@@ -1,0 +1,108 @@
+name: Build ASCENDANCE Firmware (ESP-IDF v6.1)
+
+on:
+  push:
+    branches: [ "main", "dev", "staging" ]
+    paths:
+      - 'main/**'
+      - 'CMakeLists.txt'
+      - 'dependencies.lock'
+      - 'sdkconfig.defaults'
+      - 'sdkconfig.ci'
+      - 'tools/webhid_tuner/**'
+      - '.github/workflows/build.yml'
+  pull_request:
+    branches: [ "main", "dev", "staging" ]
+    paths:
+      - 'main/**'
+      - 'CMakeLists.txt'
+      - 'dependencies.lock'
+      - 'sdkconfig.defaults'
+      - 'sdkconfig.ci'
+      - 'tools/webhid_tuner/**'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-firmware:
+    name: Build Firmware (ESP32-S3 N16R8 - ESP-IDF v6.1)
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v6.1
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Resolve Branch Artifact Suffix
+        id: meta
+        shell: bash
+        run: |
+          if [ "${GITHUB_EVENT_NAME}" = "pull_request" ]; then
+            RAW_ENV="pr-${{ github.event.pull_request.number }}-${{ github.base_ref }}"
+          else
+            RAW_ENV="${GITHUB_REF_NAME}"
+          fi
+          echo "env_slug=${RAW_ENV//\//-}" >> "$GITHUB_OUTPUT"
+
+      - name: Configure and Build ESP-IDF Firmware
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          . /opt/esp/idf/export.sh
+          idf.py --version
+          idf.py set-target esp32s3
+          idf.py build
+          (cd build && esptool.py --chip esp32s3 merge_bin -o ASCENDANCE_merged.bin @flash_args)
+          ls -lh build/*.bin build/bootloader/*.bin build/partition_table/*.bin
+
+      - name: Firmware Size Summary
+        shell: bash
+        run: |
+          . /opt/esp/idf/export.sh
+          {
+            echo "### ESP32-S3 Firmware Size Report"
+            echo '```text'
+            idf.py size
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload Firmware Binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: ascendance-esp32s3-firmware-${{ steps.meta.outputs.env_slug }}
+          path: |
+            build/ASCENDANCE_merged.bin
+            build/ASCENDANCE.bin
+            build/ASCENDANCE.elf
+            build/bootloader/bootloader.bin
+            build/partition_table/partition-table.bin
+            build/flash_args
+          if-no-files-found: error
+
+  check-webhid-tuner:
+    name: Validate WebHID Tuner (HTML/JS)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Check inline JavaScript syntax in tools/webhid_tuner/index.html
+        run: |
+          python3 - <<'EOF'
+          import re, subprocess, tempfile, pathlib
+          html = pathlib.Path("tools/webhid_tuner/index.html").read_text(encoding="utf-8")
+          scripts = re.findall(r"<script[^>]*>(.*?)</script>", html, flags=re.DOTALL | re.IGNORECASE)
+          assert scripts, "No <script> block found in tools/webhid_tuner/index.html"
+          for idx, js in enumerate(scripts, 1):
+              with tempfile.NamedTemporaryFile("w", suffix=".js", delete=False) as tf:
+                  tf.write(js)
+                  path = tf.name
+              subprocess.run(["node", "--check", path], check=True)
+              print(f"Script block #{idx} syntax OK ({len(js.splitlines())} lines)")
+          EOF
