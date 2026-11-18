@@ -9,29 +9,29 @@
 
 **Production Hardware Baseline:** Schematic 2 (`docs/schematics/DSP+DAC+SCREEN.svg` Rev 1.1)  
 **Mainboard:** YD-ESP32-S3 (Xtensa Dual-Core LX7 @ 240 MHz, 16 MB Octal Flash, 8 MB Octal PSRAM)  
-**Audio Frontend:** Native USB OTG (USB Audio Class 1.0 Isochronous 48 kHz / 16-bit Stereo)  
-**DSP Engine:** Dynamic 1-to-10 Band Parametric Equalizer (Direct Form II Transposed Biquads) + 15 ms Double-Buffered Linear Crossfader + Saturation Clamping  
-**Audio Backend:** Master I2S0 DMA $\rightarrow$ Texas Instruments GY-PCM5102A 32-bit DAC $\rightarrow$ NXP/Philips TDA1308 Class-AB Headphone Amplifier $\rightarrow$ 3.5 mm TRS Headphone Jack  
+**Audio Frontend:** Native USB OTG (USB Audio Class 1.0 Isochronous 24-bit / 44.1, 48 & 96 kHz Tri-Rate Stereo)  
+**DSP Engine:** Dynamic 1-to-10 Band Dual-Mono L/R Parametric Equalizer (8 RBJ Biquad Topologies) + 2×2 Channel Matrix & Chu Moy Crossfeed + Instant A/B Bypass + 15 ms Linear Crossfader  
+**Audio Backend:** Master I2S0 DMA (32-bit slots) $\rightarrow$ Texas Instruments GY-PCM5102A 32-bit DAC $\rightarrow$ NXP/Philips TDA1308 Class-AB Headphone Amplifier $\rightarrow$ 3.5 mm TRS Headphone Jack  
 **Display & Control:** 0.96" SSD1306 128×64 Monochrome OLED (I2C @ `0x3C`) + EC11 Quadrature Rotary Encoder (Hardware PCNT) + Dual Navigation Buttons (`SW6` / `SW8`) + Onboard WS2812B aRGB LED (RMT driver)  
-**Tuning Interface:** Driverless 60 FPS USB WebHID Live Tuner (`tools/webhid_tuner/index.html`) for Chromium browsers + On-Device Digit-by-Digit PEQ Editor  
+**Tuning Interface:** Driverless 60 FPS USB WebHID Live Tuner & Offline PWA (`tools/webhid_tuner/index.html`) for Chromium browsers + On-Device Digit-by-Digit PEQ Editor  
 
 ---
 
 ## 1. System Overview & Architecture
 
-Project **ASCENDANCE** turns the ESP32-S3 into a standalone, audiophile-grade **USB DAC and Audio DSP Processing Station**. It processes incoming digital audio in real-time on a dedicated CPU core, shapes the frequency response using a dynamic 1-to-10 band Parametric Equalizer (PEQ), and outputs bit-perfect stereo audio over I2S to an external **TI PCM5102A 32-bit DAC** paired with an **NXP/Philips TDA1308 Class-AB headphone amplifier**.
+Project **ASCENDANCE** turns the ESP32-S3 into a standalone, audiophile-grade **USB DAC and Audio DSP Processing Station**. It processes incoming 24-bit digital audio in real-time on a dedicated CPU core, shapes left/right frequency response using a dynamic 1-to-10 band Dual-Mono Parametric Equalizer (PEQ), applies optional stereo matrixing and Chu Moy headphone crossfeed, and outputs 32-bit MSB-aligned stereo audio over I2S to an external **TI PCM5102A 32-bit DAC** paired with an **NXP/Philips TDA1308 Class-AB headphone amplifier**.
 
 ### 1.1 Dual-Core Workload Separation
 
 To guarantee continuous, dropout-free audio processing under all operating conditions, tasks are strictly partitioned across the ESP32-S3's dual Xtensa LX7 cores:
 
-* **Core 0 (System, UI & Communication):** Handles the TinyUSB event dispatcher, WebHID parameter reception, hardware PCNT rotary encoder decoding, button state machines, SSD1306 OLED graphics rendering, WS2812B RMT LED updates, and non-volatile flash (NVS) profile persistence.
-* **Core 1 (Dedicated Real-Time DSP Audio Pipeline):** Dedicated entirely to audio stream consumption (`tud_audio_read`), real-time Direct Form II Transposed Biquad filtering, 15 ms double-buffered crossfading, float saturation clamping, and continuous I2S DMA transmission.
+* **Core 0 (System, UI & Communication):** Handles the TinyUSB event dispatcher, WebHID parameter reception, hardware PCNT rotary encoder decoding, button state machines, SSD1306 OLED graphics rendering, WS2812B RMT LED updates, and CRC32-verified NVS v2 profile persistence.
+* **Core 1 (Dedicated Real-Time DSP Audio Pipeline):** Dedicated entirely to audio stream consumption (`tud_audio_read`), safe zero-pop sample-rate reclocking (44.1 / 48 / 96 kHz), Direct Form II Transposed Biquad filtering, 15 ms double-buffered crossfading (including Instant A/B Bypass), 2×2 channel matrix & crossfeed processing, 24-bit saturation clamping, and continuous 32-bit I2S DMA transmission.
 
 ```
   ┌─────────────────────────────────────────────────────────────────────────────┐
   │ HOST PC / MAC / ANDROID PHONE                                               │
-  │   • Operating System Audio (USB Audio Class 1.0, 16-bit / 48.0 kHz Stereo)  │
+  │   • Operating System Audio (UAC 1.0, 24-bit / 44.1, 48.0 & 96.0 kHz Stereo) │
   │   • Google Chrome / Microsoft Edge Browser (WebHID API: navigator.hid)      │
   └──────────────────────────────────────┬──────────────────────────────────────┘
                                          │ Single USB Type-C Cable
@@ -42,8 +42,8 @@ To guarantee continuous, dropout-free audio processing under all operating condi
   │   ┌───────────────────────────────────┬─────────────────────────────────┐   │
   │   │ INTERFACE 0 & 1: USB AUDIO (UAC)  │ INTERFACE 2: VENDOR USB HID     │   │
   │   │ • Standard UAC 1.0 Isochronous    │ • Custom 64-byte Raw Reports    │   │
-  │   │ • 16-bit Stereo PCM (48.0 kHz)    │ • WebHID Compatible (Driverless)│   │
-  │   │ • Bit-Perfect Low-Jitter Audio    │ • Live 60 FPS PEQ Tuning        │   │
+  │   │ • 24-bit PCM (44.1/48/96 kHz)     │ • WebHID Compatible (Driverless)│   │
+  │   │ • 16 KB SW FIFO Ringbuffer        │ • Live 60 FPS PEQ/Matrix Tuning │   │
   │   └─────────────────┬─────────────────┴─────────────────┬───────────────┘   │
   │                     │ Audio Frames (1 ms)               │ Tuning & Control  │
   │                     ▼                                   ▼                   │
@@ -51,17 +51,18 @@ To guarantee continuous, dropout-free audio processing under all operating condi
   │   │ CORE 0: CONTROL & WEBHID TASK     │ │ CORE 0: OLED, ENCODER & LED   │   │
   │   │ • TinyUSB Event Dispatcher        │ │ • SSD1306 128x64 Graphics     │   │
   │   │ • Volatile Parameter Manager      │ │ • EC11 Hardware PCNT Decoder  │   │
-  │   │ • Explicit NVS Save Engine        │ │ • WS2812B Loudness & Mute RMT │   │
+  │   │ • Explicit NVS v2 Save Engine     │ │ • WS2812B Loudness & Mute RMT │   │
   │   └─────────────────┬─────────────────┘ └───────────────────────────────┘   │
-  │                     │ Atomic Lock-Free Swap                                 │
+  │                     │ Spinlock-Staged Atomic Handoff                        │
   │                     ▼                                                       │
   │   ┌─────────────────────────────────────────────────────────────────────┐   │
   │   │ CORE 1: REAL-TIME DSP AUDIO TASK (Priority 10)                      │   │
-  │   │ • Dynamic Parametric EQ Engine (1 to 10 Cascaded Biquad Bands)      │   │
-  │   │ • Dynamic CPU Scaling: 3 Bands (~0.66 MIPS) to 10 Bands (~2.2 MIPS) │   │
-  │   │ • 15 ms Double-Buffered Linear Crossfader (Zero Clicks/Dropouts)    │   │
-  │   │ • Hard Saturation Clamping [-32768, 32767]                          │   │
-  │   │ • Uninterrupted Master I2S0 DMA Transmission (48 kHz / 16-bit)      │   │
+  │   │ • Safe Zero-Pop Sample-Rate Reclocking (44.1 / 48.0 / 96.0 kHz)     │   │
+  │   │ • Dynamic Dual-Mono L/R PEQ (1–10 Bands; PK, LS, HS, HPF, LPF, etc.)│   │
+  │   │ • 2x2 Matrix Mixer (Mono/Mid-Side/Swap) & Chu Moy Crossfeed         │   │
+  │   │ • 15 ms Double-Buffered Crossfader + Preamp-Normalized A/B Toggle   │   │
+  │   │ • 24-bit Saturation Clamping [-8388608, 8388607] -> 32-bit I2S MSB  │   │
+  │   │ • Uninterrupted Master I2S0 DMA Transmission (32-bit Stereo Slots)  │   │
   │   └─────────────────┬───────────────────────────────────────────────────┘   │
   └─────────────────────┼───────────────────────────────────────────────────────┘
                         │
@@ -105,15 +106,16 @@ The active band count scales dynamically from **1 to 10 bands** (`PEQ_MAX_BANDS 
 
 ### 2.2 DSP Audio Safety Invariants
 
-1. **15 ms Click-Free Crossfading:** Real-time parameter updates (frequency, gain, Q factor, or band count) transition smoothly across a 15 ms linear crossfade window between double-buffered filter states. This eliminates zipper noise, clicks, and discontinuities during live tuning.
-2. **Hard Saturation Clamping:** Floating-point audio buffers are explicitly bounded to `[-32768.0f, 32767.0f]` prior to integer conversion, preventing harsh digital wrap-around clipping.
-3. **Pre-Gain Headroom Management:** Configurable pre-attenuation (0.0 to -12.0 dB) provides digital headroom to prevent clipping during positive EQ boosts.
-4. **Subnormal Float Flushing:** Floating-point intermediate values smaller than $1 \times 10^{-15}$ are flushed to zero to prevent CPU penalties from subnormal (denormalized) floating-point calculations.
-5. **Built-in Presets:**
+1. **15 ms Click-Free Crossfading:** Real-time parameter updates (frequency, gain, Q factor, topology, band count, or A/B bypass state) are computed off-lock on Core 0, staged via a `portMUX_TYPE` spinlock, and transitioned smoothly on Core 1 across a 15 ms linear crossfade window between double-buffered filter states. This eliminates zipper noise, clicks, and coefficient tearing during live tuning.
+2. **Hard Saturation Clamping:** Floating-point audio buffers are explicitly bounded to signed 24-bit full-scale `[-8388608.0f, 8388607.0f]` (with non-finite samples zeroed) and MSB-aligned into 32-bit I2S slots, preventing harsh digital wrap-around clipping.
+3. **Pre-Gain Headroom Management:** Configurable pre-attenuation (0.0 to -12.0 dB) provides digital headroom to prevent clipping during positive EQ boosts and ensures level-matched Instant A/B comparison.
+4. **Subnormal Float Flushing & Coefficient Validation:** Delay states smaller than $1 \times 10^{-15}$ are flushed to zero to prevent subnormal CPU penalties, and `calculate_biquad()` validates finite inputs/coefficients and non-zero `a0` across all **8 topologies** (`Bypass`, `Peaking`, `Low Shelf`, `High Shelf`, `High Pass`, `Low Pass`, `Notch`, `Band Pass`) with safe passthrough fallback.
+5. **Dual-Mono L/R, Matrix Mixer & Crossfeed:** Supports Linked Stereo or independent Left/Right 10-band EQ (`peq_dsp_set_linked_stereo`), versioned NVS v2 storage with CRC32 + automatic V1 migration, plus a post-EQ 2×2 channel matrix (Stereo, Mono Mix, L-Only, R-Only, Swap L/R, Mid-Side Width `0–200%`, L/R Balance, Custom Matrix) and 3-level Chu Moy acoustic crossfeed (`Off / Mild / Medium`).
+6. **Built-in Presets:**
    * **Preset 0 (Reference Flat):** Bit-perfect bypass (0 dB gain across the entire audio spectrum).
    * **Preset 1 (Warm Bass Boost):** Low Shelf +4.5 dB @ 105 Hz ($Q = 0.71$) for warm, punchy low-end response.
    * **Preset 2 (Harman OE2018 Target):** Multi-band target curve tuned for standard over-ear headphone acoustic profiles.
-   * **Preset 3 (User Custom):** Fully editable custom profile saved in non-volatile flash (NVS).
+   * **Preset 3 (User Custom):** Fully editable custom Dual-Mono L/R profile and Matrix/Crossfeed state saved in NVS v2 (`user_cfg_v2`).
 
 ---
 
@@ -125,7 +127,7 @@ The physical interface features a 128×64 SSD1306 monochrome OLED display, an EC
                   ┌──────────────────────────────────────────────┐
                   │ 128x64 SSD1306 OLED DISPLAY                  │
                   │   ┌────────────────────────────────────────┐ │
-                  │   │ [USB DAC]  48.0k 16b       ((•))  82%  │ │
+                  │   │ [USB DAC]  48.0k 24b       ((•))  82%  │ │
                   │   │ -------------------------------------- │ │
                   │   │ ESP32-S3 Audio DSP                     │ │
                   │   │ Harman OE2018                          │ │
@@ -144,9 +146,9 @@ The system provides **three operating UI modes**:
 | **Rotary Turn** | Rotate clockwise / counter-clockwise | Adjusts master volume (0–100%, 2% per detent) with temporary pop-up HUD overlay. |
 | **Rotary Push (SW)** | Short Click | Toggles audio mute/unmute; triggers hardware soft mute (`GPIO 7`) and red/cyan LED feedback. |
 | **Rotary Push (SW)** | Double-Click | Instantly commits active custom EQ profile to persistent NVS flash. |
-| **Rotary Push (SW)** | Long Press (>600 ms) | Cycles active audio source: **USB DAC** $\rightarrow$ **Tone Test** $\rightarrow$ **Freq Sweep**. |
+| **Rotary Push (SW)** | Long Press (>800 ms) | Cycles active audio source: **USB DAC** $\rightarrow$ **Tone Test** $\rightarrow$ **Freq Sweep**. |
 | **Button 1 (◄ / SW6)** | Short Click | Opens the **Main Menu**. |
-| **Button 1 (◄ / SW6)** | Long Press (>600 ms) | Cycles PEQ preset backward (Custom $\leftarrow$ Harman $\leftarrow$ Bass $\leftarrow$ Flat). |
+| **Button 1 (◄ / SW6)** | Long Press (>800 ms) | Cycles PEQ preset backward (Custom $\leftarrow$ Harman $\leftarrow$ Bass $\leftarrow$ Flat). |
 | **Button 2 (► / SW8)** | Short Click | Cycles PEQ preset forward (Flat $\rightarrow$ Bass $\rightarrow$ Harman $\rightarrow$ Custom). |
 
 ### 3.2 Mode 2: Main Menu Screen
@@ -157,7 +159,7 @@ The system provides **three operating UI modes**:
 | **Button 2 (► / SW8)** | Short Click | Advances down the menu list. |
 | **Button 1 (◄ / SW6)** | Short Click | Exits the menu and returns to the Playback Screen. |
 | **Rotary Push (SW)** | Short Click | Selects the highlighted item: <br>• **Live EQ Adjust:** Enters the on-device Digit-by-Digit PEQ Editor.<br>• **EQ Preset:** Cycles active preset.<br>• **Audio Source:** Cycles active audio source.<br>• **Preamp Headroom:** Cycles pre-gain attenuation (0.0 to -6.0 dB in 2 dB steps).<br>• **Save to NVS:** Commits current EQ settings to flash.<br>• **Exit:** Returns to Playback Screen. |
-| **Rotary Push (SW)** | Long Press (>600 ms) | Instantly commits current settings to NVS flash. |
+| **Rotary Push (SW)** | Long Press (>800 ms) | Instantly commits current settings to NVS flash. |
 
 ### 3.3 Mode 3: Standalone On-Device Digit-by-Digit PEQ Editor
 
@@ -171,34 +173,31 @@ The on-device PEQ editor allows precision, standalone tuning of every filter par
 ```
 
 * **Cursor Navigation:** Press **Button 1 (◄)** or **Button 2 (►)** to move the active cursor across:
-  $$\text{Band Index} \longleftrightarrow \text{Filter Type} \longleftrightarrow \text{Freq Digits (10k, 1k, 100, 10, 1)} \longleftrightarrow \text{Gain (Sign, 10, 1, 0.1 dB)} \longleftrightarrow \text{Q (Int, 0.1, 0.01)} \longleftrightarrow \text{Actions}$$
-* **Parameter Adjustment:** Turn the **Rotary Encoder** to increment or decrement the highlighted digit or option.
+  $$\text{Band Index} \longleftrightarrow \text{Filter Type (BYP, PK, LS, HS, HPF, LPF, NTCH, BPF)} \longleftrightarrow \text{Freq Digits} \longleftrightarrow \text{Gain} \longleftrightarrow \text{Q} \longleftrightarrow \text{Actions}$$
+* **Parameter Adjustment:** Turn the **Rotary Encoder** to increment or decrement the highlighted digit or option. (For `HPF`/`LPF`/`NTCH`/`BPF`, gain is inactive and only `Freq` and `Q` apply.)
 * **Section Jump:** Click the **Rotary Push Switch (SW)** to jump directly to the next parameter section.
 * **Quick Add/Delete Bands:** Double-click **Button 2 (►)** to append a new band; double-click **Button 1 (◄)** to delete the active band.
-* **Save & Exit:** Highlight `[SAVE]` and click, or long-press the Rotary Switch to commit to NVS flash with an on-screen confirmation banner.
+* **Save & Exit:** Highlight `[SAVE]` and click, or long-press the Rotary Switch to commit to NVS v2 flash with an on-screen confirmation banner.
 * **Cancel & Revert:** Long-press **Button 1 (◄)** to discard changes and revert immediately to the pre-edit snapshot.
 
 ---
 
 ## 4. Driverless USB WebHID Live Tuner
 
-Commercial audiophile dongles like the **FiiO JA11** and **Moondrop FreeDSP** tune their onboard DSP over the same USB-C connection used for audio. Project ASCENDANCE provides a production-grade, driverless WebHID tuner web app in [`tools/webhid_tuner/index.html`](tools/webhid_tuner/index.html).
+Commercial audiophile dongles like the **FiiO JA11** and **Moondrop FreeDSP** tune their onboard DSP over the same USB-C connection used for audio. Project ASCENDANCE provides a production-grade, driverless WebHID tuner & installable PWA in [`tools/webhid_tuner/index.html`](tools/webhid_tuner/index.html) (`manifest.json`, `sw.js`, `icon.svg`).
 
 ### 4.1 WebHID Capabilities
 
-* **100% Offline & Driverless:** Runs directly inside Google Chrome, Microsoft Edge, Opera, or Android Chrome using the standard WebHID API (`navigator.hid`). No external drivers, third-party software, or Wi-Fi required.
+* **100% Offline & Driverless PWA:** Runs directly inside Google Chrome, Microsoft Edge, Opera, or Android Chrome using the standard WebHID API (`navigator.hid`), with optional offline installability via service worker when served over HTTPS/`localhost`.
 * **60 FPS Live Slider Dragging:** Real-time updates stream over 64-byte raw HID packets in $<1\text{ ms}$, adjusting volatile SRAM immediately.
 * **Absolute Zero Flash Wear During Auditioning:** Moving sliders alters volatile memory only. Flash sectors are untouched until explicit save.
-* **Interactive Frequency Response Curve:** HTML5 Canvas logarithmic graph ($20\text{ Hz}$ to $20\text{ kHz}$, $+12\text{ dB}$ to $-24\text{ dB}$) with draggable filter nodes.
-* **Scroll-Wheel Q Factor Adjustment:** Scroll the mouse wheel or trackpad over any filter node to widen or narrow its bandwidth, complete with dynamic $-3\text{ dB}$ cutoff guidelines.
-* **Dynamic Band Scaling (1 to 10 Bands):** Seamlessly add, remove, or re-allocate filter bands with automatic ISO frequency spacing.
-* **Precision Numeric Inputs with Safe Clamping:** Direct numerical input fields alongside sliders with automated boundary validation:
-  * **Frequency:** 20 Hz to 20,000 Hz (1 Hz resolution)
-  * **Gain:** -24.0 dB to +12.0 dB (0.1 dB resolution)
-  * **Q Factor:** 0.10 to 10.00 (0.01 resolution)
-  * **Preamp Headroom:** -12.0 dB to 0.0 dB (0.1 dB resolution)
-* **Bidirectional Hardware Sync:** The firmware reports its active band count in byte 16 (`reserved[0]`) of the HID report. The browser UI adapts automatically.
-* **Explicit NVS Commit:** Click `[💾 Save to Hardware NVS]` to permanently store your profile in non-volatile flash, validated by a 32-bit CRC32 checksum.
+* **Interactive Frequency Response, Phase & Group Delay Graph:** HTML5 Canvas logarithmic graph ($20\text{ Hz}$ to $20\text{ kHz}$, $+12\text{ dB}$ to $-24\text{ dB}$) with exact RBJ complex transfer function magnitude, optional Phase ($-180^\circ\text{ to }+180^\circ$) and Group Delay ($\text{ms}$) overlays, and draggable filter nodes.
+* **Dual-Mono L/R PEQ & Preamp-Normalized A/B Toggle:** Switch between **Linked Stereo** and independent **Left / Right** 10-band curves, or toggle **A/B Bypass** (`CMD_SET_AB_BYPASS`, transiently comparing EQ vs. level-matched bypass with 15 ms crossfade).
+* **2×2 Channel Matrix Mixer & Chu Moy Crossfeed:** Configure Stereo, Mono Mix, L-Only, R-Only, Swap L/R, Mid-Side Width (`0–200%`), L/R Balance, Custom `2×2` coefficients, and 3-level Chu Moy acoustic crossfeed (`Off / Mild / Medium`).
+* **AutoEQ / Equalizer APO Import & Export:** One-click import/export of standard Equalizer APO `.txt` (`PK`, `LSC`, `HSC`, `HPQ`, `LPQ`, `NO`, `BP`) and full Dual-Mono + Mixer `.json` snapshots.
+* **Scroll-Wheel Q Factor Adjustment & Dynamic Band Scaling (1–10 Bands):** Scroll over any node to adjust `Q` ($0.10\text{ to }10.00$) with $-3\text{ dB}$ guides, add/remove bands dynamically with ISO spacing, and clamp numerical inputs strictly (`20–20,000 Hz`, `-24.0 to +12.0 dB`, `0.10–10.00 Q`, `-12.0 to 0.0 dB` Preamp).
+* **Bidirectional Hardware Sync:** The firmware reports active band count in byte `12` (`reserved[0]`), Dual-Mono channel/flags/preset/preamp/mixer metadata in bytes `13–21`, and active sample rate (`uint32` LE) in bytes `22–25` of the HID report.
+* **Explicit NVS v2 Commit:** Click `[💾 Save to Hardware NVS]` to permanently store your Dual-Mono PEQ & Mixer configuration in `user_cfg_v2` with a 32-bit CRC32 checksum.
 
 ---
 
@@ -247,9 +246,9 @@ An onboard WS2812B aRGB LED on `GPIO 48` provides visual status feedback using t
 
 | From (Source) | Pin Label | To (Destination) | Pin Label | Wire Function / Electrical Characteristics |
 | :--- | :--- | :--- | :--- | :--- |
-| **ESP32-S3** | **GPIO 4** | **PCM5102A** | **LCK** | I2S Word Select / Left-Right Clock (WS, 48 kHz) |
-| **ESP32-S3** | **GPIO 5** | **PCM5102A** | **DIN** | I2S Serial Audio Data Out (DOUT, 16-bit stereo) |
-| **ESP32-S3** | **GPIO 6** | **PCM5102A** | **BCK** | I2S Continuous Bit Clock (BCLK, 1.536 MHz) |
+| **ESP32-S3** | **GPIO 4** | **PCM5102A** | **LCK** | I2S Word Select / Left-Right Clock (WS, 44.1 / 48 / 96 kHz) |
+| **ESP32-S3** | **GPIO 5** | **PCM5102A** | **DIN** | I2S Serial Audio Data Out (DOUT, 24-bit in 32-bit stereo slots) |
+| **ESP32-S3** | **GPIO 6** | **PCM5102A** | **BCK** | I2S Continuous Bit Clock (BCLK, 2.8224 / 3.072 / 6.144 MHz @ 64×fs) |
 | **ESP32-S3** | **GPIO 7** | **PCM5102A** | **XMT** | Soft Mute Control (HIGH = Play, LOW = Soft Mute) |
 | **ESP32-S3** | **GPIO 8** | **OLED1** | **SDA** | I2C Data Line (SSD1306 @ `0x3C`, 400 kHz fast mode) |
 | **ESP32-S3** | **GPIO 9** | **OLED1** | **SCL** | I2C Clock Line (SSD1306 @ `0x3C`, 400 kHz fast mode) |
@@ -289,7 +288,10 @@ An onboard WS2812B aRGB LED on `GPIO 48` provides visual status feedback using t
 ## 7. Project Directory Layout
 
 ```
-esp32s3_dsp_dac/
+ascendance-esp32-dac/
+├── .github/workflows/
+│   ├── build.yml                 # ESP-IDF v6.1 CI build, merged bin, size report & WebHID JS check
+│   └── release.yml               # Tagged GitHub Release firmware & WebHID tuner packaging
 ├── CMakeLists.txt                # Root CMakeLists (Project ASCENDANCE, TinyUSB UAC flags)
 ├── dependencies.lock             # ESP Component Manager locked versions
 ├── pytest_hello_world.py         # Pytest target verification script
@@ -301,17 +303,20 @@ esp32s3_dsp_dac/
 │   ├── idf_component.yml         # ESP-IDF component dependencies (esp_tinyusb)
 │   ├── board_pins.h              # Master pinout mapping for Schematics 1, 2, and 3
 │   ├── main.c                    # Dual-core tasks, UI state machine, and entry point
-│   ├── audio_pipeline.c/.h       # Master I2S0 DMA driver, volume control & startup chime
+│   ├── audio_pipeline.c/.h       # Master I2S0 DMA driver (32-bit slots), volume taper & chime
 │   ├── audio_source_arbiter.c/.h # 4-phase zero-pop muting arbiter (USB DAC, Tone, Sweep)
-│   ├── peq_dsp.c/.h              # 1-to-10 band PEQ biquads, crossfader, NVS persistence
-│   ├── webhid_peq.c/.h           # TinyUSB composite UAC 1.0 + WebHID 64-byte protocol
+│   ├── peq_dsp.c/.h              # Dual-Mono L/R PEQ, Matrix & Crossfeed, A/B toggle, NVS v2
+│   ├── webhid_peq.c/.h           # TinyUSB UAC 1.0 (24-bit tri-rate) + WebHID 64-byte protocol
 │   ├── oled_display.c/.h         # SSD1306 128x64 driver: Playback, Menu & EQ Editor
 │   ├── controls.c/.h             # Hardware PCNT rotary encoder & button debouncer
 │   ├── led_indicator.c/.h        # WS2812B aRGB LED via RMT with optical safety cap
 │   └── minimp3.h                 # Standalone MP3 decoding engine (research)
 ├── tools/                        # Development & Tuning Tools
 │   └── webhid_tuner/
-│       └── index.html            # Driverless WebHID live browser tuner app
+│       ├── index.html            # Driverless WebHID live browser tuner app (RBJ/APO/Matrix)
+│       ├── manifest.json         # PWA manifest for standalone installability
+│       ├── sw.js                 # Service Worker for offline PWA caching
+│       └── icon.svg              # Scalable vector icon for PWA launcher
 └── docs/                         # Comprehensive 6-Tier Documentation
     ├── README.md                 # Master Documentation Portal Index
     ├── firmware/                 # Firmware implementations and roadmaps
@@ -337,7 +342,7 @@ esp32s3_dsp_dac/
 
 ```bash
 # Navigate to project root
-cd esp32s3_dsp_dac
+cd ascendance-esp32-dac
 
 # Set target to ESP32-S3
 idf.py set-target esp32s3
@@ -357,7 +362,12 @@ idf.py -p /dev/ttyACM0 flash monitor
 
 *(Press `Ctrl + ]` to exit the serial monitor).*
 
-### 8.4 Linux Permissions for WebHID Live Tuner
+### 8.4 GitHub Actions CI & Releases
+
+* **Continuous Integration ([`.github/workflows/build.yml`](.github/workflows/build.yml)):** Automatically compiles ESP32-S3 firmware inside `espressif/idf:v6.1` on pushes and pull requests, generates a merged flashable image (`ASCENDANCE_merged.bin`), posts an `idf.py size` report to the job summary, uploads firmware artifacts, and checks inline JavaScript syntax in [`tools/webhid_tuner/index.html`](tools/webhid_tuner/index.html) via `node --check`.
+* **Tagged Releases ([`.github/workflows/release.yml`](.github/workflows/release.yml)):** Pushing a `v*` tag (or running `workflow_dispatch`) builds release firmware binaries (`ascendance-firmware-<tag>-merged.bin`, `ascendance-firmware-<tag>.bin`), packages `ascendance-webhid-tuner-<tag>.html`, and publishes a GitHub Release.
+
+### 8.5 Linux Permissions for WebHID Live Tuner
 
 On Linux, Chromium browsers require permissions to communicate with raw USB HID devices. Add a udev rule to grant access:
 
@@ -371,7 +381,7 @@ EOF'
 sudo udevadm control --reload-rules && sudo udevadm trigger
 ```
 
-### 8.5 Using the WebHID Live Tuner
+### 8.6 Using the WebHID Live Tuner
 
 1. Connect the YD-ESP32-S3 **Native USB port** (GPIO 19/20) to your PC, Mac, or Android device using a USB Type-C cable.
 2. Open [`tools/webhid_tuner/index.html`](tools/webhid_tuner/index.html) in Google Chrome or Microsoft Edge.

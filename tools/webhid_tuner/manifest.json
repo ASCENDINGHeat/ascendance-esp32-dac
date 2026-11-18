@@ -1,0 +1,18 @@
+{
+  "name": "Project ASCENDANCE - WebHID DSP Tuner",
+  "short_name": "ASCENDANCE EQ",
+  "description": "Driverless 24-bit USB DAC & Dual-Mono PEQ / Crossfeed Live Tuner",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0d1117",
+  "theme_color": "#0d1117",
+  "icons": [
+    {
+      "src": "./icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

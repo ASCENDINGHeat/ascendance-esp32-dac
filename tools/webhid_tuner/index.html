@@ -3,7 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0d1117">
     <title>ESP32-S3 Hi-Fi DSP DAC - WebHID Live PEQ Tuner</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" href="icon.svg" type="image/svg+xml">
     <style>
         :root {
             --bg-color: #0d1117;
@@ -14,6 +17,7 @@
             --text-secondary: #8b949e;
             --border-color: #30363d;
             --green: #3fb950;
+            --amber: #d29922;
             --red: #f85149;
             --slider-track: #21262d;
         }
@@ -34,7 +38,7 @@
         }
 
         .container {
-            max-width: 900px;
+            max-width: 960px;
             width: 100%;
         }
 
@@ -44,19 +48,22 @@
             align-items: center;
             border-bottom: 1px solid var(--border-color);
             padding-bottom: 16px;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+            gap: 12px;
         }
 
         h1 {
-            font-size: 1.4rem;
+            font-size: 1.35rem;
             color: #f0f6fc;
             display: flex;
             align-items: center;
             gap: 10px;
+            flex-wrap: wrap;
         }
 
         .device-badge {
-            font-size: 0.75rem;
+            font-size: 0.72rem;
             background: #238636;
             color: white;
             padding: 2px 8px;
@@ -64,22 +71,33 @@
             font-weight: 600;
         }
 
+        .rate-badge {
+            font-size: 0.72rem;
+            background: #1f6feb;
+            color: white;
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-family: monospace;
+            font-weight: 600;
+        }
+
         .status-panel {
             display: flex;
-            gap: 12px;
+            gap: 10px;
             align-items: center;
+            flex-wrap: wrap;
         }
 
         button {
             background-color: #21262d;
             color: #c9d1d9;
             border: 1px solid var(--border-color);
-            padding: 8px 16px;
+            padding: 7px 14px;
             border-radius: 6px;
-            font-size: 0.85rem;
+            font-size: 0.82rem;
             font-weight: 600;
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: all 0.15s ease;
         }
 
         button:hover:not(:disabled) {
@@ -97,6 +115,18 @@
             background-color: #2ea043;
         }
 
+        button.ab-active {
+            background-color: #9e6a03;
+            color: #fff;
+            border-color: #d29922;
+        }
+
+        button.seg-active {
+            background-color: #1f6feb;
+            color: #fff;
+            border-color: #58a6ff;
+        }
+
         button:disabled {
             opacity: 0.5;
             cursor: not-allowed;
@@ -106,33 +136,35 @@
             background-color: var(--card-bg);
             border: 1px solid var(--border-color);
             border-radius: 8px;
-            padding: 20px;
-            margin-bottom: 20px;
+            padding: 18px;
+            margin-bottom: 18px;
         }
 
         .card-header {
-            font-size: 1rem;
+            font-size: 0.96rem;
             font-weight: 600;
             color: #f0f6fc;
-            margin-bottom: 16px;
+            margin-bottom: 14px;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
         }
 
         canvas {
             width: 100%;
-            height: 180px;
+            height: 210px;
             background-color: #0b0e14;
             border-radius: 6px;
             border: 1px solid var(--border-color);
-            margin-bottom: 16px;
+            margin-bottom: 12px;
         }
 
         .controls-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-            gap: 16px;
+            grid-template-columns: repeat(auto-fit, minmax(165px, 1fr));
+            gap: 14px;
         }
 
         .band-card {
@@ -166,7 +198,6 @@
             font-size: 0.8rem;
             cursor: pointer;
             line-height: 1;
-            transition: all 0.15s ease;
         }
 
         .btn-del:hover:not(:disabled) {
@@ -176,30 +207,31 @@
         }
 
         .band-title {
-            font-size: 0.85rem;
+            font-size: 0.82rem;
             font-weight: 600;
             color: var(--accent-color);
             margin-bottom: 10px;
             display: flex;
             justify-content: space-between;
             align-items: center;
+            gap: 6px;
         }
 
         .control-group {
-            margin-bottom: 12px;
+            margin-bottom: 10px;
         }
 
         .control-label-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            font-size: 0.75rem;
+            font-size: 0.74rem;
             color: var(--text-secondary);
-            margin-bottom: 6px;
+            margin-bottom: 5px;
         }
 
         .num-input {
-            width: 74px;
+            width: 72px;
             background-color: #0b0e14;
             color: #58a6ff;
             border: 1px solid var(--border-color);
@@ -210,7 +242,6 @@
             font-weight: 600;
             text-align: right;
             outline: none;
-            transition: border-color 0.2s, box-shadow 0.2s;
         }
 
         .num-input:focus {
@@ -240,11 +271,6 @@
             border-radius: 50%;
             background: var(--accent-color);
             cursor: pointer;
-            transition: transform 0.1s ease;
-        }
-
-        input[type=range]::-webkit-slider-thumb:hover {
-            transform: scale(1.2);
         }
 
         select {
@@ -253,15 +279,86 @@
             color: var(--text-primary);
             border: 1px solid var(--border-color);
             border-radius: 4px;
-            padding: 4px 8px;
-            font-size: 0.75rem;
+            padding: 4px 6px;
+            font-size: 0.74rem;
             outline: none;
+        }
+
+        .toolbar-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 12px;
+        }
+
+        .pill-group {
+            display: inline-flex;
+            gap: 4px;
+            background: #0b0e14;
+            padding: 3px;
+            border-radius: 6px;
+            border: 1px solid var(--border-color);
+        }
+
+        .pill-group button {
+            padding: 4px 10px;
+            font-size: 0.75rem;
+            border: none;
+            background: transparent;
+        }
+
+        .pill-group button.seg-active {
+            background: #1f6feb;
+        }
+
+        .trace-toggles {
+            display: flex;
+            gap: 14px;
+            align-items: center;
+            font-size: 0.78rem;
+            color: var(--text-secondary);
+        }
+
+        .trace-toggles label {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            cursor: pointer;
+        }
+
+        .mixer-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+            gap: 14px;
+            align-items: start;
+        }
+
+        .matrix-box {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+            background: #12161c;
+            border: 1px solid var(--border-color);
+            padding: 10px;
+            border-radius: 6px;
+        }
+
+        .matrix-cell {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.74rem;
+            color: var(--text-secondary);
         }
 
         .footer-actions {
             display: flex;
-            justify-content: flex-end;
-            gap: 12px;
+            justify-content: space-between;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 10px;
             margin-top: 16px;
         }
 
@@ -273,7 +370,7 @@
             font-family: monospace;
             font-size: 0.75rem;
             color: #8b949e;
-            max-height: 100px;
+            max-height: 110px;
             overflow-y: auto;
         }
     </style>
@@ -282,22 +379,35 @@
     <div class="container">
         <header>
             <div>
-                <h1>ESP32-S3 Hi-Fi DSP DAC <span class="device-badge">Schematic 2</span></h1>
+                <h1>
+                    ESP32-S3 Hi-Fi DSP DAC
+                    <span class="device-badge">24-Bit Tri-Rate</span>
+                    <span class="rate-badge" id="rateBadge">48.0 kHz / 24b</span>
+                </h1>
                 <p style="font-size: 0.8rem; color: var(--text-secondary); margin-top: 4px;">
-                    Driverless WebHID Live Parametric EQ Tuner (GPIO 19/20 Native USB OTG)
+                    Driverless WebHID Dual-Mono PEQ, Crossfeed &amp; Matrix Live Tuner (GPIO 19/20 USB OTG)
                 </p>
             </div>
             <div class="status-panel">
-                <span id="connStatus" style="font-size: 0.85rem; color: var(--red);">● Disconnected</span>
+                <button id="btnAbToggle" title="Instant preamp-normalized flat bypass comparison">A/B: EQ ON</button>
+                <span id="connStatus" style="font-size: 0.82rem; color: var(--red);">● Disconnected</span>
                 <button id="btnConnect" class="primary">Connect USB DAC</button>
             </div>
         </header>
 
         <div class="card">
             <div class="card-header">
-                <span>Real-Time Frequency Response Curve</span>
-                <div style="display: flex; gap: 8px;">
-                    <select id="presetSelect" style="width: auto; padding: 6px 12px;">
+                <span>Real-Time Response Visualizer (RBJ Biquad Math)</span>
+                <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                    <div class="trace-toggles">
+                        <label title="Overlay unwrapped phase response (-180° to +180°)">
+                            <input type="checkbox" id="chkPhase"> <span style="color: var(--amber);">Phase (°)</span>
+                        </label>
+                        <label title="Overlay group delay in milliseconds (0 to 10 ms)">
+                            <input type="checkbox" id="chkGroupDelay"> <span style="color: var(--green);">Group Delay (ms)</span>
+                        </label>
+                    </div>
+                    <select id="presetSelect" style="width: auto; padding: 6px 10px;">
                         <option value="3">User Custom (Live Audition)</option>
                         <option value="0">Preset: Reference Flat</option>
                         <option value="1">Preset: Warm Bass Boost (+4.5 dB)</option>
@@ -305,19 +415,19 @@
                     </select>
                 </div>
             </div>
-            <canvas id="eqCanvas" width="850" height="180" style="cursor: crosshair;"></canvas>
+            <canvas id="eqCanvas" width="880" height="210" style="cursor: crosshair;"></canvas>
 
-            <div style="display: flex; justify-content: space-between; font-size: 0.75rem; color: var(--text-secondary); margin-top: -8px; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;">
-                <span>💡 <strong>Interactive Nodes:</strong> Drag circle (X=Freq, Y=Gain) • <strong>Mouse Wheel</strong> = Q Factor • <strong>Double-Click</strong> = Add/Reset Band</span>
-                <span style="color: var(--accent-color);">60 FPS Live Volatile Tuning (0 Flash Wear)</span>
+            <div style="display: flex; justify-content: space-between; font-size: 0.74rem; color: var(--text-secondary); margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+                <span>💡 <strong>Nodes:</strong> Drag (X=Freq, Y=Gain) • <strong>Wheel</strong> = Q • <strong>Dbl-Click</strong> = Add / Reset</span>
+                <span style="color: var(--accent-color);">60 FPS Volatile SRAM Tuning (0 Flash Wear)</span>
             </div>
 
-            <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 8px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap;">
                 <div style="display: flex; align-items: center; gap: 8px;">
-                    <label style="font-size: 0.85rem; color: var(--text-secondary);" for="preampNum">
+                    <label style="font-size: 0.84rem; color: var(--text-secondary);" for="preampNum">
                         Preamp Headroom:
                     </label>
-                    <input type="number" class="num-input" id="preampNum" min="-12.0" max="0.0" step="0.1" value="0.0" style="width: 76px;">
+                    <input type="number" class="num-input" id="preampNum" min="-12.0" max="0.0" step="0.1" value="0.0" style="width: 74px;">
                     <span style="font-size: 0.8rem; color: var(--text-secondary);">dB</span>
                 </div>
                 <input type="range" id="preampSlider" min="-12" max="0" step="0.1" value="0" style="flex: 1; min-width: 200px;">
@@ -325,32 +435,88 @@
         </div>
 
         <div class="card">
-            <div class="card-header" style="flex-wrap: wrap; gap: 10px;">
-                <span>Parametric Equalizer (<span id="bandCountLabel">5</span> Active Bands)</span>
+            <div class="card-header">
+                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                    <span>Parametric EQ (<span id="bandCountLabel">5</span> Bands)</span>
+                    <div class="pill-group" role="group" aria-label="Dual-Mono Channel Selector">
+                        <button id="btnChLinked" class="seg-active" title="Edit Left & Right channels identically">Stereo Linked</button>
+                        <button id="btnChLeft" title="Edit Left channel independently (Dual-Mono)">Left (L)</button>
+                        <button id="btnChRight" title="Edit Right channel independently (Dual-Mono)">Right (R)</button>
+                    </div>
+                </div>
                 <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
                     <label style="font-size: 0.75rem; color: var(--text-secondary);">Bands:</label>
-                    <input type="number" id="customBandCountInput" min="1" max="10" step="1" value="5" class="num-input" style="width: 50px;" title="Set custom number of bands (1 to 10)">
+                    <input type="number" id="customBandCountInput" min="1" max="10" step="1" value="5" class="num-input" style="width: 50px;">
                     <select id="bandCountSelect" style="width: auto; padding: 3px 8px;">
-                        <option value="custom" disabled hidden>Custom Count</option>
+                        <option value="custom" disabled hidden>Custom</option>
                         <option value="3">3 Bands (Tone)</option>
                         <option value="5" selected>5 Bands (Standard)</option>
                         <option value="7">7 Bands (Extended)</option>
-                        <option value="10">10 Bands (Pro Mastering)</option>
+                        <option value="10">10 Bands (Mastering)</option>
                     </select>
-                    <button id="btnAddBand" style="padding: 4px 10px; font-size: 0.75rem; background-color: #238636; color: white; border: 1px solid rgba(240, 246, 252, 0.1); border-radius: 4px; font-weight: 600; cursor: pointer;">
-                        + Add Band
-                    </button>
-                    <span style="font-size: 0.75rem; color: var(--text-secondary);">(Max 10)</span>
+                    <button id="btnAddBand" class="primary" style="padding: 4px 10px; font-size: 0.75rem;">+ Add Band</button>
                 </div>
             </div>
 
-            <div class="controls-grid" id="bandsContainer">
-                <!-- Dynamically generated bands -->
-            </div>
+            <div class="controls-grid" id="bandsContainer"></div>
 
             <div class="footer-actions">
-                <button id="btnReset">↺ Reset to Flat</button>
-                <button id="btnSave" class="primary" style="background-color: #1f6feb;">💾 Save to Hardware NVS</button>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <input type="file" id="fileImportInput" accept=".txt,.json" style="display: none;">
+                    <button id="btnImportFile" title="Import Equalizer APO / AutoEQ .txt or .json snapshot">📂 Import APO / JSON</button>
+                    <button id="btnExportApo" title="Export active channel as Equalizer APO .txt">⬇ Export APO .txt</button>
+                    <button id="btnExportJson" title="Export full Dual-Mono + Matrix JSON backup">⬇ Export JSON</button>
+                </div>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <button id="btnReset">↺ Reset to Flat</button>
+                    <button id="btnSave" class="primary" style="background-color: #1f6feb;">💾 Save to Hardware NVS</button>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-header">
+                <span>2×2 Channel Matrix &amp; Chu Moy Headphone Crossfeed</span>
+                <select id="mixerModeSelect" style="width: auto; padding: 5px 10px;">
+                    <option value="0">Normal Stereo</option>
+                    <option value="1">Mono Summed (Downmix)</option>
+                    <option value="2">Channel Swap (L ↔ R)</option>
+                    <option value="3">M/S Stereo Width</option>
+                    <option value="4">Chu Moy Headphone Crossfeed</option>
+                    <option value="5">Custom 2×2 Matrix</option>
+                </select>
+            </div>
+            <div class="mixer-grid">
+                <div>
+                    <div class="control-label-row">
+                        <span>Balance (L / R):</span>
+                        <span id="balanceLabel" style="font-family: monospace; color: var(--accent-color);">Center (0)</span>
+                    </div>
+                    <input type="range" id="balanceSlider" min="-100" max="100" step="1" value="0">
+                </div>
+                <div>
+                    <div class="control-label-row">
+                        <span>M/S Stereo Width:</span>
+                        <span id="widthLabel" style="font-family: monospace; color: var(--accent-color);">100%</span>
+                    </div>
+                    <input type="range" id="widthSlider" min="0" max="200" step="5" value="100">
+                </div>
+                <div>
+                    <div class="control-label-row">
+                        <span>Chu Moy Crossfeed (700 Hz / 270 µs):</span>
+                    </div>
+                    <select id="crossfeedSelect">
+                        <option value="0">Off (Bypassed)</option>
+                        <option value="1">Low (-4.5 dB blend)</option>
+                        <option value="2">High (-6.0 dB blend)</option>
+                    </select>
+                </div>
+                <div class="matrix-box">
+                    <div class="matrix-cell"><span>mLL</span><input type="number" class="num-input" id="matLL" step="0.05" min="-4" max="4" value="1.00" style="width: 58px;"></div>
+                    <div class="matrix-cell"><span>mRL</span><input type="number" class="num-input" id="matRL" step="0.05" min="-4" max="4" value="0.00" style="width: 58px;"></div>
+                    <div class="matrix-cell"><span>mLR</span><input type="number" class="num-input" id="matLR" step="0.05" min="-4" max="4" value="0.00" style="width: 58px;"></div>
+                    <div class="matrix-cell"><span>mRR</span><input type="number" class="num-input" id="matRR" step="0.05" min="-4" max="4" value="1.00" style="width: 58px;"></div>
+                </div>
             </div>
         </div>
 
@@ -361,6 +527,10 @@
     </div>
 
     <script>
+        if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+            navigator.serviceWorker.register('./sw.js').catch(() => {});
+        }
+
         const WEBHID_MAGIC_16 = 0x4551; // "EQ"
         const CMD_GET_ACTIVE_PROFILE = 0x01;
         const CMD_SET_BAND_LIVE      = 0x02;
@@ -369,6 +539,18 @@
         const CMD_SAVE_TO_PRESET     = 0x05;
         const CMD_RESET_TO_PRESET    = 0x06;
         const CMD_SET_BAND_COUNT     = 0x07;
+        const CMD_SET_AB_BYPASS      = 0x08;
+        const CMD_SET_DUAL_MONO      = 0x09;
+        const CMD_SET_MIXER          = 0x13;
+
+        const CH_LINKED = 0;
+        const CH_LEFT   = 1;
+        const CH_RIGHT  = 2;
+
+        const FILTER_NAMES = [
+            "Bypass", "Peaking", "Low Shelf", "High Shelf",
+            "High Pass", "Low Pass", "Notch", "Band Pass"
+        ];
 
         const ISO_FREQS = {
             1:  [1000],
@@ -384,32 +566,60 @@
         };
 
         const BAND_COLORS = [
-            '#58a6ff', // Band 1: Dodger Blue
-            '#3fb950', // Band 2: Emerald Green
-            '#d29922', // Band 3: Gold/Amber
-            '#f85149', // Band 4: Coral/Red
-            '#bc8cff', // Band 5: Lavender/Purple
-            '#39c5bb', // Band 6: Cyan/Teal
-            '#f0883e', // Band 7: Tangerine Orange
-            '#79c0ff', // Band 8: Light Sky Blue
-            '#56d364', // Band 9: Mint Lime
-            '#e3b341'  // Band 10: Sunflower Yellow
+            '#58a6ff', '#3fb950', '#d29922', '#f85149', '#bc8cff',
+            '#39c5bb', '#f0883e', '#79c0ff', '#56d364', '#e3b341'
         ];
 
-        let currentBandCount = 5;
-        let activeBands = [];
+        function createDefaultBands(count) {
+            const freqs = ISO_FREQS[count] || ISO_FREQS[5];
+            const bands = [];
+            for (let i = 0; i < count; i++) {
+                let type = 1;
+                if (i === 0) type = 2;
+                else if (i === count - 1) type = 3;
+                bands.push({
+                    type,
+                    freq: freqs[i] || Math.round(100 * Math.pow(2, i)),
+                    gain: 0.0,
+                    q: (type === 1) ? 1.00 : 0.71
+                });
+            }
+            return bands;
+        }
+
+        let linkedStereo = true;
+        let selectedChannel = CH_LINKED; // CH_LINKED, CH_LEFT, CH_RIGHT
+        let leftBands = createDefaultBands(5);
+        let rightBands = createDefaultBands(5);
+        let activeBands = leftBands;
+        let currentBandCount = activeBands.length;
         let preampDb = 0.0;
+        let abBypass = false;
+        let sampleRateHz = 48000;
         let hidDevice = null;
+
+        let mixerState = {
+            mode: 0,
+            balance: 0,
+            widthPct: 100,
+            crossfeedLevel: 0,
+            customMatrix: [1.0, 0.0, 0.0, 1.0]
+        };
 
         let hoveredBandIdx = -1;
         let draggedBandIdx = -1;
 
         const logBox = document.getElementById('logBox');
         const connStatus = document.getElementById('connStatus');
+        const rateBadge = document.getElementById('rateBadge');
         const btnConnect = document.getElementById('btnConnect');
+        const btnAbToggle = document.getElementById('btnAbToggle');
         const btnSave = document.getElementById('btnSave');
         const btnReset = document.getElementById('btnReset');
         const btnAddBand = document.getElementById('btnAddBand');
+        const btnChLinked = document.getElementById('btnChLinked');
+        const btnChLeft = document.getElementById('btnChLeft');
+        const btnChRight = document.getElementById('btnChRight');
         const presetSelect = document.getElementById('presetSelect');
         const bandCountSelect = document.getElementById('bandCountSelect');
         const customBandCountInput = document.getElementById('customBandCountInput');
@@ -417,6 +627,22 @@
         const preampSlider = document.getElementById('preampSlider');
         const preampNum = document.getElementById('preampNum');
         const bandsContainer = document.getElementById('bandsContainer');
+        const chkPhase = document.getElementById('chkPhase');
+        const chkGroupDelay = document.getElementById('chkGroupDelay');
+        const mixerModeSelect = document.getElementById('mixerModeSelect');
+        const balanceSlider = document.getElementById('balanceSlider');
+        const balanceLabel = document.getElementById('balanceLabel');
+        const widthSlider = document.getElementById('widthSlider');
+        const widthLabel = document.getElementById('widthLabel');
+        const crossfeedSelect = document.getElementById('crossfeedSelect');
+        const matLL = document.getElementById('matLL');
+        const matRL = document.getElementById('matRL');
+        const matLR = document.getElementById('matLR');
+        const matRR = document.getElementById('matRR');
+        const fileImportInput = document.getElementById('fileImportInput');
+        const btnImportFile = document.getElementById('btnImportFile');
+        const btnExportApo = document.getElementById('btnExportApo');
+        const btnExportJson = document.getElementById('btnExportJson');
         const canvas = document.getElementById('eqCanvas');
         const ctx = canvas.getContext('2d');
 
@@ -430,27 +656,12 @@
             return Math.max(min, Math.min(max, val));
         }
 
-        function createDefaultBands(count) {
-            const freqs = ISO_FREQS[count] || ISO_FREQS[5];
-            const bands = [];
-            for (let i = 0; i < count; i++) {
-                let type = 1; // Peaking
-                if (i === 0) type = 2; // Low Shelf
-                else if (i === count - 1) type = 3; // High Shelf
-                bands.push({
-                    type: type,
-                    freq: freqs[i] || Math.round(100 * Math.pow(2, i)),
-                    gain: 0.0,
-                    q: (type === 1) ? 1.00 : 0.71
-                });
-            }
-            return bands;
+        function filterUsesGain(type) {
+            return type === 1 || type === 2 || type === 3;
         }
 
-        activeBands = createDefaultBands(currentBandCount);
-
         const PRESET_DEFINITIONS = {
-            0: { // Reference Flat
+            0: {
                 preamp: 0.0,
                 bands: [
                     { type: 2, freq: 80, gain: 0.0, q: 0.71 },
@@ -460,7 +671,7 @@
                     { type: 3, freq: 10000, gain: 0.0, q: 0.71 }
                 ]
             },
-            1: { // Warm Bass Boost
+            1: {
                 preamp: -2.5,
                 bands: [
                     { type: 2, freq: 80, gain: 4.5, q: 0.71 },
@@ -470,7 +681,7 @@
                     { type: 3, freq: 10000, gain: 0.5, q: 0.71 }
                 ]
             },
-            2: { // Harman OE2018 Target
+            2: {
                 preamp: -4.0,
                 bands: [
                     { type: 2, freq: 105, gain: 5.0, q: 0.71 },
@@ -481,6 +692,101 @@
                 ]
             }
         };
+
+        // Exact RBJ Audio EQ Cookbook Biquad Evaluation (Magnitude, Phase, Group Delay)
+        function calcBiquadCoeffs(band, fs) {
+            if (!band || band.type === 0) {
+                return { b0: 1, b1: 0, b2: 0, a1: 0, a2: 0 };
+            }
+            if (filterUsesGain(band.type) && Math.abs(band.gain) < 0.05) {
+                return { b0: 1, b1: 0, b2: 0, a1: 0, a2: 0 };
+            }
+            const f0 = clamp(band.freq, 10, fs * 0.49);
+            const q = clamp(band.q, 0.05, 10.0);
+            const g = clamp(band.gain, -24.0, 12.0);
+            const omega = (2 * Math.PI * f0) / fs;
+            const cosW = Math.cos(omega);
+            const sinW = Math.sin(omega);
+            const alpha = sinW / (2 * q);
+            const A = Math.pow(10, g / 40.0);
+            const sqrtA = Math.sqrt(A);
+
+            let b0 = 1, b1 = 0, b2 = 0, a0 = 1, a1 = 0, a2 = 0;
+            switch (band.type) {
+                case 1: // Peaking
+                    b0 = 1 + alpha * A; b1 = -2 * cosW; b2 = 1 - alpha * A;
+                    a0 = 1 + alpha / A; a1 = -2 * cosW; a2 = 1 - alpha / A;
+                    break;
+                case 2: // Low Shelf
+                    b0 = A * ((A + 1) - (A - 1) * cosW + 2 * sqrtA * alpha);
+                    b1 = 2 * A * ((A - 1) - (A + 1) * cosW);
+                    b2 = A * ((A + 1) - (A - 1) * cosW - 2 * sqrtA * alpha);
+                    a0 = (A + 1) + (A - 1) * cosW + 2 * sqrtA * alpha;
+                    a1 = -2 * ((A - 1) + (A + 1) * cosW);
+                    a2 = (A + 1) + (A - 1) * cosW - 2 * sqrtA * alpha;
+                    break;
+                case 3: // High Shelf
+                    b0 = A * ((A + 1) + (A - 1) * cosW + 2 * sqrtA * alpha);
+                    b1 = -2 * A * ((A - 1) + (A + 1) * cosW);
+                    b2 = A * ((A + 1) + (A - 1) * cosW - 2 * sqrtA * alpha);
+                    a0 = (A + 1) - (A - 1) * cosW + 2 * sqrtA * alpha;
+                    a1 = 2 * ((A - 1) - (A + 1) * cosW);
+                    a2 = (A + 1) - (A - 1) * cosW - 2 * sqrtA * alpha;
+                    break;
+                case 4: // High Pass
+                    b0 = (1 + cosW) * 0.5; b1 = -(1 + cosW); b2 = (1 + cosW) * 0.5;
+                    a0 = 1 + alpha; a1 = -2 * cosW; a2 = 1 - alpha;
+                    break;
+                case 5: // Low Pass
+                    b0 = (1 - cosW) * 0.5; b1 = 1 - cosW; b2 = (1 - cosW) * 0.5;
+                    a0 = 1 + alpha; a1 = -2 * cosW; a2 = 1 - alpha;
+                    break;
+                case 6: // Notch
+                    b0 = 1; b1 = -2 * cosW; b2 = 1;
+                    a0 = 1 + alpha; a1 = -2 * cosW; a2 = 1 - alpha;
+                    break;
+                case 7: // Band Pass
+                    b0 = alpha; b1 = 0; b2 = -alpha;
+                    a0 = 1 + alpha; a1 = -2 * cosW; a2 = 1 - alpha;
+                    break;
+            }
+            if (!isFinite(a0) || Math.abs(a0) < 1e-12) {
+                return { b0: 1, b1: 0, b2: 0, a1: 0, a2: 0 };
+            }
+            return { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0 };
+        }
+
+        function evalCascadeAtFreq(bands, freq, fs) {
+            const w = (2 * Math.PI * freq) / fs;
+            const c1 = Math.cos(w), s1 = -Math.sin(w);
+            const c2 = Math.cos(2 * w), s2 = -Math.sin(2 * w);
+
+            let re = 1.0, im = 0.0;
+            let phaseSum = 0.0;
+
+            for (let i = 0; i < bands.length; i++) {
+                const c = calcBiquadCoeffs(bands[i], fs);
+                const nr = c.b0 + c.b1 * c1 + c.b2 * c2;
+                const ni = c.b1 * s1 + c.b2 * s2;
+                const dr = 1.0 + c.a1 * c1 + c.a2 * c2;
+                const di = c.a1 * s1 + c.a2 * s2;
+                const den = dr * dr + di * di;
+                if (den < 1e-24) continue;
+
+                const hr = (nr * dr + ni * di) / den;
+                const hi = (ni * dr - nr * di) / den;
+                const newRe = re * hr - im * hi;
+                const newIm = re * hi + im * hr;
+                re = newRe;
+                im = newIm;
+                phaseSum += Math.atan2(hi, hr);
+            }
+            const mag = Math.sqrt(re * re + im * im);
+            return {
+                magDb: 20 * Math.log10(Math.max(mag, 1e-7)),
+                phaseRad: phaseSum
+            };
+        }
 
         // Coordinate Conversions
         function freqToX(freq) {
@@ -512,10 +818,7 @@
             const scaleY = canvas.height / rect.height;
             const clientX = (evt.touches && evt.touches.length > 0) ? evt.touches[0].clientX : evt.clientX;
             const clientY = (evt.touches && evt.touches.length > 0) ? evt.touches[0].clientY : evt.clientY;
-            return {
-                x: (clientX - rect.left) * scaleX,
-                y: (clientY - rect.top) * scaleY
-            };
+            return { x: (clientX - rect.left) * scaleX, y: (clientY - rect.top) * scaleY };
         }
 
         function findHoveredBand(cx, cy, radius = 15) {
@@ -524,7 +827,7 @@
             for (let i = 0; i < activeBands.length; i++) {
                 const b = activeBands[i];
                 const bx = freqToX(b.freq);
-                const by = gainToY(b.gain);
+                const by = gainToY(filterUsesGain(b.type) ? b.gain : 0.0);
                 const distSq = (cx - bx) * (cx - bx) + (cy - by) * (cy - by);
                 if (distSq <= minDistSq) {
                     minDistSq = distSq;
@@ -532,6 +835,52 @@
                 }
             }
             return closestIdx;
+        }
+
+        function updateChannelButtonsUI() {
+            btnChLinked.classList.toggle('seg-active', selectedChannel === CH_LINKED);
+            btnChLeft.classList.toggle('seg-active', selectedChannel === CH_LEFT);
+            btnChRight.classList.toggle('seg-active', selectedChannel === CH_RIGHT);
+        }
+
+        function selectEditorChannel(ch) {
+            selectedChannel = ch;
+            if (ch === CH_LINKED) {
+                linkedStereo = true;
+                activeBands = leftBands;
+            } else if (ch === CH_LEFT) {
+                linkedStereo = false;
+                activeBands = leftBands;
+            } else {
+                linkedStereo = false;
+                activeBands = rightBands;
+            }
+            currentBandCount = activeBands.length;
+            hoveredBandIdx = -1;
+            draggedBandIdx = -1;
+            updateChannelButtonsUI();
+            updateBandCountUI();
+            renderBands();
+        }
+
+        function updateAbButtonUI() {
+            btnAbToggle.textContent = abBypass ? "A/B: BYPASS (Flat)" : "A/B: EQ ON";
+            btnAbToggle.classList.toggle('ab-active', abBypass);
+        }
+
+        function updateMixerUI() {
+            mixerModeSelect.value = String(mixerState.mode);
+            balanceSlider.value = mixerState.balance;
+            if (mixerState.balance === 0) balanceLabel.textContent = "Center (0)";
+            else if (mixerState.balance < 0) balanceLabel.textContent = `L ${Math.abs(mixerState.balance)}%`;
+            else balanceLabel.textContent = `R ${mixerState.balance}%`;
+            widthSlider.value = mixerState.widthPct;
+            widthLabel.textContent = `${mixerState.widthPct}%`;
+            crossfeedSelect.value = String(mixerState.crossfeedLevel);
+            matLL.value = mixerState.customMatrix[0].toFixed(2);
+            matRL.value = mixerState.customMatrix[1].toFixed(2);
+            matLR.value = mixerState.customMatrix[2].toFixed(2);
+            matRR.value = mixerState.customMatrix[3].toFixed(2);
         }
 
         function updateBandCountUI() {
@@ -542,21 +891,14 @@
             } else {
                 bandCountSelect.value = "custom";
             }
-            if (btnAddBand) {
-                btnAddBand.disabled = (currentBandCount >= 10);
-                btnAddBand.style.opacity = (currentBandCount >= 10) ? "0.4" : "1.0";
-                btnAddBand.style.cursor = (currentBandCount >= 10) ? "not-allowed" : "pointer";
-            }
+            btnAddBand.disabled = (currentBandCount >= 10);
+            btnAddBand.style.opacity = (currentBandCount >= 10) ? "0.4" : "1.0";
         }
 
         function highlightBandCard(idx) {
             const cards = bandsContainer.children;
             for (let i = 0; i < cards.length; i++) {
-                if (i === idx) {
-                    cards[i].classList.add('active-band');
-                } else {
-                    cards[i].classList.remove('active-band');
-                }
+                cards[i].classList.toggle('active-band', i === idx);
             }
         }
 
@@ -584,57 +926,37 @@
                 log("Maximum of 10 bands supported by hardware DSP.");
                 return;
             }
-
             let newFreq = freq;
             let newGain = (gain !== undefined) ? gain : 0.0;
-
             if (newFreq === undefined) {
-                if (activeBands.length === 0) {
-                    newFreq = 1000;
-                } else {
+                if (activeBands.length === 0) newFreq = 1000;
+                else {
                     const sorted = [...activeBands].sort((a, b) => a.freq - b.freq);
-                    let maxRatio = 0;
-                    let bestIdx = 0;
+                    let maxRatio = 0, bestIdx = 0;
                     for (let i = 0; i < sorted.length - 1; i++) {
-                        const ratio = sorted[i + 1].freq / sorted[i].freq;
-                        if (ratio > maxRatio) {
-                            maxRatio = ratio;
-                            bestIdx = i;
-                        }
+                        const r = sorted[i + 1].freq / sorted[i].freq;
+                        if (r > maxRatio) { maxRatio = r; bestIdx = i; }
                     }
-                    if (maxRatio > 1.35) {
-                        newFreq = Math.round(Math.sqrt(sorted[bestIdx].freq * sorted[bestIdx + 1].freq));
-                    } else if (sorted[sorted.length - 1].freq < 14000) {
-                        newFreq = Math.min(20000, Math.round(sorted[sorted.length - 1].freq * 1.4));
-                    } else if (sorted[0].freq > 30) {
-                        newFreq = Math.max(20, Math.round(sorted[0].freq / 1.4));
-                    } else {
-                        newFreq = 1000;
-                    }
+                    if (maxRatio > 1.35) newFreq = Math.round(Math.sqrt(sorted[bestIdx].freq * sorted[bestIdx + 1].freq));
+                    else if (sorted[sorted.length - 1].freq < 14000) newFreq = Math.min(20000, Math.round(sorted[sorted.length - 1].freq * 1.4));
+                    else if (sorted[0].freq > 30) newFreq = Math.max(20, Math.round(sorted[0].freq / 1.4));
+                    else newFreq = 1000;
                 }
             }
-
-            let filterType = 1; // Peaking
-            if (activeBands.length === 0) filterType = 2; // Low shelf if first
-
+            const filterType = (activeBands.length === 0) ? 2 : 1;
             activeBands.push({
                 type: filterType,
                 freq: clamp(Math.round(newFreq), 20, 20000),
                 gain: clamp(Math.round(newGain * 10.0) / 10.0, -24.0, 12.0),
                 q: 1.00
             });
-
             currentBandCount = activeBands.length;
-            presetSelect.value = "3"; // User custom
+            presetSelect.value = "3";
             updateBandCountUI();
             renderBands();
-
             await sendSetBandCount(currentBandCount);
-            for (let i = 0; i < currentBandCount; i++) {
-                await sendBandLive(i);
-            }
+            for (let i = 0; i < currentBandCount; i++) await sendBandLive(i);
             drawCurve();
-            log(`Added Band ${currentBandCount}: ${Math.round(newFreq)} Hz, ${newGain >= 0 ? '+' : ''}${newGain.toFixed(1)} dB.`);
         }
 
         async function removeBand(idx) {
@@ -642,29 +964,23 @@
                 alert("Minimum 1 active EQ band required.");
                 return;
             }
-
-            const removed = activeBands.splice(idx, 1)[0];
+            activeBands.splice(idx, 1);
             currentBandCount = activeBands.length;
             presetSelect.value = "3";
             hoveredBandIdx = -1;
             draggedBandIdx = -1;
             updateBandCountUI();
             renderBands();
-
             await sendSetBandCount(currentBandCount);
-            for (let i = 0; i < currentBandCount; i++) {
-                await sendBandLive(i);
-            }
+            for (let i = 0; i < currentBandCount; i++) await sendBandLive(i);
             drawCurve();
-            log(`Deleted Band ${idx + 1} (${Math.round(removed.freq)} Hz). ${currentBandCount} bands active.`);
         }
 
         async function setCustomBandCount(targetCount) {
             const count = clamp(targetCount, 1, 10);
             if (count === currentBandCount) return;
-
             if (count < currentBandCount) {
-                activeBands = activeBands.slice(0, count);
+                activeBands.length = count;
             } else {
                 const defaultList = ISO_FREQS[count];
                 while (activeBands.length < count) {
@@ -678,21 +994,15 @@
                     });
                 }
             }
-
             currentBandCount = count;
             presetSelect.value = "3";
             updateBandCountUI();
             renderBands();
-
             await sendSetBandCount(currentBandCount);
-            for (let i = 0; i < currentBandCount; i++) {
-                await sendBandLive(i);
-            }
+            for (let i = 0; i < currentBandCount; i++) await sendBandLive(i);
             drawCurve();
-            log(`Configured band count: ${currentBandCount} bands.`);
         }
 
-        // Render Band Cards
         function renderBands() {
             bandsContainer.innerHTML = '';
             updateBandCountUI();
@@ -701,18 +1011,23 @@
                 const card = document.createElement('div');
                 card.className = 'band-card';
                 const bandColor = BAND_COLORS[i % BAND_COLORS.length];
+                const gainDisabled = !filterUsesGain(band.type);
 
                 card.innerHTML = `
                     <div class="band-title">
                         <span style="display: flex; align-items: center; gap: 6px;">
                             <span class="band-color-dot" style="background-color: ${bandColor};"></span>
-                            Band ${i + 1}
+                            B${i + 1}
                         </span>
-                        <div style="display: flex; align-items: center; gap: 6px;">
+                        <div style="display: flex; align-items: center; gap: 4px;">
                             <select id="type_${i}" style="width: auto;">
                                 <option value="1" ${band.type === 1 ? 'selected' : ''}>Peaking</option>
                                 <option value="2" ${band.type === 2 ? 'selected' : ''}>Low Shelf</option>
                                 <option value="3" ${band.type === 3 ? 'selected' : ''}>High Shelf</option>
+                                <option value="4" ${band.type === 4 ? 'selected' : ''}>High Pass</option>
+                                <option value="5" ${band.type === 5 ? 'selected' : ''}>Low Pass</option>
+                                <option value="6" ${band.type === 6 ? 'selected' : ''}>Notch</option>
+                                <option value="7" ${band.type === 7 ? 'selected' : ''}>Band Pass</option>
                                 <option value="0" ${band.type === 0 ? 'selected' : ''}>Bypass</option>
                             </select>
                             <button class="btn-del" id="del_${i}" title="Delete Band ${i + 1}" ${activeBands.length <= 1 ? 'disabled style="opacity:0.3;cursor:not-allowed;"' : ''}>✕</button>
@@ -725,12 +1040,12 @@
                         </div>
                         <input type="range" id="freq_${i}" min="20" max="20000" step="1" value="${Math.round(band.freq)}">
                     </div>
-                    <div class="control-group">
+                    <div class="control-group" style="opacity: ${gainDisabled ? '0.45' : '1'};">
                         <div class="control-label-row">
                             <label for="num_g_${i}">Gain (dB):</label>
-                            <input type="number" class="num-input" id="num_g_${i}" min="-24.0" max="12.0" step="0.1" value="${band.gain.toFixed(1)}">
+                            <input type="number" class="num-input" id="num_g_${i}" min="-24.0" max="12.0" step="0.1" value="${band.gain.toFixed(1)}" ${gainDisabled ? 'disabled' : ''}>
                         </div>
-                        <input type="range" id="gain_${i}" min="-24.0" max="12.0" step="0.1" value="${band.gain}">
+                        <input type="range" id="gain_${i}" min="-24.0" max="12.0" step="0.1" value="${band.gain}" ${gainDisabled ? 'disabled' : ''}>
                     </div>
                     <div class="control-group">
                         <div class="control-label-row">
@@ -742,7 +1057,6 @@
                 `;
                 bandsContainer.appendChild(card);
 
-                // Card hover linking
                 card.onmouseenter = () => {
                     if (draggedBandIdx === -1) {
                         hoveredBandIdx = i;
@@ -758,28 +1072,18 @@
                     }
                 };
 
-                // Delete button
                 const delBtn = card.querySelector(`#del_${i}`);
-                if (delBtn) {
-                    delBtn.onclick = (e) => {
-                        e.stopPropagation();
-                        removeBand(i);
-                    };
-                }
+                if (delBtn) delBtn.onclick = (e) => { e.stopPropagation(); removeBand(i); };
 
-                // Frequency controls
                 const fSlider = card.querySelector(`#freq_${i}`);
                 const fNum = card.querySelector(`#num_f_${i}`);
-
                 fSlider.oninput = (e) => {
-                    const val = parseFloat(e.target.value);
-                    activeBands[i].freq = val;
-                    fNum.value = Math.round(val);
+                    activeBands[i].freq = parseFloat(e.target.value);
+                    fNum.value = Math.round(activeBands[i].freq);
                     presetSelect.value = "3";
                     sendBandLive(i);
                     drawCurve();
                 };
-
                 fNum.oninput = (e) => {
                     const val = parseFloat(e.target.value);
                     if (!isNaN(val) && val >= 20 && val <= 20000) {
@@ -790,37 +1094,26 @@
                         drawCurve();
                     }
                 };
-
                 fNum.onchange = (e) => {
-                    let val = parseFloat(e.target.value);
-                    val = clamp(val, 20, 20000);
-                    val = Math.round(val);
+                    const val = Math.round(clamp(parseFloat(e.target.value), 20, 20000));
                     activeBands[i].freq = val;
                     fNum.value = val;
                     fSlider.value = val;
                     presetSelect.value = "3";
                     sendBandLive(i);
                     drawCurve();
-                    log(`Band ${i + 1} Freq: ${val} Hz`);
                 };
+                fNum.onkeydown = (e) => { if (e.key === 'Enter') fNum.blur(); };
 
-                fNum.onkeydown = (e) => {
-                    if (e.key === 'Enter') fNum.blur();
-                };
-
-                // Gain controls
                 const gSlider = card.querySelector(`#gain_${i}`);
                 const gNum = card.querySelector(`#num_g_${i}`);
-
                 gSlider.oninput = (e) => {
-                    const val = parseFloat(e.target.value);
-                    activeBands[i].gain = val;
-                    gNum.value = val.toFixed(1);
+                    activeBands[i].gain = parseFloat(e.target.value);
+                    gNum.value = activeBands[i].gain.toFixed(1);
                     presetSelect.value = "3";
                     sendBandLive(i);
                     drawCurve();
                 };
-
                 gNum.oninput = (e) => {
                     const val = parseFloat(e.target.value);
                     if (!isNaN(val) && val >= -24.0 && val <= 12.0) {
@@ -831,37 +1124,26 @@
                         drawCurve();
                     }
                 };
-
                 gNum.onchange = (e) => {
-                    let val = parseFloat(e.target.value);
-                    val = clamp(val, -24.0, 12.0);
-                    val = Math.round(val * 10) / 10;
+                    const val = Math.round(clamp(parseFloat(e.target.value), -24.0, 12.0) * 10) / 10;
                     activeBands[i].gain = val;
                     gNum.value = val.toFixed(1);
                     gSlider.value = val;
                     presetSelect.value = "3";
                     sendBandLive(i);
                     drawCurve();
-                    log(`Band ${i + 1} Gain: ${val.toFixed(1)} dB`);
                 };
+                gNum.onkeydown = (e) => { if (e.key === 'Enter') gNum.blur(); };
 
-                gNum.onkeydown = (e) => {
-                    if (e.key === 'Enter') gNum.blur();
-                };
-
-                // Q Factor controls
                 const qSlider = card.querySelector(`#q_${i}`);
                 const qNum = card.querySelector(`#num_q_${i}`);
-
                 qSlider.oninput = (e) => {
-                    const val = parseFloat(e.target.value);
-                    activeBands[i].q = val;
-                    qNum.value = val.toFixed(2);
+                    activeBands[i].q = parseFloat(e.target.value);
+                    qNum.value = activeBands[i].q.toFixed(2);
                     presetSelect.value = "3";
                     sendBandLive(i);
                     drawCurve();
                 };
-
                 qNum.oninput = (e) => {
                     const val = parseFloat(e.target.value);
                     if (!isNaN(val) && val >= 0.10 && val <= 10.00) {
@@ -872,65 +1154,283 @@
                         drawCurve();
                     }
                 };
-
                 qNum.onchange = (e) => {
-                    let val = parseFloat(e.target.value);
-                    val = clamp(val, 0.10, 10.00);
-                    val = Math.round(val * 100) / 100;
+                    const val = Math.round(clamp(parseFloat(e.target.value), 0.10, 10.00) * 100) / 100;
                     activeBands[i].q = val;
                     qNum.value = val.toFixed(2);
                     qSlider.value = val;
                     presetSelect.value = "3";
                     sendBandLive(i);
                     drawCurve();
-                    log(`Band ${i + 1} Q: ${val.toFixed(2)}`);
                 };
+                qNum.onkeydown = (e) => { if (e.key === 'Enter') qNum.blur(); };
 
-                qNum.onkeydown = (e) => {
-                    if (e.key === 'Enter') qNum.blur();
-                };
-
-                // Filter Type
                 const tSelect = card.querySelector(`#type_${i}`);
                 tSelect.onchange = (e) => {
-                    activeBands[i].type = parseInt(e.target.value);
+                    activeBands[i].type = parseInt(e.target.value, 10);
                     presetSelect.value = "3";
                     sendBandLive(i);
-                    drawCurve();
+                    renderBands();
                 };
             });
 
             drawCurve();
         }
 
+        // Dual-Mono Channel Switching
+        btnChLinked.onclick = async () => {
+            rightBands = JSON.parse(JSON.stringify(leftBands));
+            selectEditorChannel(CH_LINKED);
+            await sendDualMonoMode(true);
+            for (let i = 0; i < currentBandCount; i++) await sendBandLive(i);
+            log("Switched to Stereo Linked PEQ (L mirrored to R).");
+        };
+        btnChLeft.onclick = async () => {
+            const wasLinked = linkedStereo;
+            selectEditorChannel(CH_LEFT);
+            if (wasLinked) await sendDualMonoMode(false);
+            log("Editing Left Channel (Dual-Mono).");
+        };
+        btnChRight.onclick = async () => {
+            const wasLinked = linkedStereo;
+            selectEditorChannel(CH_RIGHT);
+            if (wasLinked) await sendDualMonoMode(false);
+            log("Editing Right Channel (Dual-Mono).");
+        };
+
+        // A/B Instant Bypass Toggle
+        btnAbToggle.onclick = async () => {
+            abBypass = !abBypass;
+            updateAbButtonUI();
+            await sendAbBypass(abBypass);
+            drawCurve();
+            log(abBypass ? "A/B Compare: EQ BYPASSED (Preamp-normalized flat)" : "A/B Compare: EQ ACTIVE");
+        };
+
+        chkPhase.onchange = () => drawCurve();
+        chkGroupDelay.onchange = () => drawCurve();
+
+        // Mixer & Crossfeed Events
+        function syncAndSendMixer() {
+            mixerState.mode = parseInt(mixerModeSelect.value, 10);
+            mixerState.balance = parseInt(balanceSlider.value, 10);
+            mixerState.widthPct = parseInt(widthSlider.value, 10);
+            mixerState.crossfeedLevel = parseInt(crossfeedSelect.value, 10);
+            mixerState.customMatrix = [
+                clamp(parseFloat(matLL.value) || 0, -4, 4),
+                clamp(parseFloat(matRL.value) || 0, -4, 4),
+                clamp(parseFloat(matLR.value) || 0, -4, 4),
+                clamp(parseFloat(matRR.value) || 0, -4, 4),
+            ];
+            updateMixerUI();
+            sendMixerConfig();
+        }
+
+        mixerModeSelect.onchange = () => {
+            if (mixerModeSelect.value === "4" && crossfeedSelect.value === "0") {
+                crossfeedSelect.value = "1";
+            }
+            syncAndSendMixer();
+        };
+        balanceSlider.oninput = syncAndSendMixer;
+        widthSlider.oninput = () => {
+            if (mixerModeSelect.value !== "3") mixerModeSelect.value = "3";
+            syncAndSendMixer();
+        };
+        crossfeedSelect.onchange = () => {
+            if (crossfeedSelect.value !== "0" && mixerModeSelect.value === "0") {
+                mixerModeSelect.value = "4";
+            }
+            syncAndSendMixer();
+        };
+        [matLL, matRL, matLR, matRR].forEach(el => {
+            el.onchange = () => {
+                mixerModeSelect.value = "5";
+                syncAndSendMixer();
+            };
+        });
+
+        // Equalizer APO / AutoEQ .txt & JSON Import / Export
+        function parseEqualizerApoText(text) {
+            const lines = text.split(/\r?\n/);
+            let parsedPreamp = preampDb;
+            const parsedBands = [];
+            const typeMap = {
+                'PK': 1, 'PEQ': 1,
+                'LS': 2, 'LSC': 2,
+                'HS': 3, 'HSC': 3,
+                'HP': 4, 'HPQ': 4,
+                'LP': 5, 'LPQ': 5,
+                'NO': 6, 'NOTCH': 6,
+                'BP': 7
+            };
+
+            for (const rawLine of lines) {
+                const line = rawLine.trim();
+                if (!line || line.startsWith('#')) continue;
+
+                const preampMatch = line.match(/^Preamp:\s*([+-]?\d+(?:\.\d+)?)\s*dB/i);
+                if (preampMatch) {
+                    parsedPreamp = clamp(parseFloat(preampMatch[1]), -12.0, 0.0);
+                    continue;
+                }
+
+                const filterMatch = line.match(/^Filter\s*\d*\s*:\s*(ON|OFF)\s+([A-Z]+)\s+Fc\s+([0-9.]+)\s*Hz(?:\s+Gain\s+([+-]?[0-9.]+)\s*dB)?(?:\s+Q\s+([0-9.]+))?/i);
+                if (filterMatch && parsedBands.length < 10) {
+                    const isOn = filterMatch[1].toUpperCase() === 'ON';
+                    const code = filterMatch[2].toUpperCase();
+                    const mappedType = isOn ? (typeMap[code] || 1) : 0;
+                    const freq = clamp(Math.round(parseFloat(filterMatch[3])), 20, 20000);
+                    const gain = filterMatch[4] !== undefined ? clamp(parseFloat(filterMatch[4]), -24.0, 12.0) : 0.0;
+                    const q = filterMatch[5] !== undefined ? clamp(parseFloat(filterMatch[5]), 0.10, 10.00) : 0.71;
+                    parsedBands.push({ type: mappedType, freq, gain, q });
+                }
+            }
+            return { preamp: parsedPreamp, bands: parsedBands };
+        }
+
+        function exportEqualizerApoText() {
+            const codeMap = { 0: 'PK', 1: 'PK', 2: 'LSC', 3: 'HSC', 4: 'HPQ', 5: 'LPQ', 6: 'NO', 7: 'BP' };
+            const lines = [`Preamp: ${preampDb.toFixed(1)} dB`];
+            activeBands.forEach((b, idx) => {
+                const state = (b.type === 0) ? 'OFF' : 'ON';
+                const code = codeMap[b.type] || 'PK';
+                if (filterUsesGain(b.type) || b.type === 0) {
+                    lines.push(`Filter ${idx + 1}: ${state} ${code} Fc ${Math.round(b.freq)} Hz Gain ${b.gain.toFixed(1)} dB Q ${b.q.toFixed(2)}`);
+                } else {
+                    lines.push(`Filter ${idx + 1}: ${state} ${code} Fc ${Math.round(b.freq)} Hz Q ${b.q.toFixed(2)}`);
+                }
+            });
+            return lines.join('\n') + '\n';
+        }
+
+        function downloadTextFile(filename, content, mime) {
+            const blob = new Blob([content], { type: mime });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        btnImportFile.onclick = () => fileImportInput.click();
+        fileImportInput.onchange = async (e) => {
+            const file = e.target.files[0];
+            if (!file) return;
+            const text = await file.text();
+            fileImportInput.value = '';
+
+            if (file.name.toLowerCase().endsWith('.json')) {
+                try {
+                    const obj = JSON.parse(text);
+                    if (typeof obj.preampDb === 'number') preampDb = clamp(obj.preampDb, -12.0, 0.0);
+                    if (Array.isArray(obj.leftBands) && obj.leftBands.length > 0) {
+                        leftBands = obj.leftBands.slice(0, 10).map(b => ({
+                            type: clamp(parseInt(b.type, 10) || 0, 0, 7),
+                            freq: clamp(Math.round(b.freq || 1000), 20, 20000),
+                            gain: clamp(Number(b.gain || 0), -24, 12),
+                            q: clamp(Number(b.q || 0.71), 0.1, 10)
+                        }));
+                    }
+                    if (Array.isArray(obj.rightBands) && obj.rightBands.length > 0) {
+                        rightBands = obj.rightBands.slice(0, 10).map(b => ({
+                            type: clamp(parseInt(b.type, 10) || 0, 0, 7),
+                            freq: clamp(Math.round(b.freq || 1000), 20, 20000),
+                            gain: clamp(Number(b.gain || 0), -24, 12),
+                            q: clamp(Number(b.q || 0.71), 0.1, 10)
+                        }));
+                    } else {
+                        rightBands = JSON.parse(JSON.stringify(leftBands));
+                    }
+                    if (obj.mixer) {
+                        mixerState = Object.assign({}, mixerState, obj.mixer);
+                        updateMixerUI();
+                        await sendMixerConfig();
+                    }
+                    const wantLinked = (obj.linkedStereo !== false);
+                    selectEditorChannel(wantLinked ? CH_LINKED : CH_LEFT);
+                    await sendDualMonoMode(wantLinked);
+                    await sendPreampLive(preampDb);
+                    preampNum.value = preampDb.toFixed(1);
+                    preampSlider.value = preampDb;
+                    await sendSetBandCount(leftBands.length, CH_LEFT);
+                    for (let i = 0; i < leftBands.length; i++) await sendBandLive(i, CH_LEFT, leftBands[i]);
+                    if (!wantLinked) {
+                        await sendSetBandCount(rightBands.length, CH_RIGHT);
+                        for (let i = 0; i < rightBands.length; i++) await sendBandLive(i, CH_RIGHT, rightBands[i]);
+                    }
+                    log(`Imported JSON profile: ${file.name}`);
+                    return;
+                } catch (err) {
+                    alert(`Invalid JSON file: ${err.message}`);
+                    return;
+                }
+            }
+
+            const parsed = parseEqualizerApoText(text);
+            if (parsed.bands.length === 0) {
+                alert("No valid Equalizer APO / AutoEQ Filter lines found.");
+                return;
+            }
+            preampDb = parsed.preamp;
+            preampNum.value = preampDb.toFixed(1);
+            preampSlider.value = preampDb;
+
+            activeBands.splice(0, activeBands.length, ...parsed.bands);
+            if (selectedChannel === CH_LINKED) {
+                rightBands = JSON.parse(JSON.stringify(leftBands));
+            }
+            currentBandCount = activeBands.length;
+            presetSelect.value = "3";
+            updateBandCountUI();
+            renderBands();
+            await sendPreampLive(preampDb);
+            await sendSetBandCount(currentBandCount);
+            for (let i = 0; i < currentBandCount; i++) await sendBandLive(i);
+            log(`Imported ${parsed.bands.length} bands from ${file.name} (Preamp ${preampDb.toFixed(1)} dB).`);
+        };
+
+        btnExportApo.onclick = () => {
+            downloadTextFile('ascendance_peq_apo.txt', exportEqualizerApoText(), 'text/plain');
+            log("Exported Equalizer APO .txt profile.");
+        };
+
+        btnExportJson.onclick = () => {
+            const payload = {
+                version: 2,
+                linkedStereo,
+                preampDb,
+                leftBands,
+                rightBands,
+                mixer: mixerState
+            };
+            downloadTextFile('ascendance_dsp_backup.json', JSON.stringify(payload, null, 2), 'application/json');
+            log("Exported full Dual-Mono + Matrix JSON backup.");
+        };
+
         bandCountSelect.onchange = async (e) => {
             const val = e.target.value;
             if (val === "custom") return;
-            currentBandCount = parseInt(val);
-            activeBands = createDefaultBands(currentBandCount);
+            const newCount = parseInt(val, 10);
+            const defaults = createDefaultBands(newCount);
+            activeBands.splice(0, activeBands.length, ...defaults);
+            currentBandCount = newCount;
             updateBandCountUI();
             renderBands();
             await sendSetBandCount(currentBandCount);
-            for (let i = 0; i < currentBandCount; i++) {
-                await sendBandLive(i);
-            }
-            log(`Configured PEQ band count: ${currentBandCount} bands.`);
+            for (let i = 0; i < currentBandCount; i++) await sendBandLive(i);
         };
 
         customBandCountInput.onchange = (e) => {
-            let val = parseInt(e.target.value);
-            val = clamp(val, 1, 10);
+            const val = clamp(parseInt(e.target.value, 10), 1, 10);
             customBandCountInput.value = val;
             setCustomBandCount(val);
         };
-
-        customBandCountInput.onkeydown = (e) => {
-            if (e.key === 'Enter') customBandCountInput.blur();
-        };
-
-        btnAddBand.onclick = () => {
-            addCustomBand();
-        };
+        customBandCountInput.onkeydown = (e) => { if (e.key === 'Enter') customBandCountInput.blur(); };
+        btnAddBand.onclick = () => addCustomBand();
 
         preampSlider.oninput = (e) => {
             preampDb = parseFloat(e.target.value);
@@ -939,7 +1439,6 @@
             sendPreampLive(preampDb);
             drawCurve();
         };
-
         preampNum.oninput = (e) => {
             const val = parseFloat(e.target.value);
             if (!isNaN(val) && val >= -12.0 && val <= 0.0) {
@@ -950,45 +1449,32 @@
                 drawCurve();
             }
         };
-
         preampNum.onchange = (e) => {
-            let val = parseFloat(e.target.value);
-            val = clamp(val, -12.0, 0.0);
-            val = Math.round(val * 10) / 10;
+            const val = Math.round(clamp(parseFloat(e.target.value), -12.0, 0.0) * 10) / 10;
             preampDb = val;
             preampNum.value = val.toFixed(1);
             preampSlider.value = val;
             presetSelect.value = "3";
             sendPreampLive(preampDb);
             drawCurve();
-            log(`Preamp Headroom: ${val.toFixed(1)} dB`);
         };
-
-        preampNum.onkeydown = (e) => {
-            if (e.key === 'Enter') preampNum.blur();
-        };
+        preampNum.onkeydown = (e) => { if (e.key === 'Enter') preampNum.blur(); };
 
         presetSelect.onchange = async (e) => {
-            const slot = parseInt(e.target.value);
+            const slot = parseInt(e.target.value, 10);
             if (PRESET_DEFINITIONS[slot]) {
                 const p = PRESET_DEFINITIONS[slot];
                 preampDb = p.preamp;
                 preampNum.value = preampDb.toFixed(1);
                 preampSlider.value = preampDb;
-                currentBandCount = p.bands.length;
-                activeBands = JSON.parse(JSON.stringify(p.bands));
-                updateBandCountUI();
-                renderBands();
-                await sendSetBandCount(currentBandCount);
-                for (let i = 0; i < currentBandCount; i++) {
-                    await sendBandLive(i);
-                }
-                await sendPreampLive(preampDb);
+                leftBands = JSON.parse(JSON.stringify(p.bands));
+                rightBands = JSON.parse(JSON.stringify(p.bands));
+                selectEditorChannel(CH_LINKED);
             }
             await sendSelectProfile(slot);
         };
 
-        // Interactive Pointer Handlers on Canvas
+        // Pointer Handlers on Canvas
         function onPointerDown(e) {
             const coords = getCanvasCoords(e);
             const hitIdx = findHoveredBand(coords.x, coords.y, 14);
@@ -1006,22 +1492,19 @@
             const coords = getCanvasCoords(e);
             if (draggedBandIdx !== -1) {
                 if (e.cancelable) e.preventDefault();
-                const newFreq = xToFreq(coords.x);
-                const newGain = yToGain(coords.y);
-
-                activeBands[draggedBandIdx].freq = newFreq;
-                activeBands[draggedBandIdx].gain = newGain;
-
+                activeBands[draggedBandIdx].freq = xToFreq(coords.x);
+                if (filterUsesGain(activeBands[draggedBandIdx].type)) {
+                    activeBands[draggedBandIdx].gain = yToGain(coords.y);
+                }
                 presetSelect.value = "3";
                 syncBandControls(draggedBandIdx);
                 sendBandLive(draggedBandIdx);
                 drawCurve();
             } else {
                 const rect = canvas.getBoundingClientRect();
-                const clientX = (e.touches && e.touches.length > 0) ? e.touches[0].clientX : e.clientX;
-                const clientY = (e.touches && e.touches.length > 0) ? e.touches[0].clientY : e.clientY;
-                const isInside = (clientX >= rect.left && clientX <= rect.right && clientY >= rect.top && clientY <= rect.bottom);
-
+                const cx = (e.touches && e.touches.length > 0) ? e.touches[0].clientX : e.clientX;
+                const cy = (e.touches && e.touches.length > 0) ? e.touches[0].clientY : e.clientY;
+                const isInside = (cx >= rect.left && cx <= rect.right && cy >= rect.top && cy <= rect.bottom);
                 if (isInside) {
                     const hitIdx = findHoveredBand(coords.x, coords.y, 14);
                     if (hitIdx !== hoveredBandIdx) {
@@ -1038,10 +1521,8 @@
             }
         }
 
-        function onPointerUp(e) {
+        function onPointerUp() {
             if (draggedBandIdx !== -1) {
-                const b = activeBands[draggedBandIdx];
-                log(`Band ${draggedBandIdx + 1} positioned: ${Math.round(b.freq)} Hz, ${b.gain >= 0 ? '+' : ''}${b.gain.toFixed(1)} dB`);
                 draggedBandIdx = -1;
                 canvas.style.cursor = (hoveredBandIdx !== -1) ? 'grab' : 'crosshair';
                 drawCurve();
@@ -1054,9 +1535,7 @@
             if (hitIdx !== -1) {
                 e.preventDefault();
                 const delta = e.deltaY < 0 ? 0.05 : -0.05;
-                let newQ = Math.round((activeBands[hitIdx].q + delta) * 100) / 100;
-                newQ = clamp(newQ, 0.10, 10.00);
-                activeBands[hitIdx].q = newQ;
+                activeBands[hitIdx].q = clamp(Math.round((activeBands[hitIdx].q + delta) * 100) / 100, 0.10, 10.00);
                 presetSelect.value = "3";
                 syncBandControls(hitIdx);
                 sendBandLive(hitIdx);
@@ -1073,137 +1552,116 @@
                 syncBandControls(hitIdx);
                 sendBandLive(hitIdx);
                 drawCurve();
-                log(`Band ${hitIdx + 1} gain reset to 0.0 dB.`);
-            } else {
-                if (activeBands.length < 10) {
-                    const freq = xToFreq(coords.x);
-                    const gain = yToGain(coords.y);
-                    addCustomBand(freq, gain);
-                } else {
-                    log("Maximum 10 bands reached. Cannot add more bands.");
-                }
+            } else if (activeBands.length < 10) {
+                addCustomBand(xToFreq(coords.x), yToGain(coords.y));
             }
         }
 
         canvas.addEventListener('mousedown', onPointerDown);
         window.addEventListener('mousemove', onPointerMove);
         window.addEventListener('mouseup', onPointerUp);
-
         canvas.addEventListener('touchstart', onPointerDown, { passive: false });
         window.addEventListener('touchmove', onPointerMove, { passive: false });
         window.addEventListener('touchend', onPointerUp);
-
         canvas.addEventListener('wheel', onCanvasWheel, { passive: false });
         canvas.addEventListener('dblclick', onCanvasDblClick);
 
-        // WebHID Communication
-        btnConnect.onclick = async () => {
-            if (!navigator.hid) {
-                alert("WebHID is not supported in this browser. Please use Google Chrome or Microsoft Edge.");
-                return;
-            }
-
-            try {
-                let device = null;
-
-                // Check if device was previously paired and permitted by user
-                const pairedDevices = await navigator.hid.getDevices();
-                device = pairedDevices.find(d => d.vendorId === 0x303A && d.productId === 0x4002);
-
-                if (!device) {
-                    const filters = [{ vendorId: 0x303A, productId: 0x4002 }];
-                    const devices = await navigator.hid.requestDevice({ filters });
-                    if (devices.length === 0) return;
-                    device = devices[0];
-                }
-
-                hidDevice = device;
-                await hidDevice.open();
-
-                connStatus.innerHTML = "● Connected (GPIO 19/20 Native OTG)";
-                connStatus.style.color = "var(--green)";
-                btnConnect.textContent = "Disconnect";
-                btnConnect.onclick = disconnectDevice;
-                log(`Connected to: ${hidDevice.productName} (VID: 0x${hidDevice.vendorId.toString(16)}, PID: 0x${hidDevice.productId.toString(16)})`);
-
-                hidDevice.oninputreport = (evt) => {
-                    if (evt.data.byteLength < 16) return;
-                    const magic = evt.data.getUint16(0, true);
-                    if (magic !== WEBHID_MAGIC_16) return;
-
-                    const cmd = evt.data.getUint8(2);
-                    const bIdx = evt.data.getUint8(3);
-                    const numBands = evt.data.getUint8(16); // reserved[0] = active num_bands
-
-                    if (numBands >= 1 && numBands <= 10 && numBands !== currentBandCount) {
-                        currentBandCount = numBands;
-                        activeBands = createDefaultBands(currentBandCount);
-                        updateBandCountUI();
-                        renderBands();
-                        log(`DAC synced active band count: ${currentBandCount} bands`);
-                    }
-
-                    if (cmd === CMD_GET_ACTIVE_PROFILE && bIdx < activeBands.length) {
-                        const fType = evt.data.getUint8(4);
-                        const fHz = evt.data.getUint16(6, true);
-                        const gDb = evt.data.getInt16(8, true) / 10.0;
-                        const qVal = evt.data.getUint16(10, true) / 100.0;
-
-                        activeBands[bIdx].type = fType;
-                        activeBands[bIdx].freq = fHz;
-                        activeBands[bIdx].gain = gDb;
-                        activeBands[bIdx].q = qVal;
-
-                        syncBandControls(bIdx);
-                        const card = bandsContainer.children[bIdx];
-                        if (card) {
-                            const tSel = card.querySelector(`#type_${bIdx}`);
-                            if (tSel) tSel.value = fType;
-                        }
-                        drawCurve();
-                    }
-                };
-
-                // Request initial state from DAC
-                for (let b = 0; b < currentBandCount; b++) {
-                    await sendGetBand(b);
-                }
-            } catch (err) {
-                log(`Connection error: ${err.message}`);
-                if (err.message && err.message.toLowerCase().includes("failed to open")) {
-                    log(`<span style="color: #f85149; font-weight: 600;">⚠️ Linux Permission Denied on /dev/hidraw:</span>`);
-                    log(`Run in terminal: <code style="color: #58a6ff;">sudo chmod 666 /dev/hidraw*</code>`);
-                    log(`Or add udev rule: <code style="color: #8b949e;">echo 'KERNEL=="hidraw*", ATTRS{idVendor}=="303a", ATTRS{idProduct}=="4002", MODE="0666", TAG+="uaccess"' | sudo tee /etc/udev/rules.d/99-esp32-webhid.rules</code>`);
-                }
-            }
-        };
-
-        async function sendGetBand(bandIdx) {
+        // WebHID Transport
+        async function sendReport64(buffer) {
             if (!hidDevice || !hidDevice.opened) return;
+            try {
+                await hidDevice.sendReport(0x00, new Uint8Array(buffer));
+            } catch (e) {
+                log(`HID send error: ${e.message}`);
+            }
+        }
+
+        async function sendGetBand(bandIdx, ch = selectedChannel) {
             const buffer = new ArrayBuffer(64);
             const view = new DataView(buffer);
             view.setUint16(0, WEBHID_MAGIC_16, true);
             view.setUint8(2, CMD_GET_ACTIVE_PROFILE);
             view.setUint8(3, bandIdx);
-            try {
-                await hidDevice.sendReport(0x00, new Uint8Array(buffer));
-            } catch (e) {
-                // Ignore transient send failure
-            }
+            view.setUint8(13, ch);
+            await sendReport64(buffer);
         }
 
-        async function sendSetBandCount(count) {
-            if (!hidDevice || !hidDevice.opened) return;
+        async function sendSetBandCount(count, ch = selectedChannel) {
             const buffer = new ArrayBuffer(64);
             const view = new DataView(buffer);
             view.setUint16(0, WEBHID_MAGIC_16, true);
             view.setUint8(2, CMD_SET_BAND_COUNT);
             view.setUint8(3, count);
-            try {
-                await hidDevice.sendReport(0x00, new Uint8Array(buffer));
-            } catch (e) {
-                log(`Send band count error: ${e.message}`);
+            view.setUint8(13, ch);
+            await sendReport64(buffer);
+        }
+
+        async function sendBandLive(bandIdx, ch = selectedChannel, bandObj = null) {
+            const band = bandObj || activeBands[bandIdx];
+            if (!band) return;
+            const buffer = new ArrayBuffer(64);
+            const view = new DataView(buffer);
+            view.setUint16(0, WEBHID_MAGIC_16, true);
+            view.setUint8(2, CMD_SET_BAND_LIVE);
+            view.setUint8(3, bandIdx);
+            view.setUint8(4, band.type);
+            view.setUint8(5, band.type !== 0 ? 1 : 0);
+            view.setUint16(6, Math.round(band.freq), true);
+            view.setInt16(8, Math.round(band.gain * 10), true);
+            view.setUint16(10, Math.round(band.q * 100), true);
+            view.setUint8(13, ch);
+            await sendReport64(buffer);
+        }
+
+        async function sendPreampLive(gain) {
+            const buffer = new ArrayBuffer(64);
+            const view = new DataView(buffer);
+            view.setUint16(0, WEBHID_MAGIC_16, true);
+            view.setUint8(2, CMD_SET_PREAMP_LIVE);
+            view.setInt16(8, Math.round(gain * 10), true);
+            await sendReport64(buffer);
+        }
+
+        async function sendSelectProfile(slot) {
+            const buffer = new ArrayBuffer(64);
+            const view = new DataView(buffer);
+            view.setUint16(0, WEBHID_MAGIC_16, true);
+            view.setUint8(2, CMD_SELECT_PROFILE);
+            view.setUint8(3, slot);
+            await sendReport64(buffer);
+        }
+
+        async function sendAbBypass(bypass) {
+            const buffer = new ArrayBuffer(64);
+            const view = new DataView(buffer);
+            view.setUint16(0, WEBHID_MAGIC_16, true);
+            view.setUint8(2, CMD_SET_AB_BYPASS);
+            view.setUint8(3, bypass ? 1 : 0);
+            await sendReport64(buffer);
+        }
+
+        async function sendDualMonoMode(linked) {
+            const buffer = new ArrayBuffer(64);
+            const view = new DataView(buffer);
+            view.setUint16(0, WEBHID_MAGIC_16, true);
+            view.setUint8(2, CMD_SET_DUAL_MONO);
+            view.setUint8(3, linked ? 1 : 0);
+            await sendReport64(buffer);
+        }
+
+        async function sendMixerConfig() {
+            const buffer = new ArrayBuffer(64);
+            const view = new DataView(buffer);
+            view.setUint16(0, WEBHID_MAGIC_16, true);
+            view.setUint8(2, CMD_SET_MIXER);
+            view.setUint8(3, mixerState.mode);
+            view.setInt8(4, mixerState.balance);
+            view.setUint8(5, clamp(mixerState.widthPct, 0, 200));
+            view.setUint16(6, clamp(mixerState.crossfeedLevel, 0, 2), true);
+            for (let i = 0; i < 4; i++) {
+                view.setFloat32(12 + i * 4, mixerState.customMatrix[i], true);
             }
+            await sendReport64(buffer);
         }
 
         async function disconnectDevice() {
@@ -1213,114 +1671,156 @@
                 connStatus.innerHTML = "● Disconnected";
                 connStatus.style.color = "var(--red)";
                 btnConnect.textContent = "Connect USB DAC";
-                btnConnect.onclick = () => location.reload();
+                btnConnect.onclick = connectDevice;
                 log("Disconnected from device.");
             }
         }
 
-        async function sendBandLive(bandIdx) {
-            if (!hidDevice || !hidDevice.opened) return;
-
-            const band = activeBands[bandIdx];
-            if (!band) return;
-
-            const buffer = new ArrayBuffer(64);
-            const view = new DataView(buffer);
-
-            view.setUint16(0, WEBHID_MAGIC_16, true);       // Magic 0x4551 ("EQ")
-            view.setUint8(2, CMD_SET_BAND_LIVE);           // Command 0x02
-            view.setUint8(3, bandIdx);                     // Band Index (0-9)
-            view.setUint8(4, band.type);                    // Filter Type
-            view.setUint8(5, band.type !== 0 ? 1 : 0);      // Enabled
-            view.setUint16(6, Math.round(band.freq), true); // Frequency Hz
-            view.setInt16(8, Math.round(band.gain * 10), true); // Gain x10
-            view.setUint16(10, Math.round(band.q * 100), true); // Q x100
-
+        async function connectDevice() {
+            if (!navigator.hid) {
+                alert("WebHID is not supported in this browser. Please use Google Chrome or Microsoft Edge.");
+                return;
+            }
             try {
-                await hidDevice.sendReport(0x00, new Uint8Array(buffer));
-            } catch (e) {
-                log(`Send live band error: ${e.message}`);
+                const paired = await navigator.hid.getDevices();
+                let device = paired.find(d => d.vendorId === 0x303A && d.productId === 0x4002);
+                if (!device) {
+                    const devices = await navigator.hid.requestDevice({
+                        filters: [{ vendorId: 0x303A, productId: 0x4002 }]
+                    });
+                    if (devices.length === 0) return;
+                    device = devices[0];
+                }
+                hidDevice = device;
+                await hidDevice.open();
+
+                connStatus.innerHTML = "● Connected (USB OTG)";
+                connStatus.style.color = "var(--green)";
+                btnConnect.textContent = "Disconnect";
+                btnConnect.onclick = disconnectDevice;
+                log(`Connected to ${hidDevice.productName}`);
+
+                hidDevice.oninputreport = (evt) => {
+                    if (evt.data.byteLength < 26) return;
+                    const magic = evt.data.getUint16(0, true);
+                    if (magic !== WEBHID_MAGIC_16) return;
+
+                    const cmd = evt.data.getUint8(2);
+                    if (cmd === CMD_SET_MIXER) {
+                        mixerState.mode = evt.data.getUint8(3);
+                        mixerState.balance = evt.data.getInt8(4);
+                        mixerState.widthPct = evt.data.getUint8(5);
+                        mixerState.crossfeedLevel = evt.data.getUint16(6, true);
+                        for (let i = 0; i < 4; i++) {
+                            mixerState.customMatrix[i] = evt.data.getFloat32(12 + i * 4, true);
+                        }
+                        updateMixerUI();
+                        return;
+                    }
+
+                    if (cmd !== CMD_GET_ACTIVE_PROFILE) return;
+
+                    const bIdx = evt.data.getUint8(3);
+                    const fType = evt.data.getUint8(4);
+                    const fHz = evt.data.getUint16(6, true);
+                    const gDb = evt.data.getInt16(8, true) / 10.0;
+                    const qVal = evt.data.getUint16(10, true) / 100.0;
+
+                    const numBands = evt.data.getUint8(12);
+                    const repCh = evt.data.getUint8(13);
+                    const flags = evt.data.getUint8(14);
+                    const activeSlot = evt.data.getUint8(15);
+                    const preampX10 = evt.data.getInt16(16, true);
+                    const sr = evt.data.getUint32(22, true);
+
+                    linkedStereo = ((flags & 0x01) !== 0);
+                    abBypass = ((flags & 0x02) !== 0);
+                    updateAbButtonUI();
+
+                    if (sr === 44100 || sr === 48000 || sr === 96000) {
+                        sampleRateHz = sr;
+                        rateBadge.textContent = `${(sr / 1000).toFixed(1)} kHz / 24b`;
+                    }
+
+                    preampDb = preampX10 / 10.0;
+                    preampNum.value = preampDb.toFixed(1);
+                    preampSlider.value = preampDb;
+                    presetSelect.value = String(activeSlot);
+
+                    mixerState.mode = evt.data.getUint8(18);
+                    mixerState.balance = evt.data.getInt8(19);
+                    mixerState.widthPct = evt.data.getUint8(20);
+                    mixerState.crossfeedLevel = evt.data.getUint8(21);
+                    updateMixerUI();
+
+                    const targetArr = (repCh === CH_RIGHT && !linkedStereo) ? rightBands : leftBands;
+                    if (numBands >= 1 && numBands <= 10 && targetArr.length !== numBands) {
+                        const fresh = createDefaultBands(numBands);
+                        targetArr.splice(0, targetArr.length, ...fresh);
+                    }
+                    if (bIdx < targetArr.length) {
+                        targetArr[bIdx].type = fType;
+                        targetArr[bIdx].freq = clamp(fHz, 20, 20000);
+                        targetArr[bIdx].gain = clamp(gDb, -24.0, 12.0);
+                        targetArr[bIdx].q = clamp(qVal, 0.10, 10.00);
+                    }
+
+                    if (linkedStereo) {
+                        rightBands = JSON.parse(JSON.stringify(leftBands));
+                        selectEditorChannel(CH_LINKED);
+                    } else if (selectedChannel === CH_LINKED) {
+                        selectEditorChannel(CH_LEFT);
+                    } else {
+                        currentBandCount = activeBands.length;
+                        renderBands();
+                    }
+                };
+
+                // Fetch initial Left/Right bands + Custom 2x2 Matrix
+                for (let b = 0; b < 10; b++) await sendGetBand(b, CH_LEFT);
+                for (let b = 0; b < 10; b++) await sendGetBand(b, CH_RIGHT);
+                await sendGetBand(0xFE, CH_LINKED);
+            } catch (err) {
+                log(`Connection error: ${err.message}`);
             }
         }
 
-        async function sendPreampLive(gain) {
-            if (!hidDevice || !hidDevice.opened) return;
-
-            const buffer = new ArrayBuffer(64);
-            const view = new DataView(buffer);
-
-            view.setUint16(0, WEBHID_MAGIC_16, true);
-            view.setUint8(2, CMD_SET_PREAMP_LIVE);
-            view.setInt16(8, Math.round(gain * 10), true);
-
-            try {
-                await hidDevice.sendReport(0x00, new Uint8Array(buffer));
-            } catch (e) {
-                log(`Send preamp error: ${e.message}`);
-            }
-        }
-
-        async function sendSelectProfile(slot) {
-            if (!hidDevice || !hidDevice.opened) return;
-
-            const buffer = new ArrayBuffer(64);
-            const view = new DataView(buffer);
-
-            view.setUint16(0, WEBHID_MAGIC_16, true);
-            view.setUint8(2, CMD_SELECT_PROFILE);
-            view.setUint8(3, slot);
-
-            try {
-                await hidDevice.sendReport(0x00, new Uint8Array(buffer));
-                log(`Switched to profile slot: ${slot}`);
-            } catch (e) {
-                log(`Select profile error: ${e.message}`);
-            }
-        }
+        btnConnect.onclick = connectDevice;
 
         btnSave.onclick = async () => {
             if (!hidDevice || !hidDevice.opened) {
                 alert("Please connect to ESP32-S3 via USB first.");
                 return;
             }
-
             const buffer = new ArrayBuffer(64);
             const view = new DataView(buffer);
-
             view.setUint16(0, WEBHID_MAGIC_16, true);
             view.setUint8(2, CMD_SAVE_TO_PRESET);
-
-            try {
-                await hidDevice.sendReport(0x00, new Uint8Array(buffer));
-                log("Active PEQ curve committed to hardware NVS flash!");
-                alert("Equalizer settings permanently saved to ESP32-S3 NVS flash!");
-            } catch (e) {
-                log(`Save to NVS error: ${e.message}`);
-            }
+            await sendReport64(buffer);
+            log("Committed Dual-Mono PEQ & Matrix config to NVS v2 flash!");
+            alert("Settings permanently saved to ESP32-S3 NVS flash!");
         };
 
         btnReset.onclick = async () => {
-            activeBands = createDefaultBands(currentBandCount);
+            const fresh = createDefaultBands(currentBandCount);
+            activeBands.splice(0, activeBands.length, ...fresh);
             preampDb = 0.0;
-            if (preampNum) preampNum.value = "0.0";
-            if (preampSlider) preampSlider.value = 0;
-            if (presetSelect) presetSelect.value = "3";
+            preampNum.value = "0.0";
+            preampSlider.value = 0;
+            presetSelect.value = "3";
             updateBandCountUI();
             renderBands();
-            for (let i = 0; i < currentBandCount; i++) {
-                await sendBandLive(i);
-            }
+            for (let i = 0; i < currentBandCount; i++) await sendBandLive(i);
             await sendPreampLive(0.0);
             log(`Reset ${currentBandCount} EQ bands to flat (0.0 dB).`);
         };
 
-        // Draw Interactive Frequency Response Visualizer
+        // Draw Interactive Frequency Response, Phase & Group Delay Visualizer
         function drawCurve() {
             const w = canvas.width;
             const h = canvas.height;
             ctx.clearRect(0, 0, w, h);
 
-            // Draw Frequency Grid Lines (Logarithmic)
             const fGrid = [50, 100, 250, 500, 1000, 2000, 4000, 8000, 16000];
             ctx.strokeStyle = "#161b22";
             ctx.lineWidth = 1;
@@ -1330,14 +1830,11 @@
                 ctx.moveTo(x, 0);
                 ctx.lineTo(x, h);
                 ctx.stroke();
-
                 ctx.fillStyle = "#30363d";
                 ctx.font = "9px monospace";
-                const label = f >= 1000 ? `${f / 1000}k` : `${f}`;
-                ctx.fillText(label, x + 2, h - 4);
+                ctx.fillText(f >= 1000 ? `${f / 1000}k` : `${f}`, x + 2, h - 4);
             });
 
-            // Draw Gain Grid Lines (0 dB, +6 dB, -6 dB, +12 dB, -12 dB, -18 dB)
             const dbLevels = [12, 6, 0, -6, -12, -18];
             dbLevels.forEach(db => {
                 const y = h / 2 - (db / 24) * (h / 2);
@@ -1347,20 +1844,16 @@
                 ctx.moveTo(0, y);
                 ctx.lineTo(w, y);
                 ctx.stroke();
-
                 ctx.fillStyle = (db === 0) ? "#8b949e" : "#484f58";
                 ctx.font = "10px monospace";
-                ctx.fillText(`${db > 0 ? '+' : ''}${db}dB`, 10, y - 2);
+                ctx.fillText(`${db > 0 ? '+' : ''}${db}dB`, 8, y - 2);
             });
 
-            // Draw Active Band Guide Lines (Bandwidth & Center Frequency Marker)
             const activeGuideIdx = (draggedBandIdx !== -1) ? draggedBandIdx : hoveredBandIdx;
             if (activeGuideIdx >= 0 && activeGuideIdx < activeBands.length) {
                 const b = activeBands[activeGuideIdx];
                 const nx = freqToX(b.freq);
                 const guideColor = BAND_COLORS[activeGuideIdx % BAND_COLORS.length];
-
-                // Faint vertical center line
                 ctx.save();
                 ctx.strokeStyle = guideColor;
                 ctx.lineWidth = 1;
@@ -1369,90 +1862,114 @@
                 ctx.moveTo(nx, 0);
                 ctx.lineTo(nx, h);
                 ctx.stroke();
-
-                // Bandwidth region for Peaking filters
-                if (b.type === 1 && b.q > 0.05) {
+                if ((b.type === 1 || b.type === 6 || b.type === 7) && b.q > 0.05) {
                     const bwOctaves = 1.0 / b.q;
-                    const fLow = b.freq * Math.pow(2, -bwOctaves / 2);
-                    const fHigh = b.freq * Math.pow(2, bwOctaves / 2);
-                    const xLow = freqToX(fLow);
-                    const xHigh = freqToX(fHigh);
-
+                    const xLow = freqToX(b.freq * Math.pow(2, -bwOctaves / 2));
+                    const xHigh = freqToX(b.freq * Math.pow(2, bwOctaves / 2));
                     ctx.fillStyle = "rgba(88, 166, 255, 0.05)";
                     ctx.fillRect(xLow, 0, Math.max(2, xHigh - xLow), h);
-
-                    ctx.strokeStyle = "rgba(240, 246, 252, 0.15)";
-                    ctx.beginPath();
-                    ctx.moveTo(xLow, 0); ctx.lineTo(xLow, h);
-                    ctx.moveTo(xHigh, 0); ctx.lineTo(xHigh, h);
-                    ctx.stroke();
                 }
                 ctx.restore();
             }
 
-            // Calculate Frequency Curve Points
-            const curvePoints = [];
-            for (let x = 0; x <= w; x++) {
+            // Evaluate exact RBJ response across canvas width
+            const samples = [];
+            const evalBands = abBypass ? [] : activeBands;
+            let prevPhase = 0;
+            let unwrappedOffset = 0;
+
+            for (let x = 0; x <= w; x += 2) {
                 const freq = 20 * Math.pow(1000, x / w);
-                let totalGain = preampDb;
+                const res = evalCascadeAtFreq(evalBands, freq, sampleRateHz);
+                const totalGain = preampDb + res.magDb;
 
-                activeBands.forEach(b => {
-                    if (b.type === 0 || b.gain === 0) return;
-                    const f0 = b.freq;
-                    const g = b.gain;
-                    const q = b.q;
+                let rawPhase = res.phaseRad;
+                if (samples.length > 0) {
+                    let diff = rawPhase - prevPhase;
+                    while (diff > Math.PI) { unwrappedOffset -= 2 * Math.PI; diff -= 2 * Math.PI; }
+                    while (diff < -Math.PI) { unwrappedOffset += 2 * Math.PI; diff += 2 * Math.PI; }
+                }
+                prevPhase = rawPhase;
 
-                    const ratio = freq / f0;
-                    const octDiff = Math.abs(Math.log2(ratio));
-                    const bandwidth = 1.0 / q;
-                    const effect = Math.exp(-Math.pow(octDiff / bandwidth, 2));
-
-                    if (b.type === 1) { // Peaking
-                        totalGain += g * effect;
-                    } else if (b.type === 2) { // Low Shelf
-                        if (freq <= f0) totalGain += g;
-                        else totalGain += g * effect;
-                    } else if (b.type === 3) { // High Shelf
-                        if (freq >= f0) totalGain += g;
-                        else totalGain += g * effect;
-                    }
+                samples.push({
+                    x,
+                    freq,
+                    yMag: (h / 2) - (totalGain / 24.0) * (h / 2),
+                    phaseUnwrapped: rawPhase + unwrappedOffset,
+                    phaseWrappedDeg: (rawPhase * 180) / Math.PI
                 });
-
-                const y = (h / 2) - (totalGain / 24.0) * (h / 2);
-                curvePoints.push({ x, y });
             }
 
-            // Fill Area Under Curve
+            // Optional Group Delay Trace (0..10 ms)
+            if (chkGroupDelay.checked && samples.length > 2) {
+                ctx.save();
+                ctx.strokeStyle = "#3fb950";
+                ctx.lineWidth = 1.4;
+                ctx.beginPath();
+                for (let i = 1; i < samples.length; i++) {
+                    const dPhi = samples[i].phaseUnwrapped - samples[i - 1].phaseUnwrapped;
+                    const dW = 2 * Math.PI * (samples[i].freq - samples[i - 1].freq);
+                    const gdMs = dW > 0 ? clamp((-dPhi / dW) * 1000.0, -2.0, 10.0) : 0.0;
+                    const yGd = h - ((gdMs / 10.0) * (h * 0.85)) - 8;
+                    if (i === 1) ctx.moveTo(samples[i].x, yGd);
+                    else ctx.lineTo(samples[i].x, yGd);
+                }
+                ctx.stroke();
+                ctx.fillStyle = "#3fb950";
+                ctx.font = "9px monospace";
+                ctx.fillText("10ms GD", w - 46, 14);
+                ctx.restore();
+            }
+
+            // Optional Phase Trace (-180° to +180°)
+            if (chkPhase.checked) {
+                ctx.save();
+                ctx.strokeStyle = "#d29922";
+                ctx.lineWidth = 1.4;
+                ctx.beginPath();
+                samples.forEach((s, idx) => {
+                    const yPh = (h / 2) - (s.phaseWrappedDeg / 180.0) * (h / 2 - 8);
+                    if (idx === 0) ctx.moveTo(s.x, yPh);
+                    else ctx.lineTo(s.x, yPh);
+                });
+                ctx.stroke();
+                ctx.fillStyle = "#d29922";
+                ctx.font = "9px monospace";
+                ctx.fillText("+180°", w - 34, 26);
+                ctx.fillText("-180°", w - 34, h - 14);
+                ctx.restore();
+            }
+
+            // Fill + Stroke Magnitude Curve
             const zeroY = (h / 2) - (preampDb / 24.0) * (h / 2);
             const grad = ctx.createLinearGradient(0, 0, 0, h);
-            grad.addColorStop(0, "rgba(88, 166, 255, 0.22)");
+            grad.addColorStop(0, abBypass ? "rgba(210, 153, 34, 0.16)" : "rgba(88, 166, 255, 0.22)");
             grad.addColorStop(1, "rgba(88, 166, 255, 0.02)");
             ctx.fillStyle = grad;
             ctx.beginPath();
             ctx.moveTo(0, zeroY);
-            curvePoints.forEach(p => ctx.lineTo(p.x, p.y));
+            samples.forEach(p => ctx.lineTo(p.x, p.yMag));
             ctx.lineTo(w, zeroY);
             ctx.closePath();
             ctx.fill();
 
-            // Draw Frequency Curve Outline
-            ctx.strokeStyle = "#58a6ff";
+            ctx.strokeStyle = abBypass ? "#d29922" : "#58a6ff";
             ctx.lineWidth = 2.5;
             ctx.beginPath();
-            curvePoints.forEach((p, idx) => {
-                if (idx === 0) ctx.moveTo(p.x, p.y);
-                else ctx.lineTo(p.x, p.y);
+            samples.forEach((p, idx) => {
+                if (idx === 0) ctx.moveTo(p.x, p.yMag);
+                else ctx.lineTo(p.x, p.yMag);
             });
             ctx.stroke();
 
-            // Draw Interactive Draggable Nodes
+            // Draggable Nodes
             activeBands.forEach((b, i) => {
                 const nx = freqToX(b.freq);
-                const ny = gainToY(b.gain);
+                const ny = gainToY(filterUsesGain(b.type) ? b.gain : 0.0);
                 const color = BAND_COLORS[i % BAND_COLORS.length];
                 const isHovered = (i === hoveredBandIdx);
                 const isDragged = (i === draggedBandIdx);
-                const isBypassed = (b.type === 0);
+                const isBypassed = (b.type === 0) || abBypass;
                 const radius = (isHovered || isDragged) ? 10 : 8;
 
                 ctx.save();
@@ -1460,7 +1977,6 @@
                     ctx.shadowColor = color;
                     ctx.shadowBlur = 12;
                 }
-
                 ctx.beginPath();
                 ctx.arc(nx, ny, radius, 0, 2 * Math.PI);
                 if (isBypassed) {
@@ -1479,7 +1995,6 @@
                 }
                 ctx.restore();
 
-                // Band Number Label Inside Node
                 ctx.fillStyle = isBypassed ? color : "#0b0e14";
                 ctx.font = "bold 9px -apple-system, BlinkMacSystemFont, sans-serif";
                 ctx.textAlign = "center";
@@ -1487,20 +2002,18 @@
                 ctx.fillText(`${i + 1}`, nx, ny);
             });
 
-            // Draw Tooltip for Active/Hovered Node
             if (activeGuideIdx >= 0 && activeGuideIdx < activeBands.length) {
                 const b = activeBands[activeGuideIdx];
                 const nx = freqToX(b.freq);
-                const ny = gainToY(b.gain);
-                const typeNames = ["Bypass", "Peaking", "Low Shelf", "High Shelf"];
-                const text = `Band ${activeGuideIdx + 1} (${typeNames[b.type]}): ${Math.round(b.freq)} Hz | ${b.gain >= 0 ? '+' : ''}${b.gain.toFixed(1)} dB | Q: ${b.q.toFixed(2)}`;
+                const ny = gainToY(filterUsesGain(b.type) ? b.gain : 0.0);
+                const tName = FILTER_NAMES[b.type] || "Filter";
+                const gTxt = filterUsesGain(b.type) ? ` | ${b.gain >= 0 ? '+' : ''}${b.gain.toFixed(1)} dB` : '';
+                const text = `B${activeGuideIdx + 1} (${tName}): ${Math.round(b.freq)} Hz${gTxt} | Q: ${b.q.toFixed(2)}`;
 
                 ctx.font = "11px -apple-system, BlinkMacSystemFont, sans-serif";
-                const textWidth = ctx.measureText(text).width;
-                const tipW = textWidth + 18;
+                const tipW = ctx.measureText(text).width + 18;
                 const tipH = 22;
-                let tipX = nx - tipW / 2;
-                tipX = clamp(tipX, 8, w - tipW - 8);
+                const tipX = clamp(nx - tipW / 2, 8, w - tipW - 8);
                 let tipY = ny - 24;
                 if (tipY < 6) tipY = ny + 14;
 
@@ -1509,11 +2022,8 @@
                 ctx.strokeStyle = BAND_COLORS[activeGuideIdx % BAND_COLORS.length];
                 ctx.lineWidth = 1.5;
                 ctx.beginPath();
-                if (ctx.roundRect) {
-                    ctx.roundRect(tipX, tipY, tipW, tipH, 4);
-                } else {
-                    ctx.rect(tipX, tipY, tipW, tipH);
-                }
+                if (ctx.roundRect) ctx.roundRect(tipX, tipY, tipW, tipH, 4);
+                else ctx.rect(tipX, tipY, tipW, tipH);
                 ctx.fill();
                 ctx.stroke();
 
@@ -1525,6 +2035,9 @@
             }
         }
 
+        updateChannelButtonsUI();
+        updateAbButtonUI();
+        updateMixerUI();
         renderBands();
     </script>
 </body>

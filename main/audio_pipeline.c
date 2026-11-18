@@ -16,12 +16,12 @@
 #define TAG "AUDIO_PIPELINE"
 
 static i2s_chan_handle_t s_tx_chan = NULL;
-static int s_current_sample_rate = 44100;
+static int s_current_sample_rate = 48000;
 static int s_master_volume = 80;       // Default master volume: 80%
 static bool s_is_muted = false;
 
-// Pre-calculated volume linear multiplier (0.0f to 1.0f)
-static float s_volume_factor = 0.80f;
+// Pre-calculated quadratic perceptual volume multiplier (0.0f to 1.0f)
+static float s_volume_factor = 0.64f;
 
 static inline int16_t clamp_s16(float v)
 {
@@ -91,7 +91,7 @@ esp_err_t audio_pipeline_init(int sample_rate)
 
     i2s_std_config_t std_cfg = {
         .clk_cfg = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate),
-        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
+        .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
         .gpio_cfg = {
             .mclk = I2S_GPIO_UNUSED,
             .bclk = (gpio_num_t)BOARD_I2S_BCK_PIN,
@@ -162,8 +162,9 @@ void audio_pipeline_set_volume(int volume_percent)
     if (volume_percent > 100) volume_percent = 100;
     s_master_volume = volume_percent;
 
-    // Linear mapping with logarithmic feel or direct linear ratio
-    s_volume_factor = (float)s_master_volume / 100.0f;
+    // Smooth quadratic perceptual taper (0.0f at 0%, 0.25f / -12 dB at 50%, 1.0f at 100%)
+    float norm = (float)s_master_volume / 100.0f;
+    s_volume_factor = norm * norm;
     ESP_LOGI(TAG, "Master volume set to %d%% (factor: %.2f)", s_master_volume, s_volume_factor);
 
     // Update onboard WS2812B aRGB LED brightness and color
@@ -182,49 +183,68 @@ int audio_pipeline_adjust_volume(int delta)
     return s_master_volume;
 }
 
+float audio_pipeline_get_volume_factor(void)
+{
+    if (s_is_muted || s_master_volume <= 0) {
+        return 0.0f;
+    }
+    return s_volume_factor;
+}
+
+void audio_pipeline_write_s32(const int32_t *data, size_t size_bytes)
+{
+    if (!s_tx_chan || !data || size_bytes == 0) {
+        return;
+    }
+
+    if (s_is_muted || s_master_volume == 0) {
+        static const int32_t silence[256 * 2] = {0};
+        size_t bytes_to_clear = size_bytes;
+        size_t written = 0;
+        while (bytes_to_clear > 0) {
+            size_t chunk = (bytes_to_clear > sizeof(silence)) ? sizeof(silence) : bytes_to_clear;
+            if (i2s_channel_write(s_tx_chan, silence, chunk, &written, portMAX_DELAY) != ESP_OK || written == 0) {
+                break;
+            }
+            bytes_to_clear -= written;
+        }
+        return;
+    }
+
+    size_t written = 0;
+    (void)i2s_channel_write(s_tx_chan, data, size_bytes, &written, portMAX_DELAY);
+    (void)written;
+}
+
 void audio_pipeline_write(const void *data, size_t size_bytes)
 {
     if (!s_tx_chan || !data || size_bytes == 0) {
         return;
     }
 
-    // If muted or volume is zero, write silence to keep DMA happy
-    if (s_is_muted || s_master_volume == 0) {
-        static const int16_t silence[256 * 2] = {0};
-        size_t bytes_to_clear = size_bytes;
-        size_t written = 0;
-        while (bytes_to_clear > 0) {
-            size_t chunk = (bytes_to_clear > sizeof(silence)) ? sizeof(silence) : bytes_to_clear;
-            i2s_channel_write(s_tx_chan, silence, chunk, &written, portMAX_DELAY);
-            bytes_to_clear -= written;
-        }
-        return;
-    }
-
-    // If at 100% volume, bypass software scaling for maximum efficiency
-    if (s_master_volume >= 100) {
-        size_t written = 0;
-        i2s_channel_write(s_tx_chan, data, size_bytes, &written, portMAX_DELAY);
-        return;
-    }
-
-    // Apply software volume scaling with saturation clamping
     const int16_t *src = (const int16_t *)data;
     size_t num_samples = size_bytes / sizeof(int16_t);
-    int16_t scaled_buf[256 * 2]; // 256 stereo pairs on stack
-    const size_t chunk_samples = sizeof(scaled_buf) / sizeof(int16_t);
+    int32_t out_buf[256 * 2]; // 256 stereo 32-bit frames on stack
+    const size_t chunk_samples = sizeof(out_buf) / sizeof(int32_t);
+    float vol = audio_pipeline_get_volume_factor();
 
     size_t samples_left = num_samples;
     size_t src_idx = 0;
 
     while (samples_left > 0) {
         size_t chunk = (samples_left > chunk_samples) ? chunk_samples : samples_left;
-        for (size_t i = 0; i < chunk; i++) {
-            float val = (float)src[src_idx++] * s_volume_factor;
-            scaled_buf[i] = clamp_s16(val);
+        if (vol <= 0.0f) {
+            memset(out_buf, 0, chunk * sizeof(int32_t));
+        } else {
+            for (size_t i = 0; i < chunk; i++) {
+                float val = (float)src[src_idx++] * vol;
+                int16_t s16 = clamp_s16(val);
+                out_buf[i] = ((int32_t)s16) << 16;
+            }
         }
         size_t written = 0;
-        i2s_channel_write(s_tx_chan, scaled_buf, chunk * sizeof(int16_t), &written, portMAX_DELAY);
+        (void)i2s_channel_write(s_tx_chan, out_buf, chunk * sizeof(int32_t), &written, portMAX_DELAY);
+        (void)written;
         samples_left -= chunk;
     }
 }

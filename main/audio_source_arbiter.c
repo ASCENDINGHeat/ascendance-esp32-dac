@@ -38,7 +38,7 @@ esp_err_t audio_source_arbiter_init(audio_source_t initial_source)
 audio_source_t audio_source_arbiter_get_current(char *out_name)
 {
     if (out_name) {
-        strncpy(out_name, source_names[s_current_source], 20);
+        snprintf(out_name, 20, "%s", source_names[s_current_source]);
     }
     return s_current_source;
 }
@@ -77,15 +77,18 @@ esp_err_t audio_source_arbiter_switch_to(audio_source_t new_source)
     char cur_eq[24] = "Flat";
     peq_dsp_get_current_preset(cur_eq);
 
+    int cur_sr = audio_pipeline_get_sample_rate();
+    if (cur_sr <= 0) cur_sr = 48000;
+
     ui_display_state_t uistate;
     memset(&uistate, 0, sizeof(uistate));
-    strncpy(uistate.mode_str, (new_source == AUDIO_SOURCE_STANDALONE) ? "USB DAC" :
-                              ((new_source == AUDIO_SOURCE_TONE_TEST) ? "Synth" : "Sweep"),
-            sizeof(uistate.mode_str));
-    strncpy(uistate.sample_rate_str, "48.0k 16b", sizeof(uistate.sample_rate_str));
-    strncpy(uistate.title, "ESP32-S3 Audio DSP", sizeof(uistate.title));
-    strncpy(uistate.subtitle, source_names[new_source], sizeof(uistate.subtitle));
-    strncpy(uistate.eq_preset, cur_eq, sizeof(uistate.eq_preset));
+    snprintf(uistate.mode_str, sizeof(uistate.mode_str), "%s",
+             (new_source == AUDIO_SOURCE_STANDALONE) ? "USB DAC" :
+             ((new_source == AUDIO_SOURCE_TONE_TEST) ? "Synth" : "Sweep"));
+    snprintf(uistate.sample_rate_str, sizeof(uistate.sample_rate_str), "%.1fk 24b", (float)cur_sr / 1000.0f);
+    snprintf(uistate.title, sizeof(uistate.title), "ESP32-S3 Audio DSP");
+    snprintf(uistate.subtitle, sizeof(uistate.subtitle), "%s", source_names[new_source]);
+    snprintf(uistate.eq_preset, sizeof(uistate.eq_preset), "%s", cur_eq);
     uistate.volume = audio_pipeline_get_volume();
     uistate.is_playing = true;
     uistate.is_muted = false;
@@ -97,13 +100,13 @@ esp_err_t audio_source_arbiter_switch_to(audio_source_t new_source)
 
     if (new_source == AUDIO_SOURCE_TONE_TEST) {
         // Play brief ascending arpeggio to audition active EQ profile
-        audio_pipeline_play_tone(440.0f, 150, 48000);
-        audio_pipeline_play_tone(554.37f, 150, 48000);
-        audio_pipeline_play_tone(659.25f, 250, 48000);
+        audio_pipeline_play_tone(440.0f, 150, cur_sr);
+        audio_pipeline_play_tone(554.37f, 150, cur_sr);
+        audio_pipeline_play_tone(659.25f, 250, cur_sr);
     } else if (new_source == AUDIO_SOURCE_SWEEP) {
         // Play a short 100Hz to 1kHz diagnostic sweep
         for (float f = 100.0f; f <= 1000.0f; f += 100.0f) {
-            audio_pipeline_play_tone(f, 50, 48000);
+            audio_pipeline_play_tone(f, 50, cur_sr);
         }
     }
 

@@ -58,7 +58,7 @@ ESP-IDF integrates **TinyUSB** via the `esp_tinyusb` component.
 To equip the project with TinyUSB support, declare the dependency:
 ```yaml
 dependencies:
-  espressif/esp_tinyusb: "^1.4.0"
+  espressif/esp_tinyusb: "^2.3.0"
 ```
 
 ### 3.2 Kconfig Requirements (`sdkconfig.defaults`)
@@ -139,21 +139,21 @@ Commercial audiophile dongle DACs with built-in DSP (such as the **FiiO JA11**, 
   │   ┌───────────────────────────────────┬─────────────────────────────────┐   │
   │   │ INTERFACE 0 & 1: USB AUDIO (UAC)  │ INTERFACE 2: VENDOR USB HID     │   │
   │   │ • Standard UAC 1.0 Isochronous    │ • Custom 64-byte Raw Reports    │   │
-  │   │ • 16-bit / 48 kHz Stereo Stream   │ • WebHID Compatible (Driverless)│   │
-  │   │ • Bit-Perfect PCM Playback        │ • Live PEQ Tuning & Curve Read  │   │
+  │   │ • 24-bit / 44.1, 48 & 96 kHz PCM  │ • WebHID Compatible (Driverless)│   │
+  │   │ • 16 KB SW FIFO Ringbuffer        │ • Live PEQ/Matrix Tuning & Read │   │
   │   └─────────────────┬─────────────────┴─────────────────┬───────────────┘   │
   │                     │                                   │                   │
   │                     │ Audio Frames (1 ms)               │ Tuning Packets    │
   │                     ▼                                   ▼                   │
   │         ┌───────────────────────┐           ┌───────────────────────┐       │
-  │         │ FreeRTOS Audio Buffer │           │ TinyUSB tud_hid_cb    │       │
+  │         │ TinyUSB 16 KB SW FIFO │           │ TinyUSB tud_hid_cb    │       │
   │         │ Elastic Ringbuffer    │           │ • Updates SRAM Biquads│       │
-  │         └───────────┬───────────┘           │ • Resets 3s NVS Timer │       │
+  │         └───────────┬───────────┘           │ • Explicit NVS Commit │       │
   │                     │                       └───────────┬───────────┘       │
   │                     ▼                                   ▼                   │
   │         ┌───────────────────────────────────────────────────────┐           │
-  │         │ CORE 1: DSP PARAMETRIC EQUALIZER ENGINE (esp-dsp SIMD)│           │
-  │         │   15 ms Linear Crossfade -> I2S Output -> PCM5102A    │           │
+  │         │ CORE 1: DSP PEQ + MATRIX + CROSSFEED ENGINE           │           │
+  │         │ 15 ms Crossfade -> 32-bit I2S MSB -> PCM5102A         │           │
   │         └───────────────────────────────────────────────────────┘           │
   └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -185,40 +185,44 @@ enum {
     ITF_NUM_TOTAL
 };
 
-#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_AUDIO_HEADPHONE_STEREO_DESC_LEN + TUD_HID_INOUT_DESC_LEN)
+#define CONFIG_TOTAL_LEN  (TUD_CONFIG_DESC_LEN + TUD_AUDIO10_SPEAKER_STEREO_TRIRATE_DESC_LEN + TUD_HID_INOUT_DESC_LEN)
 ```
 
 ---
 
 ### 5.3 64-Byte Raw HID Tuning Packet Schema
 
-Tuning commands and profile queries travel in fixed 64-byte packets:
+Tuning commands and profile queries travel in fixed 64-byte packets (`webhid_peq_packet_t` in [`main/webhid_peq.h`](../../main/webhid_peq.h)):
 
 ```c
-#define PEQ_HID_REPORT_SIZE  64
-#define PEQ_HID_MAGIC        0x4551  // "EQ" in ASCII
+#define WEBHID_PEQ_REPORT_SIZE  64
+#define WEBHID_MAGIC_16         0x4551  // "EQ" in ASCII
 
 typedef enum {
-    CMD_GET_ACTIVE_PROFILE = 0x01,  // Request current settings
-    CMD_SET_BAND_LIVE      = 0x02,  // Real-time slider move (volatile in SRAM only, 0 flash writes)
-    CMD_SET_PREAMP_LIVE    = 0x03,  // Preamp headroom change (volatile in SRAM only)
-    CMD_SELECT_PROFILE     = 0x04,  // Switch active slot (0=User, 1..3=Presets)
-    CMD_SAVE_TO_PRESET     = 0x05,  // Explicit flash commit to target preset slot (Delta-checked)
-    CMD_RESET_TO_PRESET    = 0x06,  // Reset user slot from factory preset
-    CMD_SET_BAND_COUNT     = 0x07,  // Dynamically configure active band count (1 to 10 bands)
-} peq_hid_cmd_t;
+    WEBHID_CMD_GET_ACTIVE_PROFILE = 0x01,  // Request current settings (band_idx=0xFE queries custom matrix)
+    WEBHID_CMD_SET_BAND_LIVE      = 0x02,  // Real-time slider move (volatile in SRAM only, 0 flash writes)
+    WEBHID_CMD_SET_PREAMP_LIVE    = 0x03,  // Preamp headroom change (volatile in SRAM only)
+    WEBHID_CMD_SELECT_PROFILE     = 0x04,  // Switch active slot (0=Flat, 1=Bass Boost, 2=Harman, 3=User Custom)
+    WEBHID_CMD_SAVE_TO_PRESET     = 0x05,  // Explicit flash commit to NVS v2 (CRC32 + Delta-checked)
+    WEBHID_CMD_RESET_TO_PRESET    = 0x06,  // Reset user slot from factory preset
+    WEBHID_CMD_SET_BAND_COUNT     = 0x07,  // Dynamically configure active band count (1 to 10 bands)
+    WEBHID_CMD_SET_AB_BYPASS      = 0x08,  // Instant A/B bypass toggle (transient, 15 ms crossfade)
+    WEBHID_CMD_SET_DUAL_MONO      = 0x09,  // Linked Stereo (1) vs Independent Dual-Mono L/R (0)
+    WEBHID_CMD_SET_MIXER          = 0x13   // 2x2 Channel Matrix & Chu Moy Crossfeed configuration
+} webhid_cmd_t;
 
 typedef struct __attribute__((packed)) {
-    uint16_t magic;         // PEQ_HID_MAGIC (0x4551)
-    uint8_t  cmd;           // peq_hid_cmd_t
-    uint8_t  band_idx;      // 0 to 9 (or target count for CMD_SET_BAND_COUNT, or slot for CMD_SAVE_TO_PRESET)
-    uint8_t  filter_type;   // 1=Peaking, 2=LowShelf, 3=HighShelf, 4=HPF, 5=LPF
-    uint8_t  enabled;       // 1=Active, 0=Bypassed
-    uint16_t freq_hz;       // 20 to 20,000 Hz
-    int16_t  gain_db_x10;   // e.g. +35 = +3.5 dB, -45 = -4.5 dB
-    uint16_t q_x100;        // e.g. 141 = 1.41, 71 = 0.71
-    uint8_t  reserved[52];  // Padded to 64 bytes (reserved[0] = active dynamic num_bands)
-} peq_hid_packet_t;
+    uint16_t magic;         // WEBHID_MAGIC_16 (0x4551) [bytes 0..1]
+    uint8_t  cmd;           // webhid_cmd_t             [byte 2]
+    uint8_t  band_idx;      // Band/mode/toggle arg     [byte 3]
+    uint8_t  filter_type;   // 0=Bypass..7=BPF (or int8 balance for 0x13) [byte 4]
+    uint8_t  enabled;       // 1=Active, 0=Bypass (or width_pct for 0x13) [byte 5]
+    uint16_t freq_hz;       // 20 to 20,000 Hz (or crossfeed_level for 0x13) [bytes 6..7]
+    int16_t  gain_db_x10;   // e.g. +35 = +3.5 dB       [bytes 8..9]
+    uint16_t q_x100;        // e.g. 141 = 1.41          [bytes 10..11]
+    uint8_t  reserved[52];  // bytes 12..63: [12]=num_bands, [13]=ch, [14]=flags, [15]=preset,
+                            //   [16..17]=preamp_x10, [18..21]=mixer, [22..25]=sample_rate_hz (u32 LE)
+} webhid_peq_packet_t;
 ```
 
 ---
@@ -356,8 +360,8 @@ class UsbDacTuner {
         const gainDb = data.getInt16(8, true) / 10.0;
         const qFactor = data.getUint16(10, true) / 100.0;
 
-        // Byte offset 16 (reserved[0]) carries the active dynamic band count
-        const activeBandCount = data.getUint8(16);
+        // Byte offset 12 (reserved[0]) carries the active dynamic band count
+        const activeBandCount = data.getUint8(12);
         if (activeBandCount >= 1 && activeBandCount <= 10) {
             this.syncBandCountUI(activeBandCount);
         }
@@ -368,27 +372,15 @@ class UsbDacTuner {
 ```
 
 > [!TIP]
-> **Complete WebHID Tuner Web App:**  
-> A production, standalone single-page WebHID tuner is provided in [`tools/webhid_tuner/index.html`](../../tools/webhid_tuner/index.html). It features:
-> * **Interactive HTML5 Canvas Frequency Response Visualizer:**
->   * **Draggable Control Nodes:** Direct manipulation of band center points on the response graph ($X$-axis: logarithmic frequency 20 Hz – 20 kHz; $Y$-axis: gain -24 dB to +12 dB).
->   * **Mouse Wheel / Scroll Q Adjustment:** Hovering over any control node and scrolling adjusts filter Q Factor in real time ($0.10$ to $10.00$) with $-3\text{ dB}$ bandwidth guides.
->   * **Live Tooltips & Dynamic Bandwidth Guides:** Hovering or dragging displays sleek HUD tooltips with band metrics, center frequency guide lines, and shaded $-3\text{ dB}$ passband visualizer.
->   * **Double-Click Actions:** Double-clicking an existing node resets its gain to 0.0 dB; double-clicking empty canvas space instantiates a new band at that frequency and gain.
-> * **Custom & Dynamic Band Count Configuration (1 to 10 Bands):**
->   * **Custom Number Input Stepper:** Type any number of bands between 1 and 10 with instant DSP hardware synchronization.
->   * **`+ Add Band` Button:** Appends a new band placed at the optimal octave gap among existing filters.
->   * **Per-Card Delete Button (`✕`):** Remove individual bands down to a minimum of 1 band.
->   * **Preset Selectors:** Quick selection between 3-Band (Tone), 5-Band (Standard), 7-Band (Extended), and 10-Band (Pro Mastering) with automatic ISO standard frequency allocation.
-> * **Custom Value (Within Bound) Numeric Inputs:** Direct numeric input fields for every band parameter alongside range sliders with live two-way binding:
->   * **Frequency:** `20 Hz` to `20,000 Hz` (Step: `1 Hz`)
->   * **Gain:** `-24.0 dB` to `+12.0 dB` (Step: `0.1 dB`)
->   * **Q Factor:** `0.10` to `10.00` (Step: `0.01` precision)
->   * **Preamp Headroom:** `-12.0 dB` to `0.0 dB` (Step: `0.1 dB`)
-> * **Input Validation & Bound Clamping:** Typing an out-of-range value triggers CSS `:invalid` feedback; on blur or Enter, the value is clamped strictly within safe mathematical bounds (`clamp(val, min, max)`).
-> * **60 FPS Live Dragging & Auditioning:** Volatile SRAM mode guarantees **0 flash wear** while dragging nodes or sliders.
-> * **Bidirectional State Synchronization:** Reads hardware state on connection and reflects hardware reports in real time.
-> * **Hardware NVS Flash Persistence:** Commits active settings via explicit "Save to Hardware NVS" with CRC32 and flash delta checks.
+> **Complete WebHID Tuner Web App & PWA:**  
+> A production, standalone single-page WebHID tuner & installable PWA is provided in [`tools/webhid_tuner/index.html`](../../tools/webhid_tuner/index.html) (`manifest.json`, `sw.js`, `icon.svg`). It features:
+> * **Interactive HTML5 Canvas Frequency Response, Phase & Group Delay Visualizer:**
+>   * **Draggable Control Nodes:** Direct manipulation of band center points across all **8 RBJ filter topologies** (`Bypass`, `Peaking`, `Low Shelf`, `High Shelf`, `High Pass`, `Low Pass`, `Notch`, `Band Pass`) plus optional Phase (`-180°..+180°`) and Group Delay (`ms`) traces.
+>   * **Mouse Wheel / Scroll Q Adjustment & Double-Click Actions:** Scroll to adjust `Q` (`0.10..10.00`) with `-3 dB` guides; double-click node to reset gain or empty canvas to add a band.
+> * **Dual-Mono L/R PEQ & Preamp-Normalized A/B Toggle:** Switch between **Linked Stereo** and independent **Left / Right** 10-band curves, or toggle **A/B Bypass** (`0x08`) transiently over 15 ms crossfade.
+> * **2×2 Channel Matrix & Chu Moy Crossfeed:** Stereo, Mono Mix, L-Only, R-Only, Swap L/R, Mid-Side Width (`0–200%`), L/R Balance, Custom `2×2` coefficients, and 3-level Chu Moy headphone crossfeed (`Off / Mild / Medium`).
+> * **Equalizer APO / AutoEQ Import & Export:** One-click `.txt` (APO syntax) and `.json` snapshot import/export with clamped `Freq` (`20..20,000 Hz`), `Gain` (`-24.0..+12.0 dB`), `Q` (`0.10..10.00`), and `Preamp` (`-12.0..0.0 dB`).
+> * **60 FPS Volatile Auditioning & NVS v2 Commit:** Streams live updates to SRAM with **0 flash wear**; commits Dual-Mono + Matrix settings to NVS (`user_cfg_v2`) via explicit Save with CRC32 and delta checks.
 
 ---
 
@@ -396,27 +388,26 @@ class UsbDacTuner {
 
 ### 6.1 Critical Invariants
 1. **Never Reconfigure GPIO 19 & 20:** When USB is enabled, GPIO 19 (`USB_D-`) and GPIO 20 (`USB_D+`) are locked to the internal USB-OTG PHY. Never assign I2S, I2C, or buttons to these pins.
-2. **Interrupt Context Rules:** The TinyUSB callback `tud_audio_rx_done_cb` executes in interrupt context. Never perform blocking operations (`vTaskDelay`, blocking `i2s_channel_write`) inside this callback; write directly into an intermediate ringbuffer using ISR-safe primitives (`xRingbufferSendFromISR`).
-3. **Volatile Auditioning & Explicit Save Rule:** `tud_hid_set_report_cb` MUST update volatile SRAM coefficients only on `CMD_SET_BAND_LIVE`. Committing to NVS flash occurs ONLY on explicit `CMD_SAVE_TO_PRESET` commands (accompanied by Delta checking) to guarantee zero unneeded flash wear during slider dragging.
+2. **Interrupt Context Rules:** Avoid blocking calls inside USB callbacks; enqueue PCM frames into TinyUSB's `16,384`-byte SW FIFO ringbuffer and defer Core 1 I2S reclocking cleanly via spinlock-guarded pending sample-rate flags.
+3. **Volatile Auditioning & Explicit Save Rule:** `tud_hid_set_report_cb` MUST update volatile SRAM state only on live commands (`0x02`, `0x03`, `0x08`, `0x09`, `0x13`). Committing to NVS v2 occurs ONLY on explicit `WEBHID_CMD_SAVE_TO_PRESET` (`0x05`) with CRC32 + `memcmp` delta checking.
 
 ### 6.2 Implementation Checklist
-Future AI agents tasked with generating or refactoring this project into a USB DAC should follow this sequential execution plan:
+Future AI agents tasked with maintaining or extending this USB DAC stack should follow this architecture:
 
-- [x] **Step 1:** Add `espressif/esp_tinyusb: "^1.4.0"` to `main/idf_component.yml`.
-- [x] **Step 2:** Configure root `CMakeLists.txt` & `sdkconfig`:
-  - Enable `CFG_TUD_AUDIO=1`, `CFG_TUD_AUDIO_FUNC_1_SAMPLE_RATE=48000`, and `CFG_TUD_HID=1`.
+- [x] **Step 1:** Add `espressif/esp_tinyusb: "^2.3.0"` to `main/idf_component.yml`.
+- [x] **Step 2:** Configure root `CMakeLists.txt` & `sdkconfig.defaults`:
+  - Enable `CFG_TUD_AUDIO=1`, `CFG_TUD_AUDIO_FUNC_1_SAMPLE_RATE=96000`, `EP_OUT_SZ_MAX=588`, `EP_OUT_SW_BUF_SZ=16384`, `N_BYTES_PER_SAMPLE_RX=3`, `RESOLUTION_RX=24`, and `CONFIG_FREERTOS_HZ=1000`.
   - Set USB Device Vendor ID (`0x303A`), Product ID (`0x4002`), and Device Strings (`"Ascension Audio ESP32-S3 Hi-Fi DSP DAC"`).
 - [x] **Step 3:** Implement the Composite USB descriptor:
   - 1 AC (Audio Control) Interface (with Volume and Mute feature units).
-  - 1 AS (Audio Streaming) Interface (16-bit stereo, 48 kHz Adaptive Isochronous OUT).
+  - 1 AS (Audio Streaming) Interface (24-bit stereo, 44.1 / 48.0 / 96.0 kHz Adaptive Isochronous OUT).
   - 1 HID Interface (64-byte Generic IN/OUT raw report descriptor for WebHID).
 - [x] **Step 4:** Implement TinyUSB Audio & HID callbacks:
   - Audio: `tud_audio_set_itf_cb`, `tud_audio_set_req_entity_cb`, `tud_audio_get_req_entity_cb`, `tud_audio_set_req_ep_cb`, `tud_audio_get_req_ep_cb`.
   - HID: `tud_hid_set_report_cb`, `tud_hid_get_report_cb`, `tud_hid_descriptor_report_cb`.
 - [x] **Step 5:** Create the audio pipeline routing on Core 1:
-  - In `AUDIO_SOURCE_STANDALONE`, stream from `tud_audio_read()` into `peq_dsp_process_interleaved_s16()` and feed `audio_pipeline_write()`.
-  - Route through the dynamic PEQ engine with 15ms click-free crossfade.
-- [x] **Step 6:** Verify compilation with `idf.py build`, flash via UART, and verify driverless UAC 1.0 soundcard + WebHID live tuning.
+  - In `AUDIO_SOURCE_STANDALONE`, check `webhid_peq_consume_pending_sample_rate()` for zero-pop reclocking, then stream 24-bit PCM from `webhid_peq_audio_read()` through `peq_dsp_process_interleaved_s24_to_s32()` into `audio_pipeline_write_s32()` (32-bit I2S slots).
+- [x] **Step 6:** Verify compilation with `idf.py build`, flash via UART, and verify driverless UAC 1.0 tri-rate soundcard + WebHID live tuning.
 
 ---
 

@@ -31,21 +31,21 @@ To guarantee glitch-free audio playback at low latency while serving USB endpoin
        Core 0: System, Control & Visual Subsystems   Core 1: Hard Real-Time Audio DSP & I2S
      ┌───────────────────────────────────────────┐  ┌─────────────────────────────────────┐
      │ • TinyUSB Device Stack Task (Prio 5)      │  │ • High-Priority Audio DSP (Prio 10) │
-     │ • Control Event Dispatcher (Prio 4)       │  │ • UAC 1.0 Isochronous FIFO Read    │
-     │ • Hardware PCNT Poller & Debounce (Prio 3)│  │ • 1-10 Band PEQ Biquads (Float)    │
-     │ • SSD1306 128x64 OLED Render (Prio 2)     │  │ • 15 ms Click-Free Crossfader Blend │
-     │ • NVS Flash Persistence (Deferred/Delta)  │  │ • Saturation Clamping [-32768,32767]│
-     │ • Audio Source Arbiter State Machine      │  │ • Master I2S0 DMA Streamer (48 kHz) │
+     │ • Control Event Dispatcher (Prio 4)       │  │ • Safe Zero-Pop Sample Rate Reclock │
+     │ • Hardware PCNT Poller & Debounce (Prio 3)│  │ • Dual-Mono L/R PEQ + Matrix/Xfeed  │
+     │ • SSD1306 128x64 OLED Render (Prio 2)     │  │ • 15 ms Crossfade + A/B Toggle      │
+     │ • NVS v2 Persistence (CRC32 + V1 Migrate) │  │ • 24-bit Clamping -> 32-bit I2S MSB │
+     │ • Audio Source Arbiter State Machine      │  │ • Master I2S0 DMA (44.1/48/96 kHz)  │
      └───────────────────────────────────────────┘  └─────────────────────────────────────┘
 ```
 
 | Task Identifier | Core Affinity | Priority | Stack Budget | Heap Allocation | Input Source | Output Target | Lifecycle Status |
 | :--- | :---: | :---: | :---: | :--- | :--- | :--- | :---: |
-| **`audio_dsp_task`** | **Core 1** | **10** | **4,096 B** | Internal DRAM / Static | UAC 1.0 FIFO / Synth | I2S0 DMA Channel | **Active Production** |
+| **`audio_dsp_task`** | **Core 1** | **10** | **8,192 B** | Internal DRAM / Static | UAC 1.0 FIFO / Synth | I2S0 DMA Channel | **Active Production** |
 | **`tinyusb_task`** | **Core 0** | **5** | **4,096 B** | Internal DRAM | USB OTG PHY (GPIO 19/20) | FreeRTOS Audio Buffer | **Active Production** |
-| **`ctrl_disp`** | **Core 0** | **4** | **3,072 B** | Internal DRAM | Control Event Queue | Arbiter / PEQ / OLED | **Active Production** |
-| **`pcnt_worker`** | **Core 0** | **3** | **2,048 B** | Internal DRAM | PCNT Unit 0 / GPIO ISR | Control Event Queue | **Active Production** |
-| **`oled_task`** | **Core 0** | **2** | **3,072 B** | Internal DRAM | Display State Struct | I2C Bus (`0x3C`, SDA=8, SCL=9) | **Active Production** |
+| **`ctrl_disp`** | **Core 0** | **4** | **4,096 B** | Internal DRAM | Control Event Queue | Arbiter / PEQ / OLED | **Active Production** |
+| **`controls_task`** | **Core 0** | **3** | **3,072 B** | Internal DRAM | PCNT Unit 0 / GPIO Poll (50 Hz) | Control Event Queue | **Active Production** |
+| **`oled_ui_task`** | **Core 0** | **2** | **4,096 B** | Internal DRAM | Display State Struct | I2C Bus (`0x3C`, SDA=8, SCL=9) | **Active Production** |
 | `wifi_task` *(Aux)* | Core 0 | 23 | System | Internal DRAM | 2.4 GHz RF PHY | IP Stack (`esp_netif`) | Auxiliary / Future |
 | `audio_stream_task` *(Aux)*| Core 1 | 5 | 32 KB | DRAM / PSRAM | HTTP Socket / Wi-Fi | I2S Output Buffer | Auxiliary / Future |
 | `sd_reader_task` *(Aux)* | Core 0 | 8 | 8 KB | 128 KB Octal PSRAM | MicroSD Card Slot 1 | Decoder Queue | Auxiliary / Future |
@@ -58,11 +58,11 @@ Autonomous agents modifying or generating code in this repository MUST comply wi
 
 1. **Octal PSRAM Pin Protection (FATAL):** Never allocate, toggle, or mux `GPIO 33, 34, 35, 36, 37`. These are hardwired to the high-speed Octal PSRAM (`APS6404L`). Any access causes an immediate catastrophic kernel panic (`Cache disabled but cached memory region accessed`).
 2. **Core 1 Isolation for Audio DSP:** All time-critical audio decoding, biquad DSP calculations, and I2S DMA writes must be pinned to **Core 1** at high priority (Priority 10). Core 0 handles USB event loops, NVS flash commits, and display I/O.
-3. **No Dynamic Allocations in Audio Loops:** Never call `malloc()`, `calloc()`, or `realloc()` inside real-time audio processing loops (`audio_dsp_task`, `peq_dsp_process_interleaved_s16`). Pre-allocate all buffers during initialization.
-4. **Saturation Clamping:** All floating-point DSP output samples must be clamped to signed 16-bit integer boundaries (`[-32768, 32767]`) before casting to `int16_t` to prevent catastrophic numerical rollover distortion.
+3. **No Dynamic Allocations in Audio Loops:** Never call `malloc()`, `calloc()`, or `realloc()` inside real-time audio processing loops (`audio_dsp_task`, `peq_dsp_process_interleaved_s24_to_s32`). Pre-allocate all buffers in static BSS or during initialization.
+4. **Saturation Clamping:** All floating-point DSP output samples must be clamped to signed 24-bit full-scale bounds (`[-8388608.0f, 8388607.0f]`) before shifting MSB-aligned into 32-bit I2S slots (`int32_t`).
 5. **Driver Gating Before Reclocking:** Before changing I2S sample rates (`i2s_channel_reconfig_std_clock`), the channel MUST be stopped with `i2s_channel_disable()`. Reclocking an active channel triggers an `ESP_ERR_INVALID_STATE` assertion.
 6. **Hardware Soft Mute (`GPIO 7: XMT`) Sequencing:** When switching audio sources or sample rates, assert hardware mute (`GPIO 7 LOW`) for $\ge 15\text{ ms}$, reconfigure clocks/streams, flush DMA, and release mute (`GPIO 7 HIGH`).
-7. **Volatile SRAM Live Tuning vs Explicit Flash Commits:** Real-time PEQ slider adjustments via WebHID must update active biquad coefficients in volatile SRAM with double-buffered 15 ms crossfading. NVS flash writes are ONLY permitted on explicit user save commands with `memcmp()` delta checks.
+7. **Volatile SRAM Live Tuning vs Explicit Flash Commits:** Real-time PEQ/Matrix/A-B adjustments via WebHID must update active state in volatile SRAM with double-buffered 15 ms crossfading. NVS v2 (`user_cfg_v2`) flash writes are ONLY permitted on explicit user save commands with `memcmp()` delta checks.
 8. **I2C Display Address Default:** Standard 4-pin monochrome I2C OLED modules use address **`0x3C`** on GPIO 8 (SDA) and GPIO 9 (SCL).
 9. **Zero External MCLK Configuration:** The Texas Instruments GY-PCM5102A DAC has its `SCK` jumper tied to `L` (GND) to utilize its internal low-jitter PLL derived directly from BCK (GPIO 6). Never route an external MCLK line.
 10. **Through-Hole & Hardware Pull-Up Respect:** Respect all hardware pull-up resistors on GPIO 15, 16, 17, 18, and 10. For `DSP+DAC+SCREEN.svg` (Rev 1.1), note that MicroSD is omitted, dual buttons `SW6` (`GPIO 18`) and `SW8` (`GPIO 10`) have 10k pull-ups (`R8`, `R12`), and `GPIO 13, 14, 21` are free for expansions.
@@ -76,10 +76,10 @@ Detailed function specifications are organized into the following modular refere
 ### Active Production Subsystems
 | Module Guide | Primary Source File(s) | Functional Scope | Key Functions Documented |
 | :--- | :--- | :--- | :--- |
-| **[01. Audio Pipeline & I2S Driver](01_audio_pipeline_i2s.md)** | `main/audio_pipeline.c`, `driver/i2s_std.h` | I2S master standard mode, DMA configuration, perceptual volume scaling, startup chime, hardware soft mute. | `audio_pipeline_init`, `audio_pipeline_write`, `audio_pipeline_set_mute`, `audio_pipeline_adjust_volume`, `audio_pipeline_play_startup_chime` |
-| **[03. Parametric Equalizer (PEQ) DSP](03_parametric_eq_dsp.md)** | `main/peq_dsp.c`, `main/peq_dsp.h` | RBJ audio cookbook formulas, Direct Form II Transposed biquads, dynamic 1-10 bands, volatile live tuning, 15 ms click-free crossfade, NVS preset storage. | `peq_dsp_init`, `peq_dsp_process_interleaved_s16`, `peq_dsp_set_band`, `peq_dsp_set_band_count`, `peq_dsp_select_preset`, `peq_dsp_save_user_profile_nvs` |
-| **[04. USB Audio Class & WebHID](04_usb_audio_webhid.md)** | `main/webhid_peq.c`, `main/webhid_peq.h` | UAC 1.0 isochronous audio endpoint (48 kHz / 16-bit stereo), host volume/mute synchronization, 64-byte raw WebHID live tuning interface. | `webhid_peq_init`, `webhid_peq_audio_read`, `webhid_peq_audio_available`, `tud_audio_set_req_entity_cb`, `tud_hid_set_report_cb`, `webhid_peq_send_band_report` |
-| **[06. UI Display & Hardware Controls](06_ui_display_controls.md)** | `main/controls.c`, `main/oled_display.c` | SSD1306 128x64 OLED driver (`0x3C`), volume/EQ overlay popups, PCNT hardware rotary decoder, switch debouncing, mode buttons. | `controls_init`, `oled_display_init`, `oled_display_set_state`, `oled_display_show_volume_overlay`, `oled_display_show_eq_overlay` |
+| **[01. Audio Pipeline & I2S Driver](01_audio_pipeline_i2s.md)** | `main/audio_pipeline.c`, `driver/i2s_std.h` | I2S master 32-bit slot mode, DMA configuration, perceptual volume taper, startup chime, soft mute. | `audio_pipeline_init`, `audio_pipeline_write_s32`, `audio_pipeline_set_mute`, `audio_pipeline_set_sample_rate`, `audio_pipeline_play_startup_chime` |
+| **[03. Parametric Equalizer (PEQ) DSP](03_parametric_eq_dsp.md)** | `main/peq_dsp.c`, `main/peq_dsp.h` | 8 RBJ topologies, Dual-Mono L/R PEQ, Matrix/Crossfeed, A/B bypass, 15 ms crossfade, NVS v2 storage. | `peq_dsp_init`, `peq_dsp_process_interleaved_s24_to_s32`, `peq_dsp_set_ab_bypass`, `peq_dsp_set_linked_stereo`, `peq_dsp_set_mixer`, `peq_dsp_save_user_profile_nvs` |
+| **[04. USB Audio Class & WebHID](04_usb_audio_webhid.md)** | `main/webhid_peq.c`, `main/webhid_peq.h` | UAC 1.0 tri-rate isochronous endpoint (24-bit 44.1/48/96 kHz), host sync, 64-byte WebHID tuner. | `webhid_peq_init`, `webhid_peq_audio_read`, `webhid_peq_consume_pending_sample_rate`, `tud_audio_set_req_ep_cb`, `tud_hid_set_report_cb`, `webhid_peq_send_band_report_ch` |
+| **[06. UI Display & Hardware Controls](06_ui_display_controls.md)** | `main/controls.c`, `main/oled_display.c` | SSD1306 128x64 OLED driver (`0x3C`), dynamic rate badge, PCNT rotary decoder, debounced buttons. | `controls_init`, `oled_display_init`, `oled_display_set_state`, `oled_display_set_sample_rate`, `oled_display_show_eq_overlay`, `oled_display_set_eq_preset` |
 | **[07. Audio Source Arbiter](07_audio_source_arbiter.md)** | `main/audio_source_arbiter.c` | Multi-mode audio router (USB DAC ↔ Tone Arpeggio ↔ Sweep), zero-pop 4-phase muting sequence. | `audio_source_arbiter_init`, `audio_source_arbiter_cycle`, `audio_source_arbiter_get_current` |
 
 ### Auxiliary & Future Subsystems

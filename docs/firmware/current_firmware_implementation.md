@@ -13,24 +13,25 @@ The firmware implements **Schematic 2 (`docs/schematics/DSP+DAC+SCREEN.svg`)**, 
  ┌─────────────────────────────────────────────────────────────────────────────┐
  │ Native USB OTG (GPIO 19: D-, GPIO 20: D+)                                   │
  │   • Interface 0: USB Audio Control (AC) - Mute & Volume Entity              │
- │   • Interface 1: USB Audio Streaming (AS) - 48 kHz / 16-bit Stereo PCM      │
+ │   • Interface 1: USB Audio Streaming (AS) - 24-bit / 44.1, 48 & 96 kHz PCM  │
  │   • Interface 2: Vendor HID (WebHID) - 64-Byte Raw Report Bi-Directional    │
  ├─────────────────────────────────────────────────────────────────────────────┤
  │ Core 0 (System & Control Subsystems)                                        │
- │   • TinyUSB Background Task & Event Dispatcher                              │
+ │   • TinyUSB Background Task & Event Dispatcher (16 KB UAC SW FIFO)          │
  │   • Hardware PCNT Rotary Encoder Decoder (GPIO 15/16) + Push Switch (17)    │
- │   • Mode Pushbutton Handler (GPIO 18)                                       │
+ │   • Dual Mode/Nav Pushbuttons (`SW6` GPIO 18, `SW8` GPIO 10)                │
  │   • SSD1306 128x64 OLED Display Driver (I2C Master: SDA=8, SCL=9)          │
  │   • Onboard WS2812B aRGB LED Volume Loudness Indicator (GPIO 48 via RMT)   │
  │   • Audio Source Arbiter & Zero-Pop Handover Protocol                       │
- │   • NVS Flash Persistence (User Profile & Delta Commit)                     │
+ │   • Versioned NVS v2 Persistence (`user_cfg_v2`, CRC32 + V1 migration)      │
  ├─────────────────────────────────────────────────────────────────────────────┤
  │ Core 1 (Real-Time Audio DSP Subsystem)                                      │
- │   • UAC 1.0 FIFO Stream Consumer (`tud_audio_read`)                         │
- │   • 1-to-10 Band Dynamic Parametric Equalizer (Direct Form II Biquads)      │
- │   • 15 ms Click-Free Double-Buffered Linear Crossfader                      │
- │   • Float Saturation Clamping `[-32768, 32767]`                             │
- │   • Master I2S0 DMA Audio Pipeline (48,000 Hz, 16-bit Stereo)               │
+ │   • Safe Zero-Pop Sample-Rate Reclocking (44.1 / 48.0 / 96.0 kHz)           │
+ │   • 1-to-10 Band Dual-Mono L/R PEQ (8 RBJ Biquad Topologies)                │
+ │   • 2x2 Channel Matrix & 3-Level Chu Moy Headphone Crossfeed                │
+ │   • 15 ms Click-Free Crossfader + Preamp-Normalized Instant A/B Bypass      │
+ │   • 24-bit Saturation Clamping `[-8388608, 8388607]` -> 32-bit I2S MSB      │
+ │   • Master I2S0 DMA Audio Pipeline (32-bit Stereo Slots)                    │
  ├─────────────────────────────────────────────────────────────────────────────┤
  │ External Audio Hardware Interconnects                                       │
  │   • GPIO 4: Master I2S Word Select / LCK (WS)  ────────► GY-PCM5102A DAC   │
@@ -50,9 +51,9 @@ The firmware implements **Schematic 2 (`docs/schematics/DSP+DAC+SCREEN.svg`)**, 
 
 | GPIO Pin | Function | Peripheral | Electrical Characteristics |
 | :---: | :--- | :--- | :--- |
-| **GPIO 4** | I2S Word Select (`WS` / `LCK`) | Master I2S0 | CMOS Output (48 kHz frame clock) |
-| **GPIO 5** | I2S Serial Data Out (`DOUT` / `DIN`) | Master I2S0 | CMOS Output (16-bit interleaved stereo PCM) |
-| **GPIO 6** | I2S Continuous Bit Clock (`BCK`) | Master I2S0 | CMOS Output (1.536 MHz: $48000 \times 32$ bits) |
+| **GPIO 4** | I2S Word Select (`WS` / `LCK`) | Master I2S0 | CMOS Output (44.1 / 48 / 96 kHz frame clock) |
+| **GPIO 5** | I2S Serial Data Out (`DOUT` / `DIN`) | Master I2S0 | CMOS Output (24-bit audio MSB-aligned in 32-bit stereo slots) |
+| **GPIO 6** | I2S Continuous Bit Clock (`BCK`) | Master I2S0 | CMOS Output (`64 * fs`: 2.8224 / 3.072 / 6.144 MHz) |
 | **GPIO 7** | DAC Hardware Soft Mute (`XMT` / `MUTE`) | GPIO Output | Active-LOW (0 = Mute, 1 = Unmute); Pulled down on boot |
 | **GPIO 8** | I2C Serial Data (`SDA`) | I2C Master 0 | Open-drain, 400 kHz fast mode, external 4.7 kΩ pull-up |
 | **GPIO 9** | I2C Serial Clock (`SCL`) | I2C Master 0 | Open-drain, 400 kHz fast mode, external 4.7 kΩ pull-up |
@@ -88,8 +89,8 @@ To ensure driverless plug-and-play operation across Windows 10/11, macOS, Linux,
   - `4`: `"Ascension Hi-Fi Audio"` (Audio Interface)
   - `5`: `"WebHID Live PEQ Interface"` (HID Interface)
 
-### 3.2 Configuration Descriptor Structure (153 Bytes Total)
-1. **Config Descriptor Header:** 9 bytes (`TUD_CONFIG_DESCRIPTOR(1, 3, 0, 153, 0x00, 100)`).
+### 3.2 Configuration Descriptor Structure
+1. **Config Descriptor Header:** 9 bytes (`TUD_CONFIG_DESCRIPTOR(1, 3, 0, CONFIG_TOTAL_LEN, 0x00, 100)`).
 2. **IAD (Interface Association Descriptor):** 8 bytes grouping Interface 0 (AC) and Interface 1 (AS).
 3. **Interface 0: Audio Control (AC):**
    - Standard AC Interface (9 bytes, 0 endpoints).
@@ -101,15 +102,15 @@ To ensure driverless plug-and-play operation across Windows 10/11, macOS, Linux,
    - Alternate Setting 0: Zero-bandwidth idle interface (9 bytes, 0 endpoints).
    - Alternate Setting 1: Active audio streaming interface (9 bytes, 1 endpoint).
    - Class-Specific AS Header (7 bytes, PCM format, 1 frame delay, links Terminal `0x01`).
-   - Type I Format Descriptor (11 bytes, 2 channels, 2 bytes/sample, 16-bit resolution, 48,000 Hz).
-   - Standard Isochronous Audio Data Endpoint (9 bytes, `EP 0x01 OUT`, Adaptive, 196 max bytes, 1 ms polling).
+   - Type I Format Descriptor (`TUD_AUDIO10_DESC_TYPE_I_FORMAT_LEN(3)` = 17 bytes: 2 channels, 3 bytes/sample, 24-bit resolution, tri-rate `44100, 48000, 96000` Hz).
+   - Standard Isochronous Audio Data Endpoint (9 bytes, `EP 0x01 OUT`, Adaptive, `588` max bytes, 1 ms polling).
    - Class-Specific Isochronous Endpoint (7 bytes, sampling frequency control).
 5. **Interface 2: Vendor HID (WebHID):**
    - Standard HID Interface Descriptor (32 bytes, `EP 0x02 OUT`, `EP 0x82 IN`, 64-byte packets, 1 ms polling).
    - 64-byte Generic In/Out Raw Report Descriptor.
 
 ### 3.3 UAC 1.0 Callbacks & Host Synchronization
-* **`tud_audio_set_itf_cb`:** Tracks when the host activates Alternate Setting 1 (active playback) vs Alternate Setting 0 (idle). Displays `"USB DAC Active"` overlay on the OLED screen.
+* **`tud_audio_set_itf_cb`:** Tracks when the host activates Alternate Setting 1 (active playback) vs Alternate Setting 0 (idle). Displays `"USB DAC Active"` overlay on the OLED screen without altering the persistent footer preset label.
 * **`tud_audio_get_req_entity_cb`:** Responds to host volume queries:
   - `GET_CUR`: Returns current volume in 1/256 dB units.
   - `GET_MIN`: Returns $-90\text{ dB}$ ($-23040$).
@@ -117,8 +118,9 @@ To ensure driverless plug-and-play operation across Windows 10/11, macOS, Linux,
   - `GET_RES`: Returns $1.0\text{ dB}$ ($256$).
 * **`tud_audio_set_req_entity_cb`:** Synchronizes host volume slider and mute status directly into the firmware pipeline:
   - Host mute triggers `audio_pipeline_set_mute()` (hardware pin GPIO 7).
-  - Host volume slider maps $-90\text{ dB}\dots 0\text{ dB}$ directly to firmware software volume $0\%\dots 100\%$.
-* **`tud_audio_get_req_ep_cb` / `tud_audio_set_req_ep_cb`:** Reports and confirms the 48,000 Hz discrete sample rate to host audio engines (PipeWire, ALSA, CoreAudio, Windows WASAPI).
+  - Host volume slider converts dB (`<= -80 dB` $\rightarrow$ `0%`, otherwise `round(100 * 10^(dB / 40))`) to align with the firmware's quadratic perceptual volume taper (`(volume / 100)^2`).
+* **`tud_audio_get_req_ep_cb` / `tud_audio_set_req_ep_cb`:** Reports active UAC sample rate (`44100`, `48000`, or `96000` Hz), rejects other rates on `SET_CUR`, and stages `s_pending_sample_rate` under `s_uac_rate_lock` for safe Core 1 zero-pop reclocking (`audio_pipeline_set_sample_rate()` + `peq_dsp_set_sample_rate()` + `oled_display_set_sample_rate()`).
+* **`tud_hid_get_report_cb` / `tud_hid_set_report_cb` / `webhid_peq_send_band_report_ch`:** Supports `0x01..0x09` + `0x13` (GetProfile/`0xFE` custom matrix, SetBandLive, SetPreampLive, SelectProfile, SaveToPreset, ResetToPreset, SetBandCount, SetAbBypass, SetDualMono, SetMixer) and syncs Dual-Mono/A-B/Mixer/sample-rate metadata in `reserved[0..13]`.
 
 ---
 
@@ -133,7 +135,7 @@ $$y[n] = b_0 x[n] + w_1[n-1]$$
 $$w_1[n] = b_1 x[n] - a_1 y[n] + w_2[n-1]$$
 $$w_2[n] = b_2 x[n] - a_2 y[n]$$
 
-All coefficients are normalized by dividing by $a_0$.
+All coefficients are normalized by dividing by $a_0$ (with `isfinite()` and near-zero `a0` passthrough fallbacks, plus subnormal delay-line flushing `< 1e-15f` inside `biquad_filter_sample()`).
 * **Peaking Filter (Parametric Bell):**
   $$\omega_0 = 2\pi \frac{f_0}{f_s}, \quad A = 10^{\frac{\text{Gain}_{\text{dB}}}{40}}, \quad \alpha = \frac{\sin(\omega_0)}{2Q}$$
   $$b_0 = 1 + \alpha A, \quad b_1 = -2\cos(\omega_0), \quad b_2 = 1 - \alpha A$$
@@ -145,37 +147,30 @@ All coefficients are normalized by dividing by $a_0$.
   $$a_0 = (A+1) + (A-1)\cos(\omega_0) + 2\sqrt{A}\alpha$$
   $$a_1 = -2\left((A-1) + (A+1)\cos(\omega_0)\right)$$
   $$a_2 = (A+1) + (A-1)\cos(\omega_0) - 2\sqrt{A}\alpha$$
-* **High-Shelf Filter:**
-  $$b_0 = A\left((A+1) + (A-1)\cos(\omega_0) + 2\sqrt{A}\alpha\right)$$
-  $$b_1 = -2A\left((A-1) + (A+1)\cos(\omega_0)\right)$$
-  $$b_2 = A\left((A+1) + (A-1)\cos(\omega_0) - 2\sqrt{A}\alpha\right)$$
-  $$a_0 = (A+1) - (A-1)\cos(\omega_0) + 2\sqrt{A}\alpha$$
-  $$a_1 = 2\left((A-1) - (A+1)\cos(\omega_0)\right)$$
-  $$a_2 = (A+1) - (A-1)\cos(\omega_0) - 2\sqrt{A}\alpha$$
+* **Extended Topologies (Gain-Independent, Fixed $Q$):**
+  - **High-Pass (HPF, type `4`)** & **Low-Pass (LPF, type `5`):** Subsonic protection and treble roll-off.
+  - **Notch (NTCH, type `6`)** & **Band-Pass (BPF, type `7`):** Narrow resonance removal and acoustic band isolation.
 
-### 4.2 Dynamic Band Count Scaling (1 to 10 Bands)
-* Configurable dynamically at runtime via WebHID `CMD_SET_BAND_COUNT` or preset load.
-* Execution loop runs strictly over active bands ($k = 0 \dots \text{num\_bands}-1$):
-  $$\text{Execution Time (10 Bands)} \approx 2.20\text{ MIPS} \quad (< 4\%\text{ of Core 1 capacity})$$
-* Dynamic band memory remains static in internal SRAM (zero heap fragmentation).
+### 4.2 Dynamic Band Count Scaling & Dual-Mono L/R PEQ
+* Each channel (`PEQ_CH_LEFT`, `PEQ_CH_RIGHT`) scales independently or linked (`s_linked_stereo`, toggled via `WEBHID_CMD_SET_DUAL_MONO`) from **1 to 10 active bands** without heap re-allocation.
+* Post-EQ processing applies a `2×2` channel matrix (`Stereo`, `Mono Mix`, `L-Only`, `R-Only`, `Swap L/R`, `Mid-Side Width 0–200%`, `L/R Balance`, `Custom Matrix`) followed by an optional 3-level **Chu Moy Crossfeed** (`Off / Mild / Medium`: 700 Hz 1st-order LPF + ~270 µs circular delay buffer `CROSSFEED_MAX_DELAY = 32`).
 
-### 4.3 Double-Buffered 15 ms Click-Free Crossfader
-When parameters change or band counts scale:
-1. New biquads are computed into a secondary `target_biquads[]` buffer.
-2. An interpolation loop runs across $N_{\text{fade}} = \text{round}(0.015 \times 48000) = 720\text{ samples}$:
+### 4.3 Double-Buffered 15 ms Click-Free Crossfader, A/B Toggle & Cross-Core Staging
+When parameters, channel mode, matrix/crossfeed, or A/B bypass state change:
+1. Core 0 computes new biquads and mixer coefficients on the stack outside locks, then atomically stages `s_pending_*` under `portMUX_TYPE` spinlock (`s_peq_lock`) with generation validation (`s_state_gen`).
+2. Core 1 (`peq_dsp_process_interleaved_s24_to_s32` / `peq_dsp_process_interleaved_s16_to_s32`) consumes staged updates into `s_target_*` and runs an interpolation loop across $N_{\text{fade}} = \text{round}(0.015 \times f_s)$ samples ($662 / 720 / 1440$ samples):
    $$y[n] = (1.0 - \beta) \cdot y_{\text{active}}[n] + \beta \cdot y_{\text{target}}[n], \quad \beta \in [0.0, 1.0]$$
-3. When $\beta = 1.0$, `target_biquads[]` atomically replaces `active_biquads[]`.
+3. **Preamp-Normalized Instant A/B Bypass:** `peq_dsp_set_ab_bypass()` toggles flat EQ comparison across the 15 ms crossfade while keeping `preamp_gain_db` engaged so A vs. B remains loudness-matched (transient only, never persisted to NVS).
 
 ### 4.4 Saturation Protection & Pre-Gain Headroom
 * **Pre-Gain Headroom:** Pre-attenuates digital input ($0.0\text{ to }-12.0\text{ dB}$) to prevent positive EQ boost stages from exceeding $0\text{ dBFS}$.
-* **Hard Saturation Clamping:** Every output sample is clamped to signed 16-bit integer boundaries before integer conversion:
-  $$\text{Sample}_{\text{clamped}} = \max(-32768, \; \min(32767, \; \text{round}(y[n])))$$
+* **Hard Saturation Clamping:** Non-finite samples are zeroed and every output sample is clamped to signed 24-bit full-scale bounds (`[-8388608.0f, 8388607.0f]`) before shifting MSB-aligned into 32-bit I2S slots (`int32_t`).
 
-### 4.5 Built-In Presets & NVS Flash Persistence
+### 4.5 Built-In Presets & Versioned NVS v2 Persistence
 1. **Preset 0 (Reference Flat):** 0.0 dB gain across all frequencies (bit-perfect passthrough).
-2. **Preset 1 (Warm Bass Boost):** +4.5 dB Low Shelf @ 105 Hz ($Q = 0.71$).
+2. **Preset 1 (Warm Bass Boost):** +4.5 dB Low Shelf @ 80 Hz ($Q = 0.71$) plus multi-band contour.
 3. **Preset 2 (Harman OE2018 Target):** 5-band reference target curve matching Harman headphone standards.
-4. **Preset 3 (User Custom):** Persisted in NVS namespace `audio_peq`, key `user_profile`. Saved with CRC32 verification and flash delta checks to guarantee 0 unneeded flash wear during live slider dragging.
+4. **Preset 3 (User Custom):** Persisted in NVS namespace `audio_peq`, versioned key `user_cfg_v2` (`PEQ_NVS_MAGIC_V2`, CRC32-verified struct storing `linked_stereo`, Left/Right profiles, and `peq_mixer_config_t`), with automatic one-way migration from legacy V1 `user_profile`. Snapshotted under `s_peq_lock` prior to flash I/O and saved with delta checks (`memcmp`).
 
 ---
 
@@ -185,17 +180,17 @@ Implemented in [`main/audio_pipeline.c`](../../main/audio_pipeline.c).
 
 * **I2S Configuration:**
   - Standard Philips I2S format (`I2S_COMM_MODE_STAND_I2S`).
-  - Bit depth: 16-bit stereo (`I2S_DATA_BIT_WIDTH_16BIT`).
-  - Clock frequency: **48,000 Hz**.
+  - Bit depth: **32-bit stereo slots** (`I2S_DATA_BIT_WIDTH_32BIT`) carrying 24-bit MSB-aligned PCM (`audio_pipeline_write_s32()`).
+  - Clock frequencies: **44,100 Hz**, **48,000 Hz** (default), and **96,000 Hz**, dynamically reclocked on Core 1 via safe zero-pop transition (`mute HIGH -> LOW -> disable -> reconfig_std_clock -> enable -> unmute`).
   - Clock Source: Internal PLL (`I2S_CLK_SRC_DEFAULT`).
   - MCLK: Synthesized internally by PCM5102A's internal PLL from BCK.
 * **DMA Buffering:**
-  - 4 DMA descriptors $\times$ 512 bytes = 2048 bytes DMA FIFO ($~10.6\text{ ms}$ buffer cushion).
+  - 8 DMA descriptors $\times$ 256 stereo frames $\times$ 8 bytes = 16,384 bytes DMA FIFO (~42.7 ms at 48 kHz, ~21.3 ms at 96 kHz).
 * **Hardware Soft-Mute Protocol (GPIO 7):**
   - Pin pulled LOW on boot to isolate DAC analog output while internal rails charge.
-  - Asserted during source handover and rate changes to guarantee zero audible pops or clicks.
+  - Asserted during source handover and sample-rate changes to guarantee zero audible pops or clicks.
 * **Master Volume Engine:**
-  - Logarithmic / linear perceptually-weighted volume multiplier ($0\%\dots 100\%$).
+  - Quadratic perceptual volume taper (`norm * norm` where `norm = volume_percent / 100.0f`), exposed via `audio_pipeline_get_volume_factor()` to Core 1's 24-bit->32-bit output stage.
 * **Startup Verification Chime:**
   - Synthesizes an ascending four-note chime (C5 $523.25\text{ Hz}$, E5 $659.25\text{ Hz}$, G5 $783.99\text{ Hz}$, C6 $1046.50\text{ Hz}$) on boot to verify end-to-end analog hardware integrity.
 
@@ -219,9 +214,9 @@ The system coordinates three operational audio modes using the **4-Phase Zero-Po
 
 | Source Identifier | Name | Description |
 | :--- | :--- | :--- |
-| `AUDIO_SOURCE_STANDALONE` | **USB DAC / DSP** *(Default Boot)* | Consumes incoming UAC 1.0 stream from TinyUSB FIFO, runs PEQ biquads, and writes to I2S. Sleeps 2 ms when idle. |
-| `AUDIO_SOURCE_TONE_TEST` | **Tone Generator** | Synthesizes an A minor arpeggio (A4, C5, E5, A5 cycling every 250 ms) to audition PEQ curves without an active audio source. |
-| `AUDIO_SOURCE_SWEEP` | **Frequency Sweep** | Generates a continuous linear/logarithmic sweep from 100 Hz to 4000 Hz for acoustic diagnostics. |
+| `AUDIO_SOURCE_STANDALONE` | **USB DAC / DSP** *(Default Boot)* | Consumes incoming 24-bit UAC 1.0 stream from TinyUSB FIFO (`webhid_peq_audio_read`), handles sample-rate reclocking, runs Core 1 DSP, and writes 32-bit slots via `audio_pipeline_write_s32()`. Sleeps `pdMS_TO_TICKS(1)` when idle (`CONFIG_FREERTOS_HZ=1000`). |
+| `AUDIO_SOURCE_TONE_TEST` | **Tone Generator** | Synthesizes an A minor arpeggio (A4, C5, E5, A5 cycling every 250 ms) using the active sample rate (`audio_pipeline_get_sample_rate()`). |
+| `AUDIO_SOURCE_SWEEP` | **Frequency Sweep** | Generates a continuous sweep scaled to `audio_pipeline_get_sample_rate()` for acoustic diagnostics. |
 
 ---
 
@@ -261,7 +256,7 @@ The control subsystem operates as a clean modal state machine across 3 distinct 
 #### 3. On-Device Live EQ Adjust Mode (Digit-by-Digit Laboratory Synthesizer / PEQ Tuner)
 Triggered by selecting **"1. Live EQ Adjust"** in the Main Menu:
 * **Layout on SSD1306 OLED (128x64):**
-  - **Line 0:** `BND:[3]/5  [PEAK]` (Active band index, total band count, filter type).
+  - **Line 0:** `BND:[3]/5  [PEAK]` (Active band index, total band count, filter type: `[BYP ]`, `[PEAK]`, `[L-SH]`, `[H-SH]`, `[HPF ]`, `[LPF ]`, `[NTCH]`, `[BPF ]`).
   - **Line 1:** `FREQ:  0 1 0 0 0  Hz` (5 individual selectable digits: 10k, 1k, 100, 10, 1).
   - **Line 2:** `GAIN:  + 0 4 . 5  dB` (Selectable Sign `+`/`-`, Tens, Ones, Tenths).
   - **Line 3:** `Q   :  0 1 . 4 1` (Selectable Integer, Tenths, Hundredths).
@@ -271,10 +266,10 @@ Triggered by selecting **"1. Live EQ Adjust"** in the Main Menu:
   - **Button 1 (GPIO 18 / ◄):** Moves cursor Left across fields, digits, and toolbar items.
   - **Button 2 (GPIO 10 / ►):** Moves cursor Right across fields, digits, and toolbar items.
   - **Rotary Rotation (GPIO 15/16):**
-    - When cursor is on a **Digit (`0–9`)**: Dials the selected digit up/down with instantaneous biquad recalculation and 15 ms click-free crossfading on Core 1!
+    - When cursor is on a **Digit (`0–9`)**: Dials the selected digit up/down with instantaneous biquad recalculation and 15 ms click-free crossfading on Core 1! Adjusting Frequency, Gain, or Q automatically enables the band (and promotes `PEQ_FILTER_BYPASS` $\rightarrow$ `PEQ_FILTER_PEAKING`).
     - When on **Band**: Switches active band (`1..N`).
-    - When on **Type**: Cycles filter type (`PEAK` $\rightarrow$ `L-SH` $\rightarrow$ `H-SH`).
-    - When on **Sign**: Toggles `+` and `-`.
+    - When on **Type**: Cycles filter type (`PEAK` $\rightarrow$ `L-SH` $\rightarrow$ `H-SH` $\rightarrow$ `HPF` $\rightarrow$ `LPF` $\rightarrow$ `NTCH` $\rightarrow$ `BPF`) and enables the band.
+    - When on **Sign**: Toggles `+` and `-` and enables the band.
     - When on **Toolbar**: Rotates highlighted toolbar action (`[+B]`, `[-B]`, `[SAVE]`, `[EXIT]`).
   - **Encoder Switch (GPIO 17):**
     - **Short Click:** If on a toolbar action, triggers it (`+B` adds band, `-B` removes band, `SAVE` commits to NVS, `EXIT` returns to playback). If on a parameter, rapidly jumps to the next section (`Band` $\rightarrow$ `Freq` $\rightarrow$ `Gain` $\rightarrow$ `Q` $\rightarrow$ `Toolbar`).
@@ -287,9 +282,9 @@ Triggered by selecting **"1. Live EQ Adjust"** in the Main Menu:
 ### 7.2 SSD1306 128x64 Monochrome OLED Display Modes
 * Driven over I2C Master (SDA=GPIO 8, SCL=GPIO 9) at 400 kHz with non-blocking 10 FPS rendering task on Core 0.
 * **Supported Screen Modes:**
-  1. **Playback Mode:** System badge, bit depth/sample rate, track title, subtitle, volume progress bar, volume & preset overlay popups, and footer status.
+  1. **Playback Mode:** Dynamic source badge (`USB DAC`, `Synth`, `Sweep`), dynamic bit depth/sample rate (`44.1k 24b`, `48.0k 24b`, `96.0k 24b` updated via `oled_display_set_sample_rate()`), track title, subtitle, volume progress bar, transient volume/status overlay popups, and persistent footer `EQ:` preset label.
   2. **Main Menu Mode:** 4-row scrolling viewport with highlighted selection bar, active preset name, current source, preamp gain readout, and navigation footer.
-  3. **Live EQ Adjust Mode:** Full-screen digit-by-digit editor with inverted highlight on active field/digit, dynamic parameter indicators, and bottom action buttons.
+  3. **Live EQ Adjust Mode:** Full-screen digit-by-digit editor supporting all 8 filter types (`BYP`, `PEAK`, `L-SH`, `H-SH`, `HPF`, `LPF`, `NTCH`, `BPF`), unified integer rounding for Gain and Q (`Q = 10.00`), and bottom action buttons.
 
 ### 7.3 Onboard WS2812B aRGB LED Volume Loudness Indicator
 Implemented in [`main/led_indicator.c`](../../main/led_indicator.c) and [`main/led_indicator.h`](../../main/led_indicator.h).
@@ -308,49 +303,42 @@ Implemented in [`main/led_indicator.c`](../../main/led_indicator.c) and [`main/l
 
 ---
 
-## 8. Driverless WebHID Live Tuner Client
+## 8. Driverless WebHID Live Tuner & Offline PWA
 
-Location: [`tools/webhid_tuner/index.html`](../../tools/webhid_tuner/index.html).
+Location: [`tools/webhid_tuner/`](../../tools/webhid_tuner/) (`index.html`, `manifest.json`, `sw.js`, `icon.svg`).
 
-* **Zero-Driver / Zero-Installation Architecture:** Runs client-side in Google Chrome, Microsoft Edge, Brave, Opera, or Android Chrome via the standard WebHID API (`navigator.hid`).
-* **Connection Workflow:**
-  - Re-uses paired devices via `navigator.hid.getDevices()` without triggering repetitive browser permission dialogs.
-  - Comprehensive Linux `/dev/hidraw` diagnostic logging with udev rule verification tips.
-* **Interactive HTML5 Canvas Frequency Response Graph:**
-  - **Draggable Nodes:** Directly drag center frequency ($X$-axis, logarithmic 20 Hz to 20 kHz) and gain ($Y$-axis, $-24.0\text{ dB}\dots +12.0\text{ dB}$).
-  - **Mouse Wheel / Trackpad Scroll Q Adjustment:** Adjusts Q factor ($0.10\dots 10.00$) in real time with dynamic visual $-3\text{ dB}$ passband bandwidth guides.
-  - **Double-Click Actions:** Double-click node to reset to 0.0 dB; double-click empty space to create a new band at that location.
-* **Dynamic Band Count Controls:**
-  - Add or remove bands dynamically from 1 up to 10 bands.
-  - Preset shortcuts for 3-Band (Tone), 5-Band (Standard), 7-Band (Extended), and 10-Band (Mastering).
-* **Two-Way Data Binding with Custom Numeric Inputs:**
-  - Direct numeric typing alongside range sliders for Freq, Gain, Q, and Preamp.
-  - Input validation and bound clamping.
-* **Volatile Auditioning:** Streams 60 FPS slider updates directly into volatile SRAM, guaranteeing **0 flash wear**. Committing to NVS requires an explicit "Save to Hardware NVS" button press.
+* **Zero-Driver / PWA Architecture:** Runs client-side in Google Chrome, Microsoft Edge, Brave, Opera, or Android Chrome via `navigator.hid`, with offline service worker installation (`manifest.json`, `sw.js`, guarded when `location.protocol !== 'file:'`).
+* **Interactive HTML5 Canvas Response, Phase & Group Delay Graph:**
+  - **Exact RBJ Evaluation:** Computes cascaded complex transfer function magnitude (`dB`), Phase (`-180°..+180°`), and Group Delay (`ms`) across all 8 filter topologies (`0..7`).
+  - **Draggable Nodes, Wheel Q, Double-Click:** Drag center frequency ($20\text{ Hz}\dots 20\text{ kHz}$) & gain ($-24.0\dots +12.0\text{ dB}$), scroll for `Q` ($0.10\dots 10.00$), double-click to reset or add bands.
+* **Dual-Mono L/R PEQ, A/B Toggle & 2×2 Matrix/Crossfeed:** Switch between Linked Stereo and Left/Right tabs, toggle Preamp-Normalized A/B Bypass (`0x08`), adjust Balance, Mid-Side Width (`0–200%`), Custom `2×2` Matrix, and Chu Moy Crossfeed (`Off/Mild/Medium`).
+* **Equalizer APO / AutoEQ `.txt` & `.json` Import/Export:** Imports/exports standard Equalizer APO filter files (`PK`, `LSC`, `HSC`, `HPQ`, `LPQ`, `NO`, `BP`) and full Dual-Mono/Matrix JSON backups.
+* **Volatile Auditioning:** Streams live updates into volatile SRAM with **0 flash wear**; commits to NVS v2 (`user_cfg_v2`) only on explicit "Save to Hardware NVS".
 
 ---
 
 ## 9. Firmware Build & Verification Specifications
 
 * **Build Tool:** ESP-IDF v6.1 (`idf.py build`).
-* **Compiler Flags (`CMakeLists.txt`):**
+* **Automated CI & Releases:**
+  - [`.github/workflows/build.yml`](../../.github/workflows/build.yml): Builds ESP32-S3 firmware inside `espressif/idf:v6.1`, generates `ASCENDANCE_merged.bin`, reports `idf.py size` in the job summary, uploads build artifacts, and runs `node --check` on `tools/webhid_tuner/index.html`.
+  - [`.github/workflows/release.yml`](../../.github/workflows/release.yml): Builds tagged firmware images and packages the WebHID tuner into a GitHub Release on `v*` tags.
+* **Compiler Flags (`CMakeLists.txt`) & RTOS Config (`sdkconfig.defaults`):**
   ```cmake
   CFG_TUD_AUDIO=1
-  CFG_TUD_AUDIO_FUNC_1_SAMPLE_RATE=48000
+  CFG_TUD_AUDIO_FUNC_1_SAMPLE_RATE=96000
   CFG_TUD_AUDIO_ENABLE_EP_OUT=1
   CFG_TUD_AUDIO_ENABLE_EP_IN=0
-  CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ_MAX=196
-  CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ=2048
-  CFG_TUD_AUDIO_FUNC_1_N_BYTES_PER_SAMPLE_RX=2
-  CFG_TUD_AUDIO_FUNC_1_RESOLUTION_RX=16
+  CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ_MAX=588
+  CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ=16384
+  CFG_TUD_AUDIO_FUNC_1_N_BYTES_PER_SAMPLE_RX=3
+  CFG_TUD_AUDIO_FUNC_1_RESOLUTION_RX=24
   CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX=2
   ```
-* **Memory Partitioning:**
-  - App partition size: `0x177000` bytes (1,500 KB).
-  - App binary size: `0x4C070` bytes (304 KB) — **80% free partition headroom remaining**.
+  - `sdkconfig.defaults`: Enables `CONFIG_FREERTOS_HZ=1000` (1 ms OS ticks) alongside 16 MB Flash and 8 MB Octal PSRAM.
+  - `audio_dsp_task` (Core 1, Priority 10): 8,192 B stack with static BSS PCM buffers (`s_usb_raw_buf`, `s_synth_s16_buf`, `s_dsp_s32_buf`).
 * **Flash Command (over COM UART port `/dev/ttyACM0`):**
   ```bash
   idf.py -p /dev/ttyACM0 flash monitor
   ```
-* **Operational Verification:**
-  - Verified clean boot, I2S 48 kHz PLL clock generation, startup verification chime playback, SSD1306 rendering, and USB enumeration as composite `303A:4002` sound card and WebHID vendor interface.
+* **Verification Status:** WebHID math, Equalizer APO round-trip, 64-byte packet builders, `manifest.json`, `sw.js`, and extracted `index.html` JS syntax verified locally; ESP-IDF v6.1 firmware compilation awaits CI push or local `idf.py build`.

@@ -55,12 +55,14 @@ static QueueHandle_t s_ctrl_queue = NULL;
  * Core 1 Real-Time Audio Synth / Generator Task
  ******************************************************************************/
 
+static uint8_t s_usb_raw_buf[256 * 6]; // 256 stereo 24-bit packed frames (1536 B)
+static int16_t s_synth_s16_buf[256 * 2];
+static int32_t s_dsp_s32_buf[256 * 2]; // 256 stereo 32-bit MSB-aligned frames (2048 B)
+
 static void audio_dsp_task(void *pvParameters)
 {
-    ESP_LOGI(TAG, "Audio DSP Task started on Core 1.");
-    int16_t buffer[256 * 2]; // 256 stereo pairs (512 samples)
+    ESP_LOGI(TAG, "Audio DSP Task started on Core 1 (24-bit / 44.1-96 kHz).");
     const int buffer_pairs = 256;
-    const int sample_rate = 48000;
 
     float phase = 0.0f;
     float current_freq = 440.0f;
@@ -73,43 +75,57 @@ static void audio_dsp_task(void *pvParameters)
     int arp_counter = 0;
 
     while (1) {
+        // Safely execute host-requested sample rate switches on Core 1 outside active DMA writes
+        uint32_t new_sr = 0;
+        if (webhid_peq_consume_pending_sample_rate(&new_sr)) {
+            ESP_LOGI(TAG, "Core 1 zero-pop reclocking to %lu Hz", (unsigned long)new_sr);
+            audio_pipeline_set_mute(true);
+            vTaskDelay(pdMS_TO_TICKS(15));
+            audio_pipeline_set_sample_rate((int)new_sr);
+            peq_dsp_set_sample_rate((int)new_sr);
+            oled_display_set_sample_rate((int)new_sr);
+            vTaskDelay(pdMS_TO_TICKS(15));
+            audio_pipeline_set_mute(false);
+        }
+
         audio_source_t source = audio_source_arbiter_get_current(NULL);
+        float vol_factor = audio_pipeline_get_volume_factor();
 
         if (source == AUDIO_SOURCE_STANDALONE) {
-            // Standalone / USB DAC Mode: Read stream from TinyUSB UAC 1.0 FIFO
+            // Standalone / USB DAC Mode: Read 24-bit packed stereo frames (6 bytes/frame)
             uint16_t avail = webhid_peq_audio_available();
-            if (avail >= 192) {
-                uint16_t to_read = avail > sizeof(buffer) ? sizeof(buffer) : avail;
-                to_read = (to_read / 4) * 4; // Ensure stereo pair alignment (4 bytes per pair)
+            if (avail >= 24) {
+                uint16_t to_read = avail > sizeof(s_usb_raw_buf) ? sizeof(s_usb_raw_buf) : avail;
+                to_read = (to_read / 6) * 6; // Ensure 24-bit stereo frame alignment (6 bytes/pair)
                 if (to_read > 0) {
-                    uint16_t n_read = webhid_peq_audio_read(buffer, to_read);
-                    if (n_read > 0) {
-                        int pairs = n_read / (2 * sizeof(int16_t));
-                        // Process USB audio through active PEQ filters on Core 1
-                        peq_dsp_process_interleaved_s16(buffer, pairs);
-                        // Stream directly to Texas Instruments GY-PCM5102A DAC via I2S DMA
-                        audio_pipeline_write(buffer, n_read);
+                    uint16_t n_read = webhid_peq_audio_read(s_usb_raw_buf, to_read);
+                    uint16_t pairs = n_read / 6;
+                    if (pairs > 0) {
+                        peq_dsp_process_interleaved_s24_to_s32(s_usb_raw_buf, s_dsp_s32_buf, pairs, vol_factor);
+                        audio_pipeline_write_s32(s_dsp_s32_buf, pairs * 2 * sizeof(int32_t));
                         continue;
                     }
                 }
             }
-            // At CONFIG_FREERTOS_HZ=100 (10 ms/tick), pdMS_TO_TICKS(2) truncates to 0 ticks,
-            // which causes a tight busy-loop at Priority 10 and starves IDLE1. Use 10 ms (1 tick):
-            vTaskDelay(pdMS_TO_TICKS(10));
+            // CONFIG_FREERTOS_HZ=1000 -> 1 ms sleep keeps 96 kHz / 24-bit FIFO responsive
+            vTaskDelay(pdMS_TO_TICKS(1));
             continue;
         }
 
+        int sample_rate = audio_pipeline_get_sample_rate();
+        if (sample_rate <= 0) sample_rate = 48000;
+
         // Determine target frequency based on active source mode
         if (source == AUDIO_SOURCE_TONE_TEST) {
-            // Cycle arpeggio every ~250ms (every ~47 buffers of 256 samples @ 48k)
+            int arp_buffers = (sample_rate / (4 * buffer_pairs));
+            if (arp_buffers < 1) arp_buffers = 1;
             arp_counter++;
-            if (arp_counter >= 47) {
+            if (arp_counter >= arp_buffers) {
                 arp_counter = 0;
                 arp_idx = (arp_idx + 1) % 4;
             }
             current_freq = arpeggio_notes[arp_idx];
         } else if (source == AUDIO_SOURCE_SWEEP) {
-            // Smooth logarithmic/linear frequency sweep between 100 Hz and 4000 Hz
             sweep_freq += sweep_dir * 15.0f;
             if (sweep_freq >= 4000.0f) {
                 sweep_freq = 4000.0f;
@@ -128,8 +144,8 @@ static void audio_dsp_task(void *pvParameters)
             float amp = 10000.0f; // Safe level (~-10 dBFS)
             float val = sinf(phase) * amp;
             int16_t s16 = (int16_t)roundf(val);
-            buffer[2 * i]     = s16; // Left
-            buffer[2 * i + 1] = s16; // Right
+            s_synth_s16_buf[2 * i]     = s16; // Left
+            s_synth_s16_buf[2 * i + 1] = s16; // Right
 
             phase += phase_step;
             if (phase >= 2.0f * (float)M_PI) {
@@ -137,11 +153,9 @@ static void audio_dsp_task(void *pvParameters)
             }
         }
 
-        // Process synthesized audio through active 5-band PEQ biquad filters on Core 1
-        peq_dsp_process_interleaved_s16(buffer, buffer_pairs);
-
-        // Feed filtered PCM data to I2S DMA with software master volume scaling
-        audio_pipeline_write(buffer, buffer_pairs * 2 * sizeof(int16_t));
+        // Process synthesized audio through active PEQ + Matrix/Crossfeed into 32-bit I2S frames
+        peq_dsp_process_interleaved_s16_to_s32(s_synth_s16_buf, s_dsp_s32_buf, buffer_pairs, vol_factor);
+        audio_pipeline_write_s32(s_dsp_s32_buf, buffer_pairs * 2 * sizeof(int32_t));
     }
 
     vTaskDelete(NULL);
@@ -163,19 +177,30 @@ static void update_playback_ui(void)
     peq_dsp_get_current_preset(cur_pname);
 
     char cur_sname[20] = "DSP Standalone";
-    audio_source_arbiter_get_current(cur_sname);
+    audio_source_t src = audio_source_arbiter_get_current(cur_sname);
+
+    const char *mode_str = "USB DAC";
+    if (src == AUDIO_SOURCE_TONE_TEST) {
+        mode_str = "Synth";
+    } else if (src == AUDIO_SOURCE_SWEEP) {
+        mode_str = "Sweep";
+    }
+
+    int cur_sr = audio_pipeline_get_sample_rate();
+    if (cur_sr <= 0) cur_sr = 48000;
 
     bool is_muted = audio_pipeline_is_muted();
 
     ui_display_state_t uistate;
+    memset(&uistate, 0, sizeof(uistate));
     uistate.volume = audio_pipeline_get_volume();
     uistate.is_muted = is_muted;
     uistate.is_playing = true;
-    strncpy(uistate.mode_str, "USB DAC", sizeof(uistate.mode_str));
-    strncpy(uistate.sample_rate_str, "48.0k 16b", sizeof(uistate.sample_rate_str));
-    strncpy(uistate.title, "ESP32-S3 Audio DSP", sizeof(uistate.title));
-    strncpy(uistate.subtitle, is_muted ? "[MUTED]" : cur_sname, sizeof(uistate.subtitle));
-    strncpy(uistate.eq_preset, cur_pname, sizeof(uistate.eq_preset));
+    snprintf(uistate.mode_str, sizeof(uistate.mode_str), "%s", mode_str);
+    snprintf(uistate.sample_rate_str, sizeof(uistate.sample_rate_str), "%.1fk 24b", (float)cur_sr / 1000.0f);
+    snprintf(uistate.title, sizeof(uistate.title), "ESP32-S3 Audio DSP");
+    snprintf(uistate.subtitle, sizeof(uistate.subtitle), "%s", is_muted ? "[MUTED]" : cur_sname);
+    snprintf(uistate.eq_preset, sizeof(uistate.eq_preset), "%s", cur_pname);
     oled_display_set_state(&uistate);
 }
 
@@ -449,6 +474,16 @@ static void handle_menu_event(const control_event_t *evt)
     }
 }
 
+static void eq_adjust_apply_band_edit(bool promote_bypass_to_peaking)
+{
+    if (promote_bypass_to_peaking && s_eq_adjust_state.band.type == PEQ_FILTER_BYPASS) {
+        s_eq_adjust_state.band.type = PEQ_FILTER_PEAKING;
+    }
+    s_eq_adjust_state.band.enabled = true;
+    peq_dsp_update_user_band(s_eq_adjust_state.active_band, &s_eq_adjust_state.band);
+    oled_display_update_eq_adjust(&s_eq_adjust_state);
+}
+
 static void handle_eq_adjust_event(const control_event_t *evt)
 {
     switch (evt->type) {
@@ -552,11 +587,10 @@ static void handle_eq_adjust_event(const control_event_t *evt)
         }
         case EQ_CURSOR_TYPE: {
             int t = (int)s_eq_adjust_state.band.type + delta;
-            if (t < (int)PEQ_FILTER_PEAKING) t = (int)PEQ_FILTER_HIGH_SHELF;
-            if (t > (int)PEQ_FILTER_HIGH_SHELF) t = (int)PEQ_FILTER_PEAKING;
+            if (t < (int)PEQ_FILTER_PEAKING) t = (int)PEQ_FILTER_BAND_PASS;
+            if (t > (int)PEQ_FILTER_BAND_PASS) t = (int)PEQ_FILTER_PEAKING;
             s_eq_adjust_state.band.type = (peq_filter_type_t)t;
-            peq_dsp_update_user_band(s_eq_adjust_state.active_band, &s_eq_adjust_state.band);
-            oled_display_update_eq_adjust(&s_eq_adjust_state);
+            eq_adjust_apply_band_edit(false);
             break;
         }
         case EQ_CURSOR_FREQ_10K:
@@ -574,16 +608,14 @@ static void handle_eq_adjust_event(const control_event_t *evt)
             if (f < 20.0f) f = 20.0f;
             if (f > 20000.0f) f = 20000.0f;
             s_eq_adjust_state.band.freq_hz = f;
-            peq_dsp_update_user_band(s_eq_adjust_state.active_band, &s_eq_adjust_state.band);
-            oled_display_update_eq_adjust(&s_eq_adjust_state);
+            eq_adjust_apply_band_edit(true);
             break;
         }
         case EQ_CURSOR_GAIN_SIGN: {
             s_eq_adjust_state.band.gain_db = -s_eq_adjust_state.band.gain_db;
             if (s_eq_adjust_state.band.gain_db < -24.0f) s_eq_adjust_state.band.gain_db = -24.0f;
             if (s_eq_adjust_state.band.gain_db > 12.0f) s_eq_adjust_state.band.gain_db = 12.0f;
-            peq_dsp_update_user_band(s_eq_adjust_state.active_band, &s_eq_adjust_state.band);
-            oled_display_update_eq_adjust(&s_eq_adjust_state);
+            eq_adjust_apply_band_edit(true);
             break;
         }
         case EQ_CURSOR_GAIN_10:
@@ -597,8 +629,7 @@ static void handle_eq_adjust_event(const control_event_t *evt)
             if (g < -24.0f) g = -24.0f;
             if (g > 12.0f) g = 12.0f;
             s_eq_adjust_state.band.gain_db = g;
-            peq_dsp_update_user_band(s_eq_adjust_state.active_band, &s_eq_adjust_state.band);
-            oled_display_update_eq_adjust(&s_eq_adjust_state);
+            eq_adjust_apply_band_edit(true);
             break;
         }
         case EQ_CURSOR_Q_INT:
@@ -612,8 +643,7 @@ static void handle_eq_adjust_event(const control_event_t *evt)
             if (q < 0.10f) q = 0.10f;
             if (q > 10.00f) q = 10.00f;
             s_eq_adjust_state.band.q_factor = q;
-            peq_dsp_update_user_band(s_eq_adjust_state.active_band, &s_eq_adjust_state.band);
-            oled_display_update_eq_adjust(&s_eq_adjust_state);
+            eq_adjust_apply_band_edit(true);
             break;
         }
         case EQ_CURSOR_ACTION_ADD:
@@ -719,8 +749,8 @@ void app_main(void)
     ESP_ERROR_CHECK(webhid_peq_init());
 
     // Start Core 1 real-time audio generator & DSP task
-    // Stack: 4096 bytes, Priority 10, Core 1
-    xTaskCreatePinnedToCore(audio_dsp_task, "audio_dsp_task", 4096, NULL, 10, NULL, 1);
+    // Stack: 8192 bytes, Priority 10, Core 1
+    xTaskCreatePinnedToCore(audio_dsp_task, "audio_dsp_task", 8192, NULL, 10, NULL, 1);
 
     ESP_LOGI(TAG, "ESP32-S3 High-Fidelity Audio DSP/DAC ready.");
 }

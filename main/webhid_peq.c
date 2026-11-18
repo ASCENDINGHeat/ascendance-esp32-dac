@@ -34,9 +34,12 @@ static bool s_is_mounted = false;
 static bool s_is_streaming = false;
 
 // Audio Control States
+static portMUX_TYPE s_uac_rate_lock = portMUX_INITIALIZER_UNLOCKED;
 static uint8_t s_audio_mute[3] = {0, 0, 0};        // [0]=master, [1]=L, [2]=R
 static int16_t s_audio_volume[3] = {0, 0, 0};      // 1/256 dB units (0 = 0 dB)
 static uint32_t s_audio_sample_rate = 48000;
+static uint32_t s_pending_sample_rate = 48000;
+static bool s_sample_rate_pending = false;
 
 // =============================================================================
 // USB Descriptors Definition (Composite UAC 1.0 Speaker + WebHID)
@@ -120,7 +123,7 @@ enum {
     TUD_AUDIO10_DESC_STD_AS_LEN + \
     TUD_AUDIO10_DESC_STD_AS_LEN + \
     TUD_AUDIO10_DESC_CS_AS_INT_LEN + \
-    TUD_AUDIO10_DESC_TYPE_I_FORMAT_LEN(1) + \
+    TUD_AUDIO10_DESC_TYPE_I_FORMAT_LEN(3) + \
     TUD_AUDIO10_DESC_STD_AS_ISO_EP_LEN + \
     TUD_AUDIO10_DESC_CS_AS_ISO_EP_LEN \
 )
@@ -161,11 +164,11 @@ static const uint8_t s_config_desc[] = {
     // Class-Specific AS Interface Header (link to Terminal 1, 1 frame delay, PCM format)
     TUD_AUDIO10_DESC_CS_AS_INT(UAC1_ENTITY_INPUT_TERMINAL, 0x01, AUDIO10_DATA_FORMAT_TYPE_I_PCM),
 
-    // Type I Format Type Descriptor (2 channels, 2 bytes/sample, 16 bits, 48000 Hz)
-    TUD_AUDIO10_DESC_TYPE_I_FORMAT(0x02, 2, 16, 48000),
+    // Type I Format Type Descriptor (2 channels, 3 bytes/sample, 24 bits, 44.1/48/96 kHz)
+    TUD_AUDIO10_DESC_TYPE_I_FORMAT(0x02, 3, 24, 44100, 48000, 96000),
 
-    // Standard AS Isochronous Audio Data Endpoint (EP 0x01 OUT, Adaptive, 196 max bytes, 1ms)
-    TUD_AUDIO10_DESC_STD_AS_ISO_EP(EPNUM_AUDIO_OUT, (uint8_t)(TUSB_XFER_ISOCHRONOUS | TUSB_ISO_EP_ATT_ADAPTIVE), 196, 0x01, 0x00),
+    // Standard AS Isochronous Audio Data Endpoint (EP 0x01 OUT, Adaptive, 588 max bytes, 1ms)
+    TUD_AUDIO10_DESC_STD_AS_ISO_EP(EPNUM_AUDIO_OUT, (uint8_t)(TUSB_XFER_ISOCHRONOUS | TUSB_ISO_EP_ATT_ADAPTIVE), 588, 0x01, 0x00),
 
     // Class-Specific AS Isochronous Audio Data Endpoint (sampling freq control enabled)
     TUD_AUDIO10_DESC_CS_AS_ISO_EP(AUDIO10_CS_AS_ISO_DATA_EP_ATT_SAMPLING_FRQ, AUDIO10_CS_AS_ISO_DATA_EP_LOCK_DELAY_UNIT_UNDEFINED, 0x0000),
@@ -210,7 +213,9 @@ bool tud_audio_set_itf_cb(uint8_t rhport, tusb_control_request_t const *p_reques
     uint8_t const alt = tu_u16_low(p_request->wValue);
     if (itf == ITF_NUM_AUDIO_STREAMING) {
         s_is_streaming = (alt != 0);
-        ESP_LOGI(TAG, "UAC 1.0 Audio Streaming: %s", s_is_streaming ? "ACTIVE (48 kHz 16-bit)" : "STOPPED");
+        ESP_LOGI(TAG, "UAC 1.0 Audio Streaming: %s (%lu Hz 24-bit)",
+                 s_is_streaming ? "ACTIVE" : "STOPPED",
+                 (unsigned long)webhid_peq_get_sample_rate());
         if (s_is_streaming) {
             oled_display_show_eq_overlay("USB DAC Active");
         }
@@ -295,9 +300,14 @@ bool tud_audio_set_req_entity_cb(uint8_t rhport, tusb_control_request_t const *p
                 s_audio_volume[channelNum] = (int16_t)tu_unaligned_read16(pBuff);
                 if (channelNum == 0) {
                     int vol_db = s_audio_volume[channelNum] / 256;
-                    int pct = (vol_db + 90) * 100 / 90;
-                    if (pct < 0) pct = 0;
-                    if (pct > 100) pct = 100;
+                    int pct;
+                    if (vol_db <= -80) {
+                        pct = 0;
+                    } else {
+                        pct = (int)roundf(100.0f * powf(10.0f, (float)vol_db / 40.0f));
+                        if (pct < 0) pct = 0;
+                        if (pct > 100) pct = 100;
+                    }
                     audio_pipeline_set_volume(pct);
                 }
                 return true;
@@ -332,12 +342,84 @@ bool tud_audio_set_req_ep_cb(uint8_t rhport, tusb_control_request_t const *p_req
     uint8_t ctrlSel = TU_U16_HIGH(p_request->wValue);
     if (ctrlSel == AUDIO10_EP_CTRL_SAMPLING_FREQ) {
         if (p_request->bRequest == AUDIO10_CS_REQ_SET_CUR && p_request->wLength == 3) {
-            s_audio_sample_rate = tu_unaligned_read32(pBuff) & 0x00FFFFFF;
-            ESP_LOGI(TAG, "UAC1 Set Sample Rate: %lu Hz", (unsigned long)s_audio_sample_rate);
+            uint32_t req_rate = (uint32_t)pBuff[0] | ((uint32_t)pBuff[1] << 8) | ((uint32_t)pBuff[2] << 16);
+            if (req_rate != 44100 && req_rate != 48000 && req_rate != 96000) {
+                ESP_LOGW(TAG, "UAC1 Rejected unsupported sample rate: %lu Hz", (unsigned long)req_rate);
+                return false;
+            }
+            taskENTER_CRITICAL(&s_uac_rate_lock);
+            if (req_rate != s_audio_sample_rate) {
+                s_audio_sample_rate = req_rate;
+                s_pending_sample_rate = req_rate;
+                s_sample_rate_pending = true;
+            }
+            taskEXIT_CRITICAL(&s_uac_rate_lock);
+            ESP_LOGI(TAG, "UAC1 Host Set Sample Rate: %lu Hz (24-bit)", (unsigned long)req_rate);
             return true;
         }
     }
     return false;
+}
+
+static bool webhid_build_band_packet(uint8_t band_idx, peq_channel_t ch, webhid_peq_packet_t *pkt)
+{
+    if (!pkt) return false;
+
+    peq_mixer_config_t mixer;
+    if (peq_dsp_get_mixer(&mixer) != ESP_OK) {
+        memset(&mixer, 0, sizeof(mixer));
+    }
+
+    if (band_idx == 0xFE) {
+        memset(pkt, 0, sizeof(*pkt));
+        pkt->magic = WEBHID_MAGIC_16;
+        pkt->cmd = WEBHID_CMD_SET_MIXER;
+        pkt->band_idx = (uint8_t)mixer.mode;
+        pkt->filter_type = (uint8_t)mixer.balance;
+        pkt->enabled = mixer.width_pct;
+        pkt->freq_hz = (uint16_t)mixer.crossfeed_level;
+        memcpy(&pkt->reserved[0], &mixer.custom_matrix[0][0], sizeof(float) * 4);
+        return true;
+    }
+
+    if (band_idx >= PEQ_MAX_BANDS) {
+        return false;
+    }
+
+    peq_profile_t profile;
+    peq_preset_id_t active = peq_dsp_get_current_preset(NULL);
+    if (peq_dsp_get_profile_ch(active, ch, &profile) != ESP_OK) {
+        if (active == PEQ_PRESET_USER_CUSTOM ||
+            peq_dsp_get_profile_ch(PEQ_PRESET_USER_CUSTOM, ch, &profile) != ESP_OK) {
+            return false;
+        }
+    }
+
+    uint32_t sr = webhid_peq_get_sample_rate();
+    int16_t preamp_x10 = (int16_t)roundf(profile.preamp_gain_db * 10.0f);
+    uint8_t flags = (peq_dsp_is_linked_stereo() ? 0x01 : 0x00) |
+                    (peq_dsp_get_ab_bypass() ? 0x02 : 0x00);
+
+    memset(pkt, 0, sizeof(*pkt));
+    pkt->magic = WEBHID_MAGIC_16;
+    pkt->cmd = WEBHID_CMD_GET_ACTIVE_PROFILE;
+    pkt->band_idx = band_idx;
+    pkt->filter_type = (uint8_t)profile.bands[band_idx].type;
+    pkt->enabled = profile.bands[band_idx].enabled ? 1 : 0;
+    pkt->freq_hz = (uint16_t)roundf(profile.bands[band_idx].freq_hz);
+    pkt->gain_db_x10 = (int16_t)roundf(profile.bands[band_idx].gain_db * 10.0f);
+    pkt->q_x100 = (uint16_t)roundf(profile.bands[band_idx].q_factor * 100.0f);
+    pkt->reserved[0] = profile.num_bands;
+    pkt->reserved[1] = (uint8_t)ch;
+    pkt->reserved[2] = flags;
+    pkt->reserved[3] = (uint8_t)active;
+    memcpy(&pkt->reserved[4], &preamp_x10, sizeof(preamp_x10));
+    pkt->reserved[6] = (uint8_t)mixer.mode;
+    pkt->reserved[7] = (uint8_t)mixer.balance;
+    pkt->reserved[8] = mixer.width_pct;
+    pkt->reserved[9] = mixer.crossfeed_level;
+    memcpy(&pkt->reserved[10], &sr, sizeof(sr));
+    return true;
 }
 
 // Invoked when received GET HID REPORT DESCRIPTOR
@@ -355,22 +437,12 @@ uint16_t tud_hid_get_report_cb(uint8_t instance, uint8_t report_id, hid_report_t
         return 0;
     }
 
-    peq_profile_t profile;
-    if (peq_dsp_get_profile(PEQ_PRESET_USER_CUSTOM, &profile) == ESP_OK) {
-        webhid_peq_packet_t pkt = {0};
-        pkt.magic = WEBHID_MAGIC_16;
-        pkt.cmd = WEBHID_CMD_GET_ACTIVE_PROFILE;
-        pkt.band_idx = 0;
-        pkt.filter_type = profile.bands[0].type;
-        pkt.enabled = profile.bands[0].enabled ? 1 : 0;
-        pkt.freq_hz = (uint16_t)roundf(profile.bands[0].freq_hz);
-        pkt.gain_db_x10 = (int16_t)roundf(profile.bands[0].gain_db * 10.0f);
-        pkt.q_x100 = (uint16_t)roundf(profile.bands[0].q_factor * 100.0f);
-        pkt.reserved[0] = profile.num_bands; // Expose dynamic band count to host
-        memcpy(buffer, &pkt, sizeof(pkt));
-        return sizeof(pkt);
+    webhid_peq_packet_t pkt;
+    if (!webhid_build_band_packet(0, PEQ_CH_LEFT, &pkt)) {
+        return 0;
     }
-    return 0;
+    memcpy(buffer, &pkt, sizeof(pkt));
+    return sizeof(pkt);
 }
 
 // Invoked when host sends a report via SET_REPORT (WebHID live tuning packets)
@@ -391,13 +463,19 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
 
         switch (pkt->cmd) {
         case WEBHID_CMD_GET_ACTIVE_PROFILE: {
-            uint8_t b_idx = (pkt->band_idx < PEQ_MAX_BANDS) ? pkt->band_idx : 0;
-            webhid_peq_send_band_report(b_idx);
+            peq_channel_t ch = (pkt->reserved[1] <= PEQ_CH_RIGHT) ? (peq_channel_t)pkt->reserved[1] : PEQ_CH_LINKED;
+            if (pkt->band_idx == 0xFE) {
+                webhid_peq_send_band_report_ch(0xFE, ch);
+            } else {
+                uint8_t b_idx = (pkt->band_idx < PEQ_MAX_BANDS) ? pkt->band_idx : 0;
+                webhid_peq_send_band_report_ch(b_idx, ch);
+            }
             break;
         }
 
         case WEBHID_CMD_SET_BAND_LIVE: {
-            if (pkt->band_idx < PEQ_MAX_BANDS) {
+            if (pkt->band_idx < PEQ_MAX_BANDS && pkt->filter_type < PEQ_FILTER_TYPE_COUNT) {
+                peq_channel_t ch = (pkt->reserved[1] <= PEQ_CH_RIGHT) ? (peq_channel_t)pkt->reserved[1] : PEQ_CH_LINKED;
                 peq_band_param_t band = {
                     .type = (peq_filter_type_t)pkt->filter_type,
                     .freq_hz = (float)pkt->freq_hz,
@@ -409,26 +487,28 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
                 // Automatically engage User Custom preset in volatile SRAM for live auditioning
                 if (peq_dsp_get_current_preset(NULL) != PEQ_PRESET_USER_CUSTOM) {
                     peq_dsp_select_preset(PEQ_PRESET_USER_CUSTOM);
+                    oled_display_set_eq_preset("User Custom");
                 }
 
                 // Zero flash wear: updates volatile biquad coefficients in SRAM only!
-                peq_dsp_update_user_band(pkt->band_idx, &band);
+                peq_dsp_update_user_band_ch(ch, pkt->band_idx, &band);
                 oled_display_show_eq_overlay("WebHID Audition");
 
-                ESP_LOGD(TAG, "Live Band %d: %.1fHz, %.1fdB, Q=%.2f (type=%d)",
-                         pkt->band_idx, band.freq_hz, band.gain_db, band.q_factor, band.type);
+                ESP_LOGD(TAG, "Live Ch%d Band %d: %.1fHz, %.1fdB, Q=%.2f (type=%d)",
+                         ch, pkt->band_idx, band.freq_hz, band.gain_db, band.q_factor, band.type);
             }
             break;
         }
 
         case WEBHID_CMD_SET_BAND_COUNT: {
             uint8_t count = pkt->band_idx;
+            peq_channel_t ch = (pkt->reserved[1] <= PEQ_CH_RIGHT) ? (peq_channel_t)pkt->reserved[1] : PEQ_CH_LINKED;
             if (count >= 1 && count <= PEQ_MAX_BANDS) {
-                peq_dsp_set_band_count(count);
+                peq_dsp_set_band_count_ch(ch, count);
                 char msg[24];
                 snprintf(msg, sizeof(msg), "%d Bands Active", count);
                 oled_display_show_eq_overlay(msg);
-                ESP_LOGI(TAG, "WebHID configured active band count: %d", count);
+                ESP_LOGI(TAG, "WebHID configured ch%d active band count: %d", ch, count);
             }
             break;
         }
@@ -437,6 +517,7 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
             float preamp_db = (float)pkt->gain_db_x10 / 10.0f;
             if (peq_dsp_get_current_preset(NULL) != PEQ_PRESET_USER_CUSTOM) {
                 peq_dsp_select_preset(PEQ_PRESET_USER_CUSTOM);
+                oled_display_set_eq_preset("User Custom");
             }
             peq_dsp_set_preamp(preamp_db);
             oled_display_show_eq_overlay("Preamp Tuned");
@@ -450,6 +531,7 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
                 peq_dsp_select_preset(slot);
                 char name[24] = {0};
                 peq_dsp_get_current_preset(name);
+                oled_display_set_eq_preset(name);
                 oled_display_show_eq_overlay(name);
                 ESP_LOGI(TAG, "WebHID switched active preset to [%d]: %s", slot, name);
             }
@@ -457,7 +539,6 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
         }
 
         case WEBHID_CMD_SAVE_TO_PRESET: {
-            // Explicit user save request: Commits volatile curve to NVS flash with delta check
             peq_dsp_save_user_profile_nvs();
             oled_display_show_eq_overlay("Saved to NVS");
             ESP_LOGI(TAG, "WebHID explicit commit: User Custom profile persisted to NVS.");
@@ -465,7 +546,6 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
         }
 
         case WEBHID_CMD_RESET_TO_PRESET: {
-            // Reset user profile to reference flat curves
             peq_band_param_t flat_band = {
                 .type = PEQ_FILTER_PEAKING,
                 .freq_hz = 1000.0f,
@@ -479,11 +559,42 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
             for (int b = 0; b < PEQ_MAX_BANDS; b++) {
                 flat_band.freq_hz = default_freqs[b];
                 flat_band.type = (b == 0) ? PEQ_FILTER_LOW_SHELF : ((b == PEQ_MAX_BANDS - 1) ? PEQ_FILTER_HIGH_SHELF : PEQ_FILTER_PEAKING);
-                peq_dsp_update_user_band(b, &flat_band);
+                peq_dsp_update_user_band_ch(PEQ_CH_LINKED, b, &flat_band);
             }
-            peq_dsp_set_band_count(PEQ_DEFAULT_NUM_BANDS);
+            peq_dsp_set_band_count_ch(PEQ_CH_LINKED, PEQ_DEFAULT_NUM_BANDS);
             oled_display_show_eq_overlay("Reset Custom");
             ESP_LOGI(TAG, "WebHID reset user profile to default curves.");
+            break;
+        }
+
+        case WEBHID_CMD_SET_AB_BYPASS: {
+            bool bypass = (pkt->band_idx != 0);
+            peq_dsp_set_ab_bypass(bypass);
+            oled_display_show_eq_overlay(bypass ? "A/B: EQ Bypass" : "A/B: EQ Active");
+            break;
+        }
+
+        case WEBHID_CMD_SET_DUAL_MONO: {
+            bool linked = (pkt->band_idx != 0);
+            if (peq_dsp_get_current_preset(NULL) != PEQ_PRESET_USER_CUSTOM) {
+                peq_dsp_select_preset(PEQ_PRESET_USER_CUSTOM);
+                oled_display_set_eq_preset("User Custom");
+            }
+            peq_dsp_set_linked_stereo(linked);
+            oled_display_show_eq_overlay(linked ? "Stereo Linked" : "Dual-Mono L/R");
+            break;
+        }
+
+        case WEBHID_CMD_SET_MIXER: {
+            peq_mixer_config_t cfg;
+            memset(&cfg, 0, sizeof(cfg));
+            cfg.mode = (pkt->band_idx < MIXER_MODE_COUNT) ? (mixer_mode_t)pkt->band_idx : MIXER_MODE_STEREO;
+            cfg.balance = (int8_t)pkt->filter_type;
+            cfg.width_pct = (pkt->enabled <= 200) ? pkt->enabled : 200;
+            cfg.crossfeed_level = (uint8_t)(pkt->freq_hz <= 2 ? pkt->freq_hz : 2);
+            memcpy(&cfg.custom_matrix[0][0], &pkt->reserved[0], sizeof(float) * 4);
+            peq_dsp_set_mixer(&cfg);
+            oled_display_show_eq_overlay("Mixer Updated");
             break;
         }
 
@@ -507,7 +618,6 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
         memcpy(&q,    &buffer[12], sizeof(float));
 
         if (cmd == 0x01 && band_idx < PEQ_MAX_BANDS) {
-            // Live auditioning in volatile SRAM
             peq_band_param_t band = {
                 .type = (peq_filter_type_t)filter_type,
                 .freq_hz = freq,
@@ -517,12 +627,12 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
             };
             if (peq_dsp_get_current_preset(NULL) != PEQ_PRESET_USER_CUSTOM) {
                 peq_dsp_select_preset(PEQ_PRESET_USER_CUSTOM);
+                oled_display_set_eq_preset("User Custom");
             }
             peq_dsp_update_user_band(band_idx, &band);
             oled_display_show_eq_overlay("WebHID Audition");
             ESP_LOGD(TAG, "Schema B Live Band %d: %.1fHz, %.1fdB, Q=%.2f", band_idx, freq, gain, q);
         } else if (cmd == 0x02) {
-            // Save to NVS
             peq_dsp_save_user_profile_nvs();
             oled_display_show_eq_overlay("Saved to NVS");
             ESP_LOGI(TAG, "Schema B: Explicit commit to NVS.");
@@ -536,7 +646,7 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
 
 esp_err_t webhid_peq_init(void)
 {
-    ESP_LOGI(TAG, "Initializing TinyUSB WebHID interface on GPIO %d (D-) and GPIO %d (D+)...",
+    ESP_LOGI(TAG, "Initializing TinyUSB UAC 1.0 (24-bit 44.1/48/96kHz) + WebHID on GPIO %d/%d...",
              BOARD_USB_DM_PIN, BOARD_USB_DP_PIN);
 
     tinyusb_config_t const tusb_cfg = {
@@ -570,36 +680,29 @@ esp_err_t webhid_peq_init(void)
         return ret;
     }
 
-    ESP_LOGI(TAG, "TinyUSB WebHID initialized successfully (VID: 0x%04X, PID: 0x%04X).",
+    ESP_LOGI(TAG, "TinyUSB UAC 1.0 + WebHID initialized (VID: 0x%04X, PID: 0x%04X).",
              s_device_desc.idVendor, s_device_desc.idProduct);
     return ESP_OK;
 }
 
-esp_err_t webhid_peq_send_band_report(uint8_t band_idx)
+esp_err_t webhid_peq_send_band_report_ch(uint8_t band_idx, peq_channel_t ch)
 {
-    if (band_idx >= PEQ_MAX_BANDS) return ESP_ERR_INVALID_ARG;
+    if (band_idx != 0xFE && band_idx >= PEQ_MAX_BANDS) return ESP_ERR_INVALID_ARG;
     if (!tud_hid_n_ready(0)) return ESP_ERR_NOT_FOUND;
 
-    peq_profile_t profile;
-    if (peq_dsp_get_profile(PEQ_PRESET_USER_CUSTOM, &profile) != ESP_OK) {
+    webhid_peq_packet_t pkt;
+    if (!webhid_build_band_packet(band_idx, ch, &pkt)) {
         return ESP_FAIL;
     }
-
-    webhid_peq_packet_t pkt = {0};
-    pkt.magic = WEBHID_MAGIC_16;
-    pkt.cmd = WEBHID_CMD_GET_ACTIVE_PROFILE;
-    pkt.band_idx = band_idx;
-    pkt.filter_type = profile.bands[band_idx].type;
-    pkt.enabled = profile.bands[band_idx].enabled ? 1 : 0;
-    pkt.freq_hz = (uint16_t)roundf(profile.bands[band_idx].freq_hz);
-    pkt.gain_db_x10 = (int16_t)roundf(profile.bands[band_idx].gain_db * 10.0f);
-    pkt.q_x100 = (uint16_t)roundf(profile.bands[band_idx].q_factor * 100.0f);
-    pkt.reserved[0] = profile.num_bands; // Expose dynamic band count to host
 
     bool res = tud_hid_n_report(0, 0, &pkt, sizeof(pkt));
     return res ? ESP_OK : ESP_FAIL;
 }
 
+esp_err_t webhid_peq_send_band_report(uint8_t band_idx)
+{
+    return webhid_peq_send_band_report_ch(band_idx, PEQ_CH_LEFT);
+}
 
 bool webhid_peq_is_mounted(void)
 {
@@ -609,6 +712,31 @@ bool webhid_peq_is_mounted(void)
 bool webhid_peq_is_streaming(void)
 {
     return s_is_streaming;
+}
+
+bool webhid_peq_consume_pending_sample_rate(uint32_t *out_sample_rate)
+{
+    bool pending = false;
+    uint32_t rate = 48000;
+    taskENTER_CRITICAL(&s_uac_rate_lock);
+    if (s_sample_rate_pending) {
+        pending = true;
+        rate = s_pending_sample_rate;
+        s_sample_rate_pending = false;
+    }
+    taskEXIT_CRITICAL(&s_uac_rate_lock);
+    if (pending && out_sample_rate) {
+        *out_sample_rate = rate;
+    }
+    return pending;
+}
+
+uint32_t webhid_peq_get_sample_rate(void)
+{
+    taskENTER_CRITICAL(&s_uac_rate_lock);
+    uint32_t sr = s_audio_sample_rate;
+    taskEXIT_CRITICAL(&s_uac_rate_lock);
+    return sr;
 }
 
 uint16_t webhid_peq_audio_available(void)

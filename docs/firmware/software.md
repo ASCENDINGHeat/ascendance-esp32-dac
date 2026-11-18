@@ -17,26 +17,27 @@ The firmware transforms the ESP32-S3 into a driverless, high-resolution **USB Au
  ┌─────────────────────────────────────────────────────────────────────────────┐
  │ Native USB OTG (GPIO 19: D-, GPIO 20: D+)                                   │
  │   • Interface 0: USB Audio Control (AC) - Feature Unit Mute & Volume        │
- │   • Interface 1: USB Audio Streaming (AS) - 48 kHz / 16-bit Stereo PCM      │
+ │   • Interface 1: USB Audio Streaming (AS) - 24-bit / 44.1, 48 & 96 kHz PCM  │
  │   • Interface 2: Vendor HID (WebHID) - 64-Byte Bidirectional Reports        │
  ├─────────────────────────────────────────────────────────────────────────────┤
  │ Core 0 (System, Control & Visual Subsystems)                                │
- │   • TinyUSB Device Stack Task (`tinyusb_task`, Priority 5)                  │
+ │   • TinyUSB Device Stack Task (`tinyusb_task`, Priority 5, 16 KB SW FIFO)   │
  │   • Hardware PCNT Rotary Encoder (GPIO 15/16) + Push Switch (GPIO 17)       │
- │   • Mode Pushbutton Event Poller (GPIO 18)                                  │
+ │   • Dual Mode/Nav Pushbuttons (`SW6` GPIO 18, `SW8` GPIO 10)                │
  │   • Control Dispatcher Task (`ctrl_disp`, Priority 4)                       │
  │   • SSD1306 128x64 OLED Display Driver (I2C Master: SDA=8, SCL=9, Prio 2)  │
  │   • Onboard WS2812B aRGB LED Volume Loudness Driver (GPIO 48 via RMT)       │
  │   • Audio Source Arbiter State Machine & 4-Phase Mute Protocol              │
- │   • NVS Flash Persistence (Delta-checked Wear Leveling)                     │
+ │   • NVS v2 Persistence (`user_cfg_v2`, CRC32 + Automatic V1 Migration)      │
  ├─────────────────────────────────────────────────────────────────────────────┤
  │ Core 1 (Hard Real-Time Audio DSP Subsystem)                                 │
- │   • High-Priority Audio DSP Task (`audio_dsp_task`, Priority 10)            │
- │   • UAC 1.0 Isochronous FIFO Stream Consumer (`webhid_peq_audio_read`)      │
- │   • 1-to-10 Band Dynamic PEQ (Direct Form II Transposed Biquads)            │
- │   • 15 ms Click-Free Double-Buffered Linear Crossfader                      │
- │   • Preamp Gain Headroom & Saturation Clamping `[-32768, 32767]`            │
- │   • Master I2S0 DMA Streamer (48,000 Hz, 16-bit Stereo)                     │
+ │   • High-Priority Audio DSP Task (`audio_dsp_task`, Priority 10, 8,192 B)   │
+ │   • Safe Zero-Pop Sample-Rate Reclocking (44.1 / 48.0 / 96.0 kHz)           │
+ │   • 1-to-10 Band Dual-Mono L/R PEQ (8 RBJ Biquad Topologies)                │
+ │   • 2x2 Channel Matrix Mixer & 3-Level Chu Moy Headphone Crossfeed          │
+ │   • 15 ms Click-Free Crossfader + Preamp-Normalized Instant A/B Bypass      │
+ │   • Preamp Gain Headroom & 24-bit Clamping `[-8388608, 8388607]`            │
+ │   • Master I2S0 DMA Streamer (32-bit Stereo Slots MSB-Aligned)              │
  ├─────────────────────────────────────────────────────────────────────────────┤
  │ External Audio & User Interface Hardware                                    │
  │   • GPIO 4: Master I2S Word Select / LCK (WS)  ────────► GY-PCM5102A DAC    │
@@ -54,19 +55,23 @@ The firmware transforms the ESP32-S3 into a driverless, high-resolution **USB Au
 The codebase is structured into modular, decoupled C subsystems in [`main/`](../../main) and browser tooling in [`tools/`](../../tools):
 
 ```
+├── .github/workflows/
+│   ├── build.yml                          # ESP-IDF v6.1 CI build, merged bin, size report & WebHID check
+│   └── release.yml                        # Tagged GitHub Release firmware & tuner packaging
 ├── CMakeLists.txt                         # Top-level ESP-IDF project build script
-├── sdkconfig.defaults                     # Platform, Flash (QIO 80MHz), and PSRAM configurations
+├── sdkconfig.defaults                     # Platform, Flash (16MB), and Octal PSRAM configurations
 ├── docs/                                  # Complete technical specifications & schematics
-│   ├── current_firmware_implementation.md # Exhaustive firmware technical record
-│   ├── future_enhancements.md             # Roadmap (Matrix Mixer, 24-bit, OLED curves, PWA)
-│   ├── hardware.md                        # Electrical pinouts, schematics & jumper configurations
-│   ├── parametric_eq_guide.md             # DSP biquad mathematics & filter design manual
-│   ├── software.md                        # (This document) Software architecture & HAL reference
-│   ├── usb_dac_guide.md                   # USB UAC 1.0 + WebHID stack architecture
+│   ├── firmware/
+│   │   ├── current_firmware_implementation.md # Exhaustive firmware technical record
+│   │   ├── future_enhancements.md         # Roadmap (Matrix Mixer, 24-bit, OLED curves, PWA)
+│   │   └── software.md                    # (This document) Software architecture & HAL reference
+│   ├── hardware/hardware.md               # Electrical pinouts, schematics & jumper configurations
+│   ├── guides/parametric_eq_guide.md      # DSP biquad mathematics & filter design manual
+│   ├── guides/usb_dac_guide.md            # USB UAC 1.0 + WebHID stack architecture
 │   └── software_functions/                # Modular subsystem function manuals
 ├── main/
 │   ├── CMakeLists.txt                     # Component registration & TinyUSB compile definitions
-│   ├── idf_component.yml                  # ESP Component Manager dependencies (`espressif/tinyusb`)
+│   ├── idf_component.yml                  # ESP Component Manager dependencies (`espressif/esp_tinyusb`)
 │   ├── Kconfig.projbuild                  # Menuconfig schema (pins, buffer sizes, debug flags)
 │   ├── board_pins.h                       # Centralized master hardware pinout definitions
 │   ├── main.c                            # Entry point (`app_main`), task orchestration & loops
@@ -77,7 +82,7 @@ The codebase is structured into modular, decoupled C subsystems in [`main/`](../
 │   ├── peq_dsp.c / .h                     # 1-to-10 band PEQ DSP engine, RBJ biquads & crossfader
 │   ├── led_indicator.c / .h               # WS2812B aRGB LED volume loudness driver (RMT 800kHz)
 │   ├── webhid_peq.c / .h                  # TinyUSB composite UAC 1.0 + WebHID stack & callbacks
-│   └── minimp3.h                          # Public-domain zero-dependency MP3 decoder
+│   └── minimp3.h                          # Public-domain zero-dependency MP3 decoder (research)
 └── tools/
     └── webhid_tuner/
         └── index.html                     # Driverless WebHID live GUI client (HTML5 Canvas)
@@ -93,12 +98,12 @@ The I2S controller is configured using the modern ESP-IDF v6.1 driver API (`esp_
 ```c
 i2s_chan_config_t chan_cfg = I2S_CHANNEL_DEFAULT_CONFIG(I2S_NUM_0, I2S_ROLE_MASTER);
 chan_cfg.auto_clear    = true;
-chan_cfg.dma_desc_num  = 4;
-chan_cfg.dma_frame_num = 128; // 512 bytes per descriptor
+chan_cfg.dma_desc_num  = 8;
+chan_cfg.dma_frame_num = 256; // 256 stereo frames (2,048 bytes @ 32-bit slots) per descriptor
 
 i2s_std_config_t std_cfg = {
-    .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(48000),
-    .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO),
+    .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate), // 44100 / 48000 / 96000 Hz
+    .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
     .gpio_cfg = {
         .mclk = I2S_GPIO_UNUSED,
         .bclk = (gpio_num_t)BOARD_I2S_BCK_PIN,       // GPIO 6
@@ -108,21 +113,22 @@ i2s_std_config_t std_cfg = {
     },
 };
 ```
-* **DMA FIFO Sizing:** 4 descriptors $\times$ 512 bytes = 2,048 bytes total. At 48 kHz stereo 16-bit ($192\text{ bytes/ms}$), this buffers **10.6 ms** of PCM audio, absorbing FreeRTOS thread scheduling jitter while maintaining low host-to-ear latency.
-* **Master Clock Generation:** The Texas Instruments **GY-PCM5102A** DAC generates its internal high-frequency Master Clock (MCLK) via an integrated PLL directly from the Bit Clock (BCK, 1.536 MHz). `mclk` is designated `I2S_GPIO_UNUSED`, conserving GPIOs.
+* **DMA FIFO Sizing:** 8 descriptors $\times$ 256 stereo frames $\times$ 8 bytes (32-bit L/R slots) = 16,384 bytes total (~42.7 ms at 48 kHz, ~21.3 ms at 96 kHz), absorbing FreeRTOS scheduling and NVS commit jitter.
+* **Master Clock Generation:** The Texas Instruments **GY-PCM5102A** DAC generates its internal high-frequency Master Clock (MCLK) via an integrated PLL directly from the Bit Clock (BCK: `2.8224 / 3.072 / 6.144 MHz`). `mclk` is designated `I2S_GPIO_UNUSED`, conserving GPIOs.
 * **Hardware Soft-Mute (`GPIO 7`):** Actively asserted LOW during boot, frequency switches, and source transitions to ensure zero audible pops or clicks.
+* **Perceptual Volume Taper:** Software master volume uses a quadratic perceptual curve (`norm * norm`) aligned with the UAC 1.0 dB Feature Unit mapping and applied inside Core 1's 32-bit DSP output stage (`audio_pipeline_get_volume_factor()`).
 
 ### 2.2 Native USB OTG Composite Stack ([`main/webhid_peq.c`](../../main/webhid_peq.c))
 Operating over Native USB Full-Speed (12.0 Mbps) on GPIO 19 (`D-`) and GPIO 20 (`D+`):
 * **Interface Association Descriptor (IAD):** Groups Interface 0 (Audio Control) and Interface 1 (Audio Streaming) as a compliant UAC 1.0 speaker.
 * **Interface 0 (Audio Control):** Feature Unit provides Master Volume and Mute control integrated directly into the OS volume mixer.
-* **Interface 1 (Audio Streaming):** Isochronous OUT endpoint (`0x01`, 196 max bytes, 1 ms polling) delivering 48 kHz / 16-bit stereo PCM.
-* **Interface 2 (Vendor WebHID):** Interrupt endpoints (`EP 0x02 OUT`, `EP 0x82 IN`, 64 bytes) for bidirectional communication with the WebHID browser tuner.
+* **Interface 1 (Audio Streaming):** Isochronous OUT endpoint (`0x01`, `588` max bytes, 1 ms polling, `16,384`-byte TinyUSB SW FIFO) delivering **24-bit PCM** at **44.1 kHz, 48.0 kHz, or 96.0 kHz**.
+* **Interface 2 (Vendor WebHID):** Interrupt endpoints (`EP 0x02 OUT`, `EP 0x82 IN`, 64 bytes) for bidirectional communication with the WebHID browser tuner (Dual-Mono L/R PEQ, A/B Toggle, 2×2 Matrix/Crossfeed, Sample Rate Telemetry).
 
 ### 2.3 Hardware Pulse Counter (PCNT) Driver ([`main/controls.c`](../../main/controls.c))
 Quadrature decoding of the EC11 rotary encoder uses the ESP32-S3 dedicated hardware PCNT peripheral:
 * **Glitch Filter:** Hardware filter suppresses contact bounce under $1{,}000\text{ ns}$.
-* **Offloaded Decoding:** Core 0/1 CPUs are not interrupted on rotary state transitions; pulses accumulate in hardware counter registers and are polled efficiently at 20 Hz.
+* **Offloaded Decoding:** Core 0/1 CPUs are not interrupted on rotary state transitions; pulses accumulate in hardware counter registers and are polled efficiently at 50 Hz (`20 ms` period).
 
 ### 2.4 Fast I2C Master Bus ([`main/oled_display.c`](../../main/oled_display.c))
 * **Bus Speed:** 400 kHz Fast Mode on GPIO 8 (`SDA`) and GPIO 9 (`SCL`) with external 4.7 kΩ pull-ups.
@@ -171,31 +177,32 @@ All coefficients are normalized by dividing by $a_0$.
   $$a_1 = 2\left((A-1) - (A+1)\cos(\omega_0)\right)$$
   $$a_2 = (A+1) - (A-1)\cos(\omega_0) - 2\sqrt{A}\alpha$$
 
-### 3.2 Dynamic Band Scaling (1 to 10 Bands)
-* The engine scales dynamically between 1 and 10 active bands without heap re-allocation.
-* The inner processing loop executes strictly across active bands ($k = 0 \dots \text{num\_bands}-1$), consuming $< 2.20\text{ MIPS}$ ($< 4\%$ of Core 1 capacity) at 10 bands.
+### 3.2 Extended Topologies, Dual-Mono L/R & Matrix/Crossfeed
+* In addition to Peaking, Low-Shelf, and High-Shelf, the engine implements gain-independent RBJ topologies: **High-Pass (HPF, 4)**, **Low-Pass (LPF, 5)**, **Notch (NTCH, 6)**, and **Band-Pass (BPF, 7)**.
+* Each channel (`PEQ_CH_LEFT`, `PEQ_CH_RIGHT`) scales independently or linked (`PEQ_CH_LINKED`) between 1 and 10 active bands without heap re-allocation.
+* Post-EQ processing applies a `2×2` channel matrix (`Stereo`, `Mono Mix`, `L-Only`, `R-Only`, `Swap L/R`, `Mid-Side Width 0–200%`, `L/R Balance`, `Custom Matrix`) and optional 3-level **Chu Moy Crossfeed** (`Off / Mild / Medium`: 700 Hz 1st-order LPF + ~270 µs circular delay buffer `CROSSFEED_MAX_DELAY = 32`).
 
-### 3.3 15 ms Click-Free Double-Buffered Crossfader
+### 3.3 15 ms Click-Free Crossfader, A/B Toggle & Cross-Core Staging
 To eliminate clicks, pops, or zipper noise when dragging sliders or switching presets:
-1. Target biquad coefficients are synthesized into a staging buffer (`target_biquads[]`).
-2. An interpolation loop runs across $N_{\text{fade}} = \text{round}(0.015 \times 48000) = 720\text{ samples}$:
+1. Core 0 computes target biquad and mixer coefficients on the stack outside locks, then atomically stages `s_pending_*` under `portMUX_TYPE` spinlock (`s_peq_lock`) with generation validation (`s_state_gen`).
+2. Core 1 (`peq_dsp_process_interleaved_s24_to_s32` / `peq_dsp_process_interleaved_s16_to_s32`) consumes staged updates and runs an interpolation loop across $N_{\text{fade}} = \text{round}(0.015 \times f_s)$ samples ($662 / 720 / 1440$ samples):
    $$y[n] = (1.0 - \beta) \cdot y_{\text{active}}[n] + \beta \cdot y_{\text{target}}[n], \quad \beta \in [0.0, 1.0]$$
-3. Upon completion ($\beta = 1.0$), `target_biquads[]` atomically replaces `active_biquads[]`.
+3. **Preamp-Normalized Instant A/B Bypass:** `peq_dsp_set_ab_bypass()` toggles flat EQ comparison cleanly across the 15 ms crossfade while keeping `preamp_gain_db` active (transient only, never saved to NVS).
+4. `biquad_filter_sample()` flushes subnormal delay states ($< 1 \times 10^{-15}$) to zero, and `calculate_biquad()` validates `isfinite()` / non-zero `a0` with safe passthrough fallback.
 
 ### 3.4 Saturation Protection & Pre-Gain Headroom
 * **Preamp Attenuation:** Provides $0.0\text{ to }-12.0\text{ dB}$ digital pre-attenuation to prevent large positive biquad boosts from exceeding $0\text{ dBFS}$.
-* **Hard Saturation Clamping:** Clamps all floating-point audio samples to signed 16-bit integer boundaries before integer conversion:
-  $$\text{Sample}_{\text{clamped}} = \max(-32768, \; \min(32767, \; \text{round}(y[n])))$$
+* **Hard Saturation Clamping:** Non-finite samples are zeroed and all floating-point audio samples are clamped to signed 24-bit full-scale bounds (`[-8388608.0f, 8388607.0f]`) before MSB-aligned 32-bit I2S slot output (`(int32_t)((uint32_t)(int32_t)lrintf(val) << 8)`).
 
-### 3.5 Factory Presets & NVS Flash Persistence
+### 3.5 Factory Presets & Versioned NVS v2 Persistence
 | Preset ID | Name | Configuration |
 | :---: | :--- | :--- |
 | `0` | **Reference Flat** | 0.0 dB across all bands (bit-perfect passthrough) |
-| `1` | **Warm Bass Boost** | +4.5 dB Low Shelf @ 105 Hz ($Q = 0.71$) |
+| `1` | **Warm Bass Boost** | +4.5 dB Low Shelf @ 80 Hz ($Q = 0.71$) + multi-band contour |
 | `2` | **Harman OE2018** | 5-band reference target matching Harman headphone curves |
-| `3` | **User Custom** | Persisted in NVS namespace `audio_peq`, key `user_profile` |
+| `3` | **User Custom** | Persisted in NVS namespace `audio_peq`, key `user_cfg_v2` (CRC32 + V1 migration from `user_profile`) |
 
-* **Zero Flash Wear During Tuning:** Real-time WebHID slider adjustments stream exclusively into volatile SRAM. Committing to NVS requires an explicit user command and performs a CRC32 delta check to skip redundant flash writes.
+* **Zero Flash Wear During Tuning:** Real-time WebHID slider adjustments stream exclusively into volatile SRAM. Committing to NVS v2 snapshots Left/Right profiles and `peq_mixer_config_t` under `s_peq_lock`, computes CRC32, and performs a `memcmp()` delta check to skip redundant flash writes.
 
 ---
 
@@ -287,7 +294,7 @@ Triggered by selecting **"1. Live EQ Adjust"** from the Main Menu. Allows compre
 #### Playback Mode (Default Dashboard)
 ```
   0,0 ┌────────────────────────────────────────────────────────┐ 127,0
-      │ [USB DAC] 48.0k 16b                             V: 80% │ Header (y=0..10)
+      │ [USB DAC] 48.0k 24b                             V: 80% │ Header (y=0..10)
    12 ├────────────────────────────────────────────────────────┤
       │                   ESP32-S3 Audio DSP                   │
       │                     DSP Standalone                     │ Dynamic Body
@@ -324,18 +331,15 @@ Triggered by selecting **"1. Live EQ Adjust"** from the Main Menu. Allows compre
       │ [+B]  [-B]  [SAVE] [EXIT]                              │ Action Toolbar (y=53..63)
   127 └────────────────────────────────────────────────────────┘ 127,63
 ```
-  127 └────────────────────────────────────────────────────────┘ 127,63
-```
-
-
+*(Note: The `[TYPE]` field cycles across all 8 filter types: `[BYP ]`, `[PEAK]`, `[L-SH]`, `[H-SH]`, `[HPF ]`, `[LPF ]`, `[NTCH]`, `[BPF ]`.)*
 
 ---
 
-## 6. Driverless WebHID Browser Tuner
+## 6. Driverless WebHID Browser Tuner & PWA
 
-Location: [`tools/webhid_tuner/index.html`](../../tools/webhid_tuner/index.html).
+Location: [`tools/webhid_tuner/`](../../tools/webhid_tuner/) (`index.html`, `manifest.json`, `sw.js`, `icon.svg`).
 
-The live tuner operates without drivers, native software installations, or cloud dependencies, running directly inside Google Chrome, Microsoft Edge, Brave, Opera, or Android Chrome via the standard **WebHID API** (`navigator.hid`).
+The live tuner operates without drivers, native software installations, or cloud dependencies, running directly inside Google Chrome, Microsoft Edge, Brave, Opera, or Android Chrome via the standard **WebHID API** (`navigator.hid`), with installable PWA support when served over HTTPS/`localhost`.
 
 ```
  ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -343,15 +347,15 @@ The live tuner operates without drivers, native software installations, or cloud
  ├──────────┬──────────┬──────────┬──────────┬──────────┬──────────┬───────────┤
  │ Magic    │ Command  │ Band Idx │ Filter   │ Enabled  │ Freq     │ Gain      │
  │ (0x4551) │ (1 Byte) │ (1 Byte) │ (1 Byte) │ (1 Byte) │ (2 Bytes)│ (2 Bytes) │
- │ 2 Bytes  │ 0x01..07 │ 0..9     │ 0..3     │ 0 or 1   │ 20..20k  │ x10 dB    │
+ │ 2 Bytes  │ 0x01..13 │ 0..9/FE  │ 0..7     │ 0 or 1   │ 20..20k  │ x10 dB    │
  ├──────────┴──────────┴──────────┴──────────┴──────────┴──────────┴───────────┤
- │  Q Factor (2 Bytes, x100)  │  Reserved / Payload (52 Bytes, num_bands)      │
- └────────────────────────────┴────────────────────────────────────────────────┘
+ │ Q Factor (2B, x100) │ reserved[0..51] @ byte 12 (num_bands/ch/flags/mixer/fs)│
+ └─────────────────────┴───────────────────────────────────────────────────────┘
 ```
 
-* **Interactive HTML5 Canvas Graph:** Real-time curve rendering with draggable frequency/gain nodes and mouse-wheel Q factor adjustment.
-* **Dynamic Band Scaling:** Add/remove bands (1 to 10) on the fly with presets for 3-band, 5-band, 7-band, and 10-band setups.
-* **Bidirectional Synchronization:** Automatically syncs hardware state upon USB connection.
+* **Interactive HTML5 Canvas Graph:** Exact RBJ complex transfer evaluation with Magnitude (`dB`), Phase (`-180°..+180°`), Group Delay (`ms`), draggable nodes, and mouse-wheel Q factor adjustment.
+* **Dual-Mono L/R, A/B Toggle & Matrix/Crossfeed:** Linked Stereo or independent Left/Right tuning, transient A/B Bypass (`0x08`), `2×2` Channel Matrix (`0x13`), Chu Moy Crossfeed, and Equalizer APO `.txt` / `.json` import & export.
+* **Bidirectional Synchronization:** Automatically syncs hardware state (`num_bands`, active preset, Dual-Mono flags, mixer state, sample rate) upon USB connection.
 
 ---
 
@@ -362,10 +366,10 @@ The firmware utilizes both cores of the ESP32-S3 to separate hard real-time audi
 | Core ID | Task Name | Function | Stack Budget | Priority | Execution Model |
 | :---: | :--- | :--- | :---: | :---: | :--- |
 | **Core 0** | `tinyusb_task` | TinyUSB device stack event loop | 4,096 B | 5 | Event-driven (blocking on USB D+/D- interrupts) |
-| **Core 0** | `ctrl_disp` | User controls dispatcher & NVS commit | 3,072 B | 4 | Event-driven (blocking on `s_ctrl_queue`) |
-| **Core 0** | `oled_task` | SSD1306 I2C framebuffer rendering | 3,072 B | 2 | Periodic (10 FPS non-blocking refresh) |
-| **Core 0** | `pcnt_worker` | Rotary encoder poll & button debounce | 2,048 B | 3 | Periodic (20 Hz timer) |
-| **Core 1** | `audio_dsp_task` | **Real-Time DSP audio generator & I2S DMA** | **4,096 B** | **10** | **Continuous real-time stream loop** |
+| **Core 0** | `ctrl_disp` | User controls dispatcher & NVS commit | 4,096 B | 4 | Event-driven (blocking on `s_ctrl_queue`) |
+| **Core 0** | `oled_ui_task` | SSD1306 I2C framebuffer rendering | 4,096 B | 2 | Periodic (10 FPS non-blocking refresh) |
+| **Core 0** | `controls_task` | Rotary encoder poll & button debounce | 3,072 B | 3 | Periodic (50 Hz / 20 ms poll loop) |
+| **Core 1** | `audio_dsp_task` | **Real-Time DSP audio generator & I2S DMA** | **8,192 B** | **10** | **Continuous real-time stream loop (`CONFIG_FREERTOS_HZ=1000`)** |
 
 ---
 
@@ -375,9 +379,9 @@ When writing or refactoring C code for this repository, AI agents MUST strictly 
 
 1. **Octal PSRAM Pin Protection (FATAL):** Never allocate, reconfigure, or route signals to `GPIO 33, 34, 35, 36, 37`. These pins are dedicated to the Octal PSRAM bus (`APS6404L`). Accessing them triggers an unrecoverable `Cache disabled but cached memory region accessed` kernel panic.
 2. **Core 1 Isolation for Audio DSP:** The real-time audio loop (`audio_dsp_task`, biquad calculations, I2S DMA feeding) must execute strictly on **Core 1** at high priority (Priority 10). Never run non-deterministic tasks (USB stack, NVS flash commits, display I/O) on Core 1.
-3. **Zero Dynamic Allocation in Audio Loops:** Never call `malloc()`, `calloc()`, or `realloc()` inside `audio_dsp_task` or `peq_dsp_process_interleaved_s16()`. Pre-allocate all buffers in static BSS or during initialization.
-4. **Saturation Clamping:** All floating-point DSP output samples must be clamped to signed 16-bit integer bounds (`[-32768, 32767]`) before casting to `int16_t` to prevent catastrophic numerical rollover distortion.
+3. **Zero Dynamic Allocation in Audio Loops:** Never call `malloc()`, `calloc()`, or `realloc()` inside `audio_dsp_task` or `peq_dsp_process_interleaved_s24_to_s32()`. Pre-allocate all buffers in static BSS or during initialization.
+4. **Saturation Clamping:** All floating-point DSP output samples must be clamped to signed 24-bit full-scale bounds (`[-8388608.0f, 8388607.0f]`) before shifting MSB-aligned into 32-bit I2S slots (`int32_t`).
 5. **Click-Free Coefficient Updates:** Never swap biquad filter coefficients instantaneously during playback. Always invoke the 15 ms double-buffered linear crossfade engine to avoid audible clicks.
-6. **Flash Wear Protection:** Never write to NVS flash inside real-time control loops or WebHID slider dragging callbacks. All slider adjustments must be applied volatilely in SRAM, reserving flash writes for explicit user commit commands.
+6. **Flash Wear Protection:** Never write to NVS flash inside real-time control loops or WebHID slider dragging callbacks. All live adjustments must remain volatile in SRAM, reserving NVS v2 (`user_cfg_v2`) writes for explicit user commit commands.
 7. **Hardware Soft-Mute Protocol:** Always pull `GPIO 7 LOW` before altering I2S clock dividers, switching audio sample rates, or transitioning audio sources. Hold mute for at least 15 ms, reconfigure the pipeline, and hold for 15 ms after unmuting.
 8. **I2S Master Clock Synthesizer:** Do NOT configure an external MCLK GPIO on the ESP32-S3. The GY-PCM5102A hardware board has its `SCK` jumper tied to `L` (GND) to utilize its internal low-jitter PLL derived directly from BCK (GPIO 6).

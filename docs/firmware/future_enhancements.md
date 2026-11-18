@@ -3,7 +3,7 @@
 This specification details the technical architectures, mathematical formulations, descriptor configurations, and implementation requirements for planned firmware and tooling enhancements.
 
 > [!NOTE]
-> This document serves as the implementation-ready blueprint for future development cycles. The features described herein are documented for design review and are not yet enabled in the active firmware build.
+> Sections **1.1–1.6** (HPF/LPF/Notch/BPF, 24-bit tri-rate 44.1/48/96 kHz, Dual-Mono L/R PEQ, Instant A/B Bypass, 2×2 Channel Matrix & Chu Moy Crossfeed) and **3.1–3.3** (Equalizer APO/AutoEQ `.txt` & `.json` import/export, PWA offline assets, Phase & Group Delay traces) are now **implemented** in firmware and `tools/webhid_tuner/`. Sections **2.x** (on-device OLED VU/curve/menu) and **4.x** (USB suspend sleep & auto-mute) remain planned future enhancements.
 
 ---
 
@@ -311,16 +311,17 @@ In addition to the magnitude response curve ($|H(f)|$ in dB), audiophiles and ac
 
 ## Summary Matrix
 
-| Enhancement Area | Component | Primary Benefit | Implementation Effort |
-| :--- | :--- | :--- | :---: |
-| **HPF / LPF / Notch / BPF** | `peq_dsp.c` / WebHID | Subsonic protection, noise reduction, and resonance removal | Low |
-| **24-Bit / 96 kHz Audio** | `CMakeLists.txt` / I2S | 112 dB dynamic range and studio master resolution | Medium |
-| **Dual-Rate (44.1k & 48k)** | TinyUSB / I2S | Bit-perfect CD playback with zero OS resampling | Medium |
-| **Dual-Mono L/R PEQ** | `peq_dsp.c` / WebHID | Independent channel balance and asymmetric calibration | Medium |
-| **A/B Instant Toggle** | `peq_dsp.c` / WebHID | Instant click-free comparison against flat bypass | Low |
-| **Channel Matrix & Crossfeed** | `peq_dsp.c` / WebHID | Stereo widening, mono downmix, and Chu Moy headphone crossfeed | Low |
-| **OLED Live EQ Curve** | `oled_display.c` | Real-time response curve rendering on hardware screen | Medium |
-| **OLED Stereo VU Meter** | `oled_display.c` / DSP | Live visual feedback of stereo output levels | Low |
-| **AutoEQ / APO Import** | `tools/webhid_tuner` | One-click import of Crinacle / Oratory1990 headphone presets | Low |
-| **PWA Offline Support** | `tools/webhid_tuner` | Native standalone app installation on desktop and mobile | Low |
-| **USB Suspend & Auto-Mute** | `webhid_peq.c` / GPIO | Zero idle hiss and $<15\text{ mA}$ standby power consumption | Low |
+| Enhancement Area | Component | Primary Benefit | Implementation Effort | Status |
+| :--- | :--- | :--- | :---: | :---: |
+| **HPF / LPF / Notch / BPF** | `peq_dsp.c` / WebHID | Subsonic protection, noise reduction, and resonance removal | Low | **Implemented** |
+| **24-Bit / 96 kHz Audio** | `CMakeLists.txt` / I2S | 112 dB dynamic range and studio master resolution | Medium | **Implemented** |
+| **Tri-Rate (44.1k, 48k, 96k)** | TinyUSB / I2S | Bit-perfect CD & Hi-Res playback with zero OS resampling | Medium | **Implemented** |
+| **Dual-Mono L/R PEQ** | `peq_dsp.c` / WebHID | Independent channel balance and asymmetric calibration | Medium | **Implemented** |
+| **A/B Instant Toggle** | `peq_dsp.c` / WebHID | Instant click-free comparison against flat bypass | Low | **Implemented** |
+| **Channel Matrix & Crossfeed** | `peq_dsp.c` / WebHID | Stereo widening, mono downmix, and Chu Moy headphone crossfeed | Low | **Implemented** |
+| **OLED Live EQ Curve** | `oled_display.c` | Real-time response curve rendering on hardware screen | Medium | Planned |
+| **OLED Stereo VU Meter** | `oled_display.c` / DSP | Live visual feedback of stereo output levels | Low | Planned |
+| **AutoEQ / APO Import** | `tools/webhid_tuner` | One-click import of Crinacle / Oratory1990 headphone presets | Low | **Implemented** |
+| **PWA Offline Support** | `tools/webhid_tuner` | Native standalone app installation on desktop and mobile | Low | **Implemented** |
+| **Phase & Group Delay Plot** | `tools/webhid_tuner` | Exact RBJ complex transfer phase (°) and group delay (ms) overlay | Low | **Implemented** |
+| **USB Suspend & Auto-Mute** | `webhid_peq.c` / GPIO | Zero idle hiss and $<15\text{ mA}$ standby power consumption | Low | Planned |

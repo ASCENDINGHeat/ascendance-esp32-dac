@@ -83,15 +83,29 @@ int audio_pipeline_get_volume(void);
 int audio_pipeline_adjust_volume(int delta);
 
 /**
- * @brief Push stereo 16-bit PCM audio samples to I2S DMA.
+ * @brief Get the current perceptual linear volume multiplier (0.0f to 1.0f).
  *
- * Applies current software volume scaling with hard saturation clamping
- * against [-32768, 32767] (Invariant 8) before queuing into DMA.
+ * @return float Volume scaling factor.
+ */
+float audio_pipeline_get_volume_factor(void);
+
+/**
+ * @brief Push stereo 16-bit PCM audio samples to 32-bit I2S DMA.
+ *
+ * Applies current software volume scaling and up-shifts to 32-bit MSB-aligned slots.
  *
  * @param data Interleaved stereo 16-bit PCM buffer (L, R, L, R...).
  * @param size_bytes Size of data in bytes.
  */
 void audio_pipeline_write(const void *data, size_t size_bytes);
+
+/**
+ * @brief Push pre-processed 32-bit MSB-aligned stereo PCM frames directly to I2S DMA.
+ *
+ * @param data Interleaved stereo int32_t buffer (L, R, L, R...).
+ * @param size_bytes Size of data in bytes.
+ */
+void audio_pipeline_write_s32(const int32_t *data, size_t size_bytes);
 
 /**
  * @brief Output a synthesized pure sine wave test tone.

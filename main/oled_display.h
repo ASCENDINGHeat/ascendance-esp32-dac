@@ -108,6 +108,20 @@ void oled_display_show_volume_overlay(int volume);
 void oled_display_show_eq_overlay(const char *preset_name);
 
 /**
+ * @brief Update the persistent EQ preset name shown in the playback footer.
+ *
+ * @param preset_name Name of the currently active EQ preset.
+ */
+void oled_display_set_eq_preset(const char *preset_name);
+
+/**
+ * @brief Update the sample rate label shown in the playback header (e.g. "44.1k 24b", "96.0k 24b").
+ *
+ * @param sample_rate Active sample rate in Hz.
+ */
+void oled_display_set_sample_rate(int sample_rate);
+
+/**
  * @brief Set the active UI screen mode (Playback, Menu, or EQ Adjust).
  *
  * @param mode Active UI mode.

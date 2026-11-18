@@ -31,7 +31,7 @@ static ui_eq_adjust_state_t s_current_eq_state;
 static int s_overlay_vol_timeout = 0;
 static int s_overlay_vol_val = 0;
 static int s_overlay_eq_timeout = 0;
-static char s_overlay_eq_name[16] = {0};
+static char s_overlay_eq_name[24] = {0};
 
 /* 5x7 ASCII Bitmap Font (ASCII 32 ' ' to 126 '~') */
 static const uint8_t font5x7[96][5] = {
@@ -247,8 +247,8 @@ static void render_playback_screen(void)
     int vol_timeout = s_overlay_vol_timeout;
     int vol_val = s_overlay_vol_val;
     int eq_timeout = s_overlay_eq_timeout;
-    char eq_name[16];
-    strncpy(eq_name, s_overlay_eq_name, sizeof(eq_name));
+    char eq_name[24];
+    snprintf(eq_name, sizeof(eq_name), "%s", s_overlay_eq_name);
     if (s_overlay_vol_timeout > 0) s_overlay_vol_timeout--;
     if (s_overlay_eq_timeout > 0) s_overlay_eq_timeout--;
     xSemaphoreGive(s_ui_mutex);
@@ -283,11 +283,17 @@ static void render_playback_screen(void)
         oled_draw_string(24, 20, v_str, false);
         oled_draw_progress_bar(16, 32, 96, 9, vol_val);
     } else if (eq_timeout > 0) {
-        // Overlay: EQ Preset Box
+        // Overlay: EQ Preset / Status Box (x=10..117, inner width 104px -> up to 17 chars)
         oled_draw_rect(10, 16, 108, 30, true, false);
         oled_draw_rect(10, 16, 108, 30, false, true);
-        oled_draw_string(20, 20, "<< EQ PRESET >>", false);
-        oled_draw_string(24, 32, eq_name, false);
+        oled_draw_string(19, 20, "<< EQ PRESET >>", false);
+        int name_len = (int)strlen(eq_name);
+        if (name_len > 17) {
+            eq_name[17] = '\0';
+            name_len = 17;
+        }
+        int eq_x = 10 + (108 - name_len * 6) / 2;
+        oled_draw_string(eq_x, 32, eq_name, false);
     } else {
         // Normal Track / Mode Info
         oled_draw_string(2, 16, state.title[0] ? state.title : "ESP32-S3 Audio DSP", false);
@@ -399,7 +405,11 @@ static void render_eq_adjust_screen(void)
     const char *type_str = "PEAK";
     if (eq.band.type == PEQ_FILTER_LOW_SHELF) type_str = "L-SH";
     else if (eq.band.type == PEQ_FILTER_HIGH_SHELF) type_str = "H-SH";
-    else if (eq.band.type == PEQ_FILTER_BYPASS) type_str = "BYP";
+    else if (eq.band.type == PEQ_FILTER_HIGH_PASS) type_str = "HPF ";
+    else if (eq.band.type == PEQ_FILTER_LOW_PASS) type_str = "LPF ";
+    else if (eq.band.type == PEQ_FILTER_NOTCH) type_str = "NTCH";
+    else if (eq.band.type == PEQ_FILTER_BAND_PASS) type_str = "BPF ";
+    else if (eq.band.type == PEQ_FILTER_BYPASS) type_str = "BYP ";
 
     char type_box[12];
     snprintf(type_box, sizeof(type_box), "[%s]", type_str);
@@ -428,11 +438,13 @@ static void render_eq_adjust_screen(void)
 
     // 3. Gain (y: 21..29): "GAIN:  + 0 4 . 5  dB"
     float g = eq.band.gain_db;
-    char g_sign = (g >= 0.0f) ? '+' : '-';
-    float g_abs = fabsf(g);
-    int g_tens = ((int)g_abs / 10) % 10;
-    int g_ones = ((int)g_abs) % 10;
-    int g_dec  = ((int)(g_abs * 10.0f + 0.5f)) % 10;
+    if (g < -24.0f) g = -24.0f;
+    if (g > 12.0f) g = 12.0f;
+    int g_x10 = (int)roundf(fabsf(g) * 10.0f);
+    char g_sign = (g_x10 == 0 || g >= 0.0f) ? '+' : '-';
+    int g_tens = (g_x10 / 100) % 10;
+    int g_ones = (g_x10 / 10) % 10;
+    int g_dec  = g_x10 % 10;
 
     oled_draw_string(2, 21, "GAIN:", false);
     oled_draw_char(38, 21, g_sign,       eq.cursor == EQ_CURSOR_GAIN_SIGN);
@@ -442,16 +454,19 @@ static void render_eq_adjust_screen(void)
     oled_draw_char(66, 21, '0' + g_dec,  eq.cursor == EQ_CURSOR_GAIN_DEC);
     oled_draw_string(82, 21, "dB", false);
 
-    // 4. Q Factor (y: 31..39): "Q   :  0 1 . 4 1"
+    // 4. Q Factor (y: 31..39): "Q   :  1 . 4 1" or "1 0 . 0 0"
     float q = eq.band.q_factor;
     if (q < 0.10f) q = 0.10f;
     if (q > 10.00f) q = 10.00f;
-    int q_int  = (int)q;
-    int q_dec1 = ((int)(q * 10.0f + 0.05f)) % 10;
-    int q_dec2 = ((int)(q * 100.0f + 0.5f)) % 10;
+    int q_x100 = (int)roundf(q * 100.0f);
+    int q_tens = q_x100 / 1000;
+    int q_ones = (q_x100 / 100) % 10;
+    int q_dec1 = (q_x100 / 10) % 10;
+    int q_dec2 = q_x100 % 10;
 
     oled_draw_string(2, 31, "Q   :", false);
-    oled_draw_char(46, 31, '0' + q_int,  eq.cursor == EQ_CURSOR_Q_INT);
+    oled_draw_char(40, 31, q_tens ? ('0' + q_tens) : ' ', eq.cursor == EQ_CURSOR_Q_INT && q_tens > 0);
+    oled_draw_char(46, 31, '0' + q_ones, eq.cursor == EQ_CURSOR_Q_INT);
     oled_draw_char(54, 31, '.',          false);
     oled_draw_char(60, 31, '0' + q_dec1, eq.cursor == EQ_CURSOR_Q_DEC1);
     oled_draw_char(68, 31, '0' + q_dec2, eq.cursor == EQ_CURSOR_Q_DEC2);
@@ -516,11 +531,11 @@ esp_err_t oled_display_init(void)
 
     // Default boot state
     memset(&s_current_state, 0, sizeof(s_current_state));
-    strncpy(s_current_state.mode_str, "USB DAC", sizeof(s_current_state.mode_str));
-    strncpy(s_current_state.sample_rate_str, "48.0k 16b", sizeof(s_current_state.sample_rate_str));
-    strncpy(s_current_state.title, "ESP32-S3 Audio DSP", sizeof(s_current_state.title));
-    strncpy(s_current_state.subtitle, "Ready / Standalone", sizeof(s_current_state.subtitle));
-    strncpy(s_current_state.eq_preset, "Flat", sizeof(s_current_state.eq_preset));
+    snprintf(s_current_state.mode_str, sizeof(s_current_state.mode_str), "USB DAC");
+    snprintf(s_current_state.sample_rate_str, sizeof(s_current_state.sample_rate_str), "48.0k 24b");
+    snprintf(s_current_state.title, sizeof(s_current_state.title), "ESP32-S3 Audio DSP");
+    snprintf(s_current_state.subtitle, sizeof(s_current_state.subtitle), "Ready / Standalone");
+    snprintf(s_current_state.eq_preset, sizeof(s_current_state.eq_preset), "Flat");
     s_current_state.volume = 80;
     s_current_state.is_playing = true;
 
@@ -604,6 +619,11 @@ void oled_display_set_state(const ui_display_state_t *state)
     if (!state || !s_ui_mutex) return;
     xSemaphoreTake(s_ui_mutex, portMAX_DELAY);
     s_current_state = *state;
+    s_current_state.mode_str[sizeof(s_current_state.mode_str) - 1] = '\0';
+    s_current_state.sample_rate_str[sizeof(s_current_state.sample_rate_str) - 1] = '\0';
+    s_current_state.title[sizeof(s_current_state.title) - 1] = '\0';
+    s_current_state.subtitle[sizeof(s_current_state.subtitle) - 1] = '\0';
+    s_current_state.eq_preset[sizeof(s_current_state.eq_preset) - 1] = '\0';
     xSemaphoreGive(s_ui_mutex);
 }
 
@@ -622,8 +642,24 @@ void oled_display_show_eq_overlay(const char *preset_name)
     if (!s_ui_mutex || !preset_name) return;
     xSemaphoreTake(s_ui_mutex, portMAX_DELAY);
     s_overlay_eq_timeout = 20; // 2.0 seconds at 10 FPS
-    strncpy(s_overlay_eq_name, preset_name, sizeof(s_overlay_eq_name) - 1);
-    strncpy(s_current_state.eq_preset, preset_name, sizeof(s_current_state.eq_preset) - 1);
+    snprintf(s_overlay_eq_name, sizeof(s_overlay_eq_name), "%s", preset_name);
+    xSemaphoreGive(s_ui_mutex);
+}
+
+void oled_display_set_eq_preset(const char *preset_name)
+{
+    if (!s_ui_mutex || !preset_name) return;
+    xSemaphoreTake(s_ui_mutex, portMAX_DELAY);
+    snprintf(s_current_state.eq_preset, sizeof(s_current_state.eq_preset), "%s", preset_name);
+    xSemaphoreGive(s_ui_mutex);
+}
+
+void oled_display_set_sample_rate(int sample_rate)
+{
+    if (!s_ui_mutex || sample_rate <= 0) return;
+    xSemaphoreTake(s_ui_mutex, portMAX_DELAY);
+    snprintf(s_current_state.sample_rate_str, sizeof(s_current_state.sample_rate_str),
+             "%.1fk 24b", (float)sample_rate / 1000.0f);
     xSemaphoreGive(s_ui_mutex);
 }
 
@@ -650,10 +686,10 @@ void oled_display_update_menu(int selected_index, const char *preset_name, const
     xSemaphoreTake(s_ui_mutex, portMAX_DELAY);
     s_current_menu_state.selected_idx = selected_index;
     if (preset_name) {
-        strncpy(s_current_menu_state.current_preset, preset_name, sizeof(s_current_menu_state.current_preset) - 1);
+        snprintf(s_current_menu_state.current_preset, sizeof(s_current_menu_state.current_preset), "%s", preset_name);
     }
     if (source_name) {
-        strncpy(s_current_menu_state.current_source, source_name, sizeof(s_current_menu_state.current_source) - 1);
+        snprintf(s_current_menu_state.current_source, sizeof(s_current_menu_state.current_source), "%s", source_name);
     }
     s_current_menu_state.preamp_gain_db = preamp_gain_db;
     xSemaphoreGive(s_ui_mutex);
