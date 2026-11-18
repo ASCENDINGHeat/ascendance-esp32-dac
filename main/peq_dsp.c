@@ -494,11 +494,13 @@ static void load_user_profile_nvs(void)
         v2.version == PEQ_NVS_VERSION_V2) {
         uint32_t expected_crc = calc_crc32((const uint8_t *)&v2, offsetof(peq_nvs_v2_t, crc32));
         if (expected_crc == v2.crc32) {
-            sanitize_profile(&v2.left);
-            sanitize_profile(&v2.right);
-            s_profiles_l[PEQ_PRESET_USER_CUSTOM] = v2.left;
+            peq_profile_t left_prof = v2.left;
+            peq_profile_t right_prof = v2.right;
+            sanitize_profile(&left_prof);
+            sanitize_profile(&right_prof);
+            s_profiles_l[PEQ_PRESET_USER_CUSTOM] = left_prof;
             s_linked_stereo = (v2.linked_stereo != 0);
-            s_user_right = s_linked_stereo ? v2.left : v2.right;
+            s_user_right = s_linked_stereo ? left_prof : right_prof;
             if ((unsigned int)v2.mixer.mode < MIXER_MODE_COUNT) {
                 s_mixer = v2.mixer;
             }

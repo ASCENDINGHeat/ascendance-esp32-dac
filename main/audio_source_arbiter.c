@@ -88,7 +88,7 @@ esp_err_t audio_source_arbiter_switch_to(audio_source_t new_source)
     snprintf(uistate.sample_rate_str, sizeof(uistate.sample_rate_str), "%.1fk 24b", (float)cur_sr / 1000.0f);
     snprintf(uistate.title, sizeof(uistate.title), "ESP32-S3 Audio DSP");
     snprintf(uistate.subtitle, sizeof(uistate.subtitle), "%s", source_names[new_source]);
-    snprintf(uistate.eq_preset, sizeof(uistate.eq_preset), "%s", cur_eq);
+    snprintf(uistate.eq_preset, sizeof(uistate.eq_preset), "%.15s", cur_eq);
     uistate.volume = audio_pipeline_get_volume();
     uistate.is_playing = true;
     uistate.is_muted = false;

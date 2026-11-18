@@ -200,7 +200,7 @@ static void update_playback_ui(void)
     snprintf(uistate.sample_rate_str, sizeof(uistate.sample_rate_str), "%.1fk 24b", (float)cur_sr / 1000.0f);
     snprintf(uistate.title, sizeof(uistate.title), "ESP32-S3 Audio DSP");
     snprintf(uistate.subtitle, sizeof(uistate.subtitle), "%s", is_muted ? "[MUTED]" : cur_sname);
-    snprintf(uistate.eq_preset, sizeof(uistate.eq_preset), "%s", cur_pname);
+    snprintf(uistate.eq_preset, sizeof(uistate.eq_preset), "%.15s", cur_pname);
     oled_display_set_state(&uistate);
 }
 
