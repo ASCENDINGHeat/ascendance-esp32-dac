@@ -69,6 +69,18 @@ jobs:
             echo '```text'
             idf.py size
             echo '```'
+            echo "<details><summary>Component Size Breakdown (<code>idf.py size-components</code>)</summary>"
+            echo ""
+            echo '```text'
+            idf.py size-components
+            echo '```'
+            echo "</details>"
+            echo "<details><summary>File Size Breakdown (<code>idf.py size-files</code>)</summary>"
+            echo ""
+            echo '```text'
+            idf.py size-files
+            echo '```'
+            echo "</details>"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload Firmware Binaries
@@ -79,6 +91,7 @@ jobs:
             build/ASCENDANCE_merged.bin
             build/ASCENDANCE.bin
             build/ASCENDANCE.elf
+            build/ASCENDANCE.map
             build/bootloader/bootloader.bin
             build/partition_table/partition-table.bin
             build/flash_args
