@@ -635,6 +635,7 @@ static void render_menu_screen(void)
     const char *xf_names[3]   = { "Off", "Low", "High" };
     const char *loud_names[3] = { "Off", "Mild", "Full" };
     const char *view_names[4] = { "Classic", "Curve", "VU", "Split" };
+    const char *exc_names[PEQ_EXCITER_MODE_COUNT] = { "Tube", "Tape", "Air" };
 
     char line_buf[64];
     for (int i = 0; i < 4; i++) {
@@ -670,18 +671,27 @@ static void render_menu_screen(void)
             snprintf(line_buf, sizeof(line_buf), "7. View:%s", view_names[vw]);
             break;
         }
+        case MENU_ITEM_BASS_ENH:
+            snprintf(line_buf, sizeof(line_buf), "8. Bass Enh:%s", menu.bass_enabled ? "On" : "Off");
+            break;
+        case MENU_ITEM_EXCITER: {
+            uint8_t em = (menu.exciter_mode < PEQ_EXCITER_MODE_COUNT) ? menu.exciter_mode : 0;
+            snprintf(line_buf, sizeof(line_buf), "9. Exciter:%s",
+                     menu.exciter_enabled ? exc_names[em] : "Off");
+            break;
+        }
         case MENU_ITEM_PREAMP_GAIN:
-            snprintf(line_buf, sizeof(line_buf), "8. Preamp:%.1fdB", menu.preamp_gain_db);
+            snprintf(line_buf, sizeof(line_buf), "10. Preamp:%.1fdB", menu.preamp_gain_db);
             break;
         case MENU_ITEM_AUDIO_SOURCE:
-            snprintf(line_buf, sizeof(line_buf), "9. Input:%.11s",
+            snprintf(line_buf, sizeof(line_buf), "11. Input:%.10s",
                      menu.current_source[0] ? menu.current_source : "USB DAC");
             break;
         case MENU_ITEM_SAVE_NVS:
-            snprintf(line_buf, sizeof(line_buf), "10. Save to DAC");
+            snprintf(line_buf, sizeof(line_buf), "12. Save to DAC");
             break;
         case MENU_ITEM_EXIT:
-            snprintf(line_buf, sizeof(line_buf), "11. Exit Menu");
+            snprintf(line_buf, sizeof(line_buf), "13. Exit Menu");
             break;
         default:
             snprintf(line_buf, sizeof(line_buf), " ");
@@ -932,6 +942,11 @@ esp_err_t oled_display_init(void)
     s_current_menu_state.limiter_enabled = peq_dsp_is_limiter_enabled();
     s_current_menu_state.loudness_mode = (uint8_t)peq_dsp_get_loudness_mode();
     s_current_menu_state.oled_view = (uint8_t)s_playback_view;
+    peq_harmonics_cfg_t harm;
+    peq_dsp_get_harmonics_cfg(&harm);
+    s_current_menu_state.bass_enabled = harm.bass_enabled;
+    s_current_menu_state.exciter_enabled = harm.exciter_enabled;
+    s_current_menu_state.exciter_mode = (uint8_t)harm.exciter_mode;
 
     s_current_eq_state.active_band = 0;
     s_current_eq_state.num_bands = 5;

@@ -10,6 +10,7 @@ import com.ascendance.dac.dsp.WebHidSnapshotJson
 import com.ascendance.dac.model.DspDefaults
 import com.ascendance.dac.model.DynamicsConfig
 import com.ascendance.dac.model.FilterType
+import com.ascendance.dac.model.HarmonicsConfig
 import com.ascendance.dac.model.LocalPreset
 import com.ascendance.dac.model.MixerConfig
 import com.ascendance.dac.model.PeqBand
@@ -49,6 +50,7 @@ data class DacUiState(
     val showGroupDelay: Boolean = false,
     val mixer: MixerConfig = MixerConfig(),
     val dynamics: DynamicsConfig = DynamicsConfig(),
+    val harmonics: HarmonicsConfig = HarmonicsConfig(),
     val localPresets: List<LocalPreset> = emptyList(),
     val logs: List<String> = emptyList(),
     val statusBanner: String? = null,
@@ -69,6 +71,7 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
     private val bandThrottleJobs = HashMap<Pair<PeqChannel, Int>, Job>()
     private var preampThrottleJob: Job? = null
     private var mixerThrottleJob: Job? = null
+    private var harmonicsThrottleJob: Job? = null
     private var suppressOfflineDraftTracking = false
 
     private val timeFmt = SimpleDateFormat("HH:mm:ss", Locale.US)
@@ -182,6 +185,7 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
             }
             transport.sendPacket(PeqPacketCodec.buildSetMixer(state.mixer))
             transport.sendPacket(PeqPacketCodec.buildSetDynamics(state.dynamics))
+            transport.sendPacket(PeqPacketCodec.buildSetHarmonics(state.harmonics))
             if (commitToNvs) {
                 transport.sendPacket(PeqPacketCodec.buildSaveToPreset())
                 _uiState.update {
@@ -217,7 +221,8 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
                     state.copy(
                         activePresetSlot = msg.activeSlot,
                         slotNames = updatedNames,
-                        dynamics = msg.dynamics
+                        dynamics = msg.dynamics,
+                        harmonics = msg.harmonics
                     )
                 }
             }
@@ -588,6 +593,23 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
         }
         if (_uiState.value.usbInfo.connected) {
             transport.sendPacket(PeqPacketCodec.buildSetDynamics(config))
+        }
+    }
+
+    fun updateHarmonics(config: HarmonicsConfig) {
+        val safe = config.clamped()
+        _uiState.update {
+            it.copy(
+                harmonics = safe,
+                pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft
+            )
+        }
+        harmonicsThrottleJob?.cancel()
+        harmonicsThrottleJob = viewModelScope.launch {
+            delay(16)
+            if (_uiState.value.usbInfo.connected) {
+                transport.sendPacket(PeqPacketCodec.buildSetHarmonics(safe))
+            }
         }
     }
 

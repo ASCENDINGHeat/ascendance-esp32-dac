@@ -8,6 +8,7 @@
 
 #include "esp_log.h"
 #include "esp_dsp.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "nvs_flash.h"
@@ -20,6 +21,7 @@
 #define NVS_KEY_META_V3     "nvs_meta_v3"
 #define NVS_KEY_FIR_L       "fir_taps_l"
 #define NVS_KEY_FIR_R       "fir_taps_r"
+#define NVS_KEY_HARM_V1     "harm_cfg_v1"
 
 #define PEQ_NVS_MAGIC_V2    0x50455132UL // "PEQ2"
 #define PEQ_NVS_VERSION_V2  2U
@@ -28,6 +30,8 @@
 #define PEQ_META_MAGIC_V3   0x4D455433UL // "MET3"
 #define PEQ_META_VERSION_V3 3U
 #define PEQ_FIR_MAGIC       0x46495231UL // "FIR1"
+#define PEQ_HARM_MAGIC_V1   0x48415231UL // "HAR1"
+#define PEQ_HARM_VERSION_V1 1U
 
 #define CROSSFEED_MAX_DELAY 32
 #define FIR_BLOCK_MAX       128
@@ -35,6 +39,12 @@
 #define FULLSCALE_S24_F     8388608.0f
 #define PEAK_CEILING_S24    7918595.0f   // -0.5 dBFS
 #define SOFT_KNEE_S24       8196846.0f   // -0.2 dBFS
+
+#define HARM_LUT_SIZE       4096U
+#define HARM_LUT_MAX_IN     2.0f
+#define HARM_HB_SECTIONS    3
+#define HARM_BASS_MAX_MIX   0.65f
+#define HARM_EXC_MAX_MIX    0.55f
 
 typedef struct {
     float b0, b1, b2, a1, a2;
@@ -50,6 +60,38 @@ typedef struct {
     float cf_alpha;
     int   cf_delay_samples;
 } mixer_rt_t;
+
+typedef struct {
+    float x1_l, y1_l;
+    float x1_r, y1_r;
+    float r;
+} dc_block_state_t;
+
+typedef struct {
+    float up_s0[HARM_HB_SECTIONS];
+    float up_s1[HARM_HB_SECTIONS];
+    float dn_s0[HARM_HB_SECTIONS];
+    float dn_s1[HARM_HB_SECTIONS];
+} hb_os2x_state_t;
+
+typedef struct {
+    bool               bass_active;
+    bool               exc_active;
+    peq_exciter_mode_t exc_mode;
+    float              bass_mix;
+    float              exc_mix;
+    bool               use_oversampling;
+    biquad_state_t     bass_pre_lpf;
+    biquad_state_t     bass_post_lpf;
+    biquad_state_t     exc_pre_hpf;
+    biquad_state_t     exc_post_hpf;
+    dc_block_state_t   bass_dc;
+    dc_block_state_t   exc_dc;
+    hb_os2x_state_t    bass_os_l;
+    hb_os2x_state_t    bass_os_r;
+    hb_os2x_state_t    exc_os_l;
+    hb_os2x_state_t    exc_os_r;
+} harm_rt_t;
 
 typedef struct {
     bool          linked_stereo;
@@ -101,6 +143,20 @@ typedef struct __attribute__((packed)) {
     uint32_t crc32;
 } peq_fir_nvs_t;
 
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint16_t version;
+    uint8_t  bass_enabled;
+    uint8_t  bass_amount_pct;
+    uint16_t bass_freq_hz;
+    uint8_t  exciter_enabled;
+    uint8_t  exciter_mode;
+    uint8_t  exciter_amount_pct;
+    uint8_t  reserved;
+    uint16_t exciter_freq_hz;
+    uint32_t crc32;
+} peq_harm_nvs_v1_t;
+
 static portMUX_TYPE s_peq_lock = portMUX_INITIALIZER_UNLOCKED;
 
 static peq_slot_t s_slots[PEQ_USER_SLOT_COUNT];
@@ -118,6 +174,15 @@ static uint8_t             s_oled_view       = 0;
 static uint16_t            s_auto_mute_sec   = 10;
 static uint16_t            s_oled_dim_sec    = 60;
 static bool                s_fir_enabled     = false;
+
+/* Psychoacoustic Bass Enhancer & Harmonic Exciter Configuration & PSRAM LUTs */
+static peq_harmonics_cfg_t s_harm_cfg;
+static float *s_harm_lut_bass = NULL;
+static float *s_harm_lut_exciter[PEQ_EXCITER_MODE_COUNT] = { NULL, NULL, NULL };
+
+/* 13th-order elliptic 2x half-band polyphase allpass coefficients (>94 dB stopband) */
+static const float s_hb_a0[HARM_HB_SECTIONS] = { 0.04536216f, 0.33714969f, 0.70806414f };
+static const float s_hb_a1[HARM_HB_SECTIONS] = { 0.16808748f, 0.52237785f, 0.89744559f };
 
 /* Uploaded FIR impulse responses in DRAM */
 static float    s_fir_upload_l[PEQ_FIR_MAX_TAPS_48K];
@@ -146,6 +211,10 @@ static mixer_rt_t s_pending_mixer_rt;
 static bool s_pending_mixer_update = false;
 static bool s_pending_limiter_enabled = true;
 static bool s_pending_wake_ramp = false;
+static harm_rt_t s_harm_pending;
+static bool s_harm_pending_update = false;
+static bool s_harm_pending_reset_states = false;
+static float s_harm_pending_crossfade_step = 0.0f;
 
 /* Core 1 DSP runtime state (owned exclusively by audio_dsp_task after init) */
 static int s_active_num_bands_l = PEQ_DEFAULT_NUM_BANDS;
@@ -174,6 +243,12 @@ static bool s_target_is_flat = true;
 static bool s_in_crossfade = false;
 static float s_crossfade_progress = 0.0f;
 static float s_crossfade_step = 0.0f;
+
+static harm_rt_t s_harm_active;
+static harm_rt_t s_harm_target;
+static bool s_harm_in_crossfade = false;
+static float s_harm_crossfade_progress = 0.0f;
+static float s_harm_crossfade_step = 0.0f;
 
 static mixer_rt_t s_mixer_rt;
 static float s_cf_delay_l[CROSSFEED_MAX_DELAY];
@@ -590,6 +665,179 @@ static void setup_default_mixer(peq_mixer_config_t *cfg)
     cfg->custom_matrix[1][1] = 1.0f;
 }
 
+static void clamp_harmonics_cfg(peq_harmonics_cfg_t *cfg)
+{
+    if (!cfg) return;
+    cfg->bass_enabled = cfg->bass_enabled ? true : false;
+    if (cfg->bass_amount_pct > 100U) cfg->bass_amount_pct = 100U;
+    if (cfg->bass_freq_hz < 50U) cfg->bass_freq_hz = 50U;
+    if (cfg->bass_freq_hz > 150U) cfg->bass_freq_hz = 150U;
+
+    cfg->exciter_enabled = cfg->exciter_enabled ? true : false;
+    if ((unsigned int)cfg->exciter_mode >= (unsigned int)PEQ_EXCITER_MODE_COUNT) {
+        cfg->exciter_mode = PEQ_EXCITER_TUBE;
+    }
+    if (cfg->exciter_amount_pct > 100U) cfg->exciter_amount_pct = 100U;
+    if (cfg->exciter_freq_hz < 1500U) cfg->exciter_freq_hz = 1500U;
+    if (cfg->exciter_freq_hz > 8000U) cfg->exciter_freq_hz = 8000U;
+}
+
+static void setup_default_harmonics(peq_harmonics_cfg_t *cfg)
+{
+    memset(cfg, 0, sizeof(*cfg));
+    cfg->bass_enabled = false;
+    cfg->bass_amount_pct = 50U;
+    cfg->bass_freq_hz = 80U;
+    cfg->exciter_enabled = false;
+    cfg->exciter_mode = PEQ_EXCITER_TUBE;
+    cfg->exciter_amount_pct = 35U;
+    cfg->exciter_freq_hz = 3500U;
+}
+
+static void calc_butterworth_lpf(double fc, double sr, biquad_state_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    if (sr <= 0.0 || fc <= 0.0) {
+        set_passthrough_coeffs(out);
+        return;
+    }
+    if (fc >= sr * 0.49) fc = sr * 0.49;
+
+    double w = 2.0 * M_PI * fc / sr;
+    double cos_w = cos(w);
+    double sin_w = sin(w);
+    double sin_half = sin(0.5 * w);
+    double one_minus_cos = 2.0 * sin_half * sin_half;
+    double alpha = sin_w / (2.0 * 0.7071067811865476);
+    double a0 = 1.0 + alpha;
+
+    out->b0 = (float)((0.5 * one_minus_cos) / a0);
+    out->b1 = (float)(one_minus_cos / a0);
+    out->b2 = out->b0;
+    out->a1 = (float)((-2.0 * cos_w) / a0);
+    out->a2 = (float)((1.0 - alpha) / a0);
+}
+
+static void calc_butterworth_hpf(double fc, double sr, biquad_state_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    if (sr <= 0.0 || fc <= 0.0) {
+        set_passthrough_coeffs(out);
+        return;
+    }
+    if (fc >= sr * 0.49) fc = sr * 0.49;
+
+    double w = 2.0 * M_PI * fc / sr;
+    double cos_w = cos(w);
+    double sin_w = sin(w);
+    double cos_half = cos(0.5 * w);
+    double one_plus_cos = 2.0 * cos_half * cos_half;
+    double alpha = sin_w / (2.0 * 0.7071067811865476);
+    double a0 = 1.0 + alpha;
+
+    out->b0 = (float)((0.5 * one_plus_cos) / a0);
+    out->b1 = (float)((-one_plus_cos) / a0);
+    out->b2 = out->b0;
+    out->a1 = (float)((-2.0 * cos_w) / a0);
+    out->a2 = (float)((1.0 - alpha) / a0);
+}
+
+static void compute_harm_rt(const peq_harmonics_cfg_t *cfg, int sample_rate,
+                            bool ab_bypass, harm_rt_t *out)
+{
+    memset(out, 0, sizeof(*out));
+    int sr = (sample_rate > 0) ? sample_rate : 48000;
+    out->use_oversampling = (sr <= 48000);
+
+    bool bass_on = (!ab_bypass && cfg->bass_enabled && cfg->bass_amount_pct > 0U);
+    bool exc_on  = (!ab_bypass && cfg->exciter_enabled && cfg->exciter_amount_pct > 0U);
+    out->bass_active = bass_on;
+    out->exc_active  = exc_on;
+    out->exc_mode    = ((unsigned int)cfg->exciter_mode < (unsigned int)PEQ_EXCITER_MODE_COUNT)
+                       ? cfg->exciter_mode : PEQ_EXCITER_TUBE;
+    out->bass_mix    = bass_on ? (((float)cfg->bass_amount_pct / 100.0f) * HARM_BASS_MAX_MIX) : 0.0f;
+    out->exc_mix     = exc_on  ? (((float)cfg->exciter_amount_pct / 100.0f) * HARM_EXC_MAX_MIX) : 0.0f;
+
+    float r_dc = 1.0f - (2.0f * (float)M_PI * 20.0f / (float)sr);
+    if (r_dc < 0.990f) r_dc = 0.990f;
+    if (r_dc > 0.9995f) r_dc = 0.9995f;
+    out->bass_dc.r = r_dc;
+    out->exc_dc.r  = r_dc;
+
+    if (bass_on) {
+        double bass_fc = (double)cfg->bass_freq_hz;
+        double post_fc = bass_fc * 3.5;
+        if (post_fc > 450.0) post_fc = 450.0;
+        calc_butterworth_lpf(bass_fc, (double)sr, &out->bass_pre_lpf);
+        calc_butterworth_lpf(post_fc, (double)sr, &out->bass_post_lpf);
+    } else {
+        set_passthrough_coeffs(&out->bass_pre_lpf);
+        set_passthrough_coeffs(&out->bass_post_lpf);
+    }
+
+    if (exc_on) {
+        double exc_fc = (double)cfg->exciter_freq_hz;
+        double post_fc = exc_fc * 0.85;
+        calc_butterworth_hpf(exc_fc, (double)sr, &out->exc_pre_hpf);
+        calc_butterworth_hpf(post_fc, (double)sr, &out->exc_post_hpf);
+    } else {
+        set_passthrough_coeffs(&out->exc_pre_hpf);
+        set_passthrough_coeffs(&out->exc_post_hpf);
+    }
+}
+
+static float *alloc_harm_lut_once(size_t count)
+{
+    size_t bytes = count * sizeof(float);
+    float *ptr = (float *)heap_caps_malloc(bytes, MALLOC_CAP_SPIRAM);
+    if (!ptr) {
+        ptr = (float *)malloc(bytes);
+    }
+    return ptr;
+}
+
+static void init_harmonics_luts_once(void)
+{
+    if (!s_harm_lut_bass) {
+        s_harm_lut_bass = alloc_harm_lut_once(HARM_LUT_SIZE);
+        if (s_harm_lut_bass) {
+            for (uint32_t i = 0; i < HARM_LUT_SIZE; i++) {
+                float x = -HARM_LUT_MAX_IN + HARM_LUT_MAX_IN * ((float)i / 2047.0f);
+                float asym = (x * x) / (1.0f + fabsf(x));
+                float odd = x - tanhf(1.8f * x) / 1.8f;
+                s_harm_lut_bass[i] = tanhf(0.85f * asym + 1.15f * odd);
+            }
+            s_harm_lut_bass[2047] = 0.0f;
+        }
+    }
+
+    for (int m = 0; m < (int)PEQ_EXCITER_MODE_COUNT; m++) {
+        if (!s_harm_lut_exciter[m]) {
+            s_harm_lut_exciter[m] = alloc_harm_lut_once(HARM_LUT_SIZE);
+            if (s_harm_lut_exciter[m]) {
+                for (uint32_t i = 0; i < HARM_LUT_SIZE; i++) {
+                    float x = -HARM_LUT_MAX_IN + HARM_LUT_MAX_IN * ((float)i / 2047.0f);
+                    float y = 0.0f;
+                    if (m == (int)PEQ_EXCITER_TUBE) {
+                        float u = 2.5f * x;
+                        float asym = 0.40f * (u * u) / (1.0f + 0.35f * u * u);
+                        y = tanhf(u + asym) - 0.75f * tanhf(u);
+                    } else if (m == (int)PEQ_EXCITER_TAPE) {
+                        float u = 2.0f * x;
+                        y = tanhf(u) - 0.45f * tanhf(0.5f * u);
+                    } else {
+                        float u = 2.0f * x;
+                        float asym = 0.20f * (u * u) / (1.0f + 0.40f * u * u);
+                        y = 0.50f * tanhf(u + asym + 0.25f * tanhf(2.0f * u)) - 0.25f * tanhf(u);
+                    }
+                    s_harm_lut_exciter[m][i] = y;
+                }
+                s_harm_lut_exciter[m][2047] = 0.0f;
+            }
+        }
+    }
+}
+
 static void init_flat_profile(peq_profile_t *prof, const char *slot_name)
 {
     memset(prof, 0, sizeof(*prof));
@@ -627,6 +875,7 @@ static void setup_default_slots(void)
     s_fir_taps_l = 0;
     s_fir_taps_r = 0;
     setup_default_mixer(&s_mixer);
+    setup_default_harmonics(&s_harm_cfg);
 }
 
 static void sanitize_profile(peq_profile_t *prof)
@@ -767,6 +1016,55 @@ static void save_fir_nvs_internal(peq_channel_t ch)
     nvs_close(nvs_h);
 }
 
+static esp_err_t save_harm_nvs_internal(void)
+{
+    peq_harm_nvs_v1_t blob;
+    memset(&blob, 0, sizeof(blob));
+    blob.magic = PEQ_HARM_MAGIC_V1;
+    blob.version = PEQ_HARM_VERSION_V1;
+
+    taskENTER_CRITICAL(&s_peq_lock);
+    peq_harmonics_cfg_t snap = s_harm_cfg;
+    taskEXIT_CRITICAL(&s_peq_lock);
+
+    clamp_harmonics_cfg(&snap);
+    blob.bass_enabled = snap.bass_enabled ? 1U : 0U;
+    blob.bass_amount_pct = snap.bass_amount_pct;
+    blob.bass_freq_hz = snap.bass_freq_hz;
+    blob.exciter_enabled = snap.exciter_enabled ? 1U : 0U;
+    blob.exciter_mode = (uint8_t)snap.exciter_mode;
+    blob.exciter_amount_pct = snap.exciter_amount_pct;
+    blob.exciter_freq_hz = snap.exciter_freq_hz;
+    blob.crc32 = calc_crc32((const uint8_t *)&blob, offsetof(peq_harm_nvs_v1_t, crc32));
+
+    nvs_handle_t nvs_h;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_h);
+    if (err != ESP_OK) return err;
+
+    size_t sz = sizeof(peq_harm_nvs_v1_t);
+    peq_harm_nvs_v1_t existing;
+    bool needs_write = true;
+    if (nvs_get_blob(nvs_h, NVS_KEY_HARM_V1, &existing, &sz) == ESP_OK &&
+        sz == sizeof(peq_harm_nvs_v1_t) &&
+        memcmp(&existing, &blob, sizeof(peq_harm_nvs_v1_t)) == 0) {
+        needs_write = false;
+    }
+
+    if (needs_write) {
+        err = nvs_set_blob(nvs_h, NVS_KEY_HARM_V1, &blob, sizeof(peq_harm_nvs_v1_t));
+        if (err == ESP_OK) {
+            err = nvs_commit(nvs_h);
+            ESP_LOGI(TAG, "Committed NVS %s (bass=%u/%u%%@%uHz, exc=%u/%u/%u%%@%uHz)",
+                     NVS_KEY_HARM_V1,
+                     (unsigned)blob.bass_enabled, (unsigned)blob.bass_amount_pct, (unsigned)blob.bass_freq_hz,
+                     (unsigned)blob.exciter_enabled, (unsigned)blob.exciter_mode,
+                     (unsigned)blob.exciter_amount_pct, (unsigned)blob.exciter_freq_hz);
+        }
+    }
+    nvs_close(nvs_h);
+    return err;
+}
+
 static void load_user_profile_nvs(void)
 {
     nvs_handle_t nvs_h;
@@ -844,6 +1142,27 @@ static void load_user_profile_nvs(void)
         memcpy(s_fir_upload_r, fir_blob.taps, sizeof(float) * PEQ_FIR_MAX_TAPS_48K);
     }
 
+    /* 3b. Load global harmonics configuration (harm_cfg_v1) */
+    size_t req_harm = sizeof(peq_harm_nvs_v1_t);
+    peq_harm_nvs_v1_t harm_blob;
+    if (nvs_get_blob(nvs_h, NVS_KEY_HARM_V1, &harm_blob, &req_harm) == ESP_OK &&
+        req_harm == sizeof(peq_harm_nvs_v1_t) &&
+        harm_blob.magic == PEQ_HARM_MAGIC_V1 &&
+        harm_blob.version == PEQ_HARM_VERSION_V1 &&
+        calc_crc32((const uint8_t *)&harm_blob, offsetof(peq_harm_nvs_v1_t, crc32)) == harm_blob.crc32) {
+        peq_harmonics_cfg_t loaded_harm;
+        memset(&loaded_harm, 0, sizeof(loaded_harm));
+        loaded_harm.bass_enabled = (harm_blob.bass_enabled != 0U);
+        loaded_harm.bass_amount_pct = harm_blob.bass_amount_pct;
+        loaded_harm.bass_freq_hz = harm_blob.bass_freq_hz;
+        loaded_harm.exciter_enabled = (harm_blob.exciter_enabled != 0U);
+        loaded_harm.exciter_mode = (peq_exciter_mode_t)harm_blob.exciter_mode;
+        loaded_harm.exciter_amount_pct = harm_blob.exciter_amount_pct;
+        loaded_harm.exciter_freq_hz = harm_blob.exciter_freq_hz;
+        clamp_harmonics_cfg(&loaded_harm);
+        s_harm_cfg = loaded_harm;
+    }
+
     /* 4. Migrate legacy v0.1.0 NVS v2 / v1 into Slot 0 if NVS v3 absent */
     if (!found_v3) {
         size_t req_v2 = sizeof(peq_nvs_v2_t);
@@ -882,7 +1201,7 @@ static void load_user_profile_nvs(void)
     nvs_close(nvs_h);
 }
 
-static void stage_pending_from_active(bool reset_states, bool stage_mixer, bool stage_fir)
+static void stage_pending_from_active_ex(bool reset_states, bool stage_mixer, bool stage_fir, bool stage_harm)
 {
     for (;;) {
         taskENTER_CRITICAL(&s_peq_lock);
@@ -897,6 +1216,7 @@ static void stage_pending_from_active(bool reset_states, bool stage_mixer, bool 
         peq_loudness_mode_t loud_mode = s_loudness_mode;
         int vol_pct = s_volume_pct;
         bool lim_en = s_limiter_enabled;
+        peq_harmonics_cfg_t harm_snap = s_harm_cfg;
         taskEXIT_CRITICAL(&s_peq_lock);
 
         float step = (sr > 0) ? (1.0f / (0.015f * (float)sr)) : 1.0f;
@@ -925,6 +1245,11 @@ static void stage_pending_from_active(bool reset_states, bool stage_mixer, bool 
             compute_mixer_rt(&mixer_snap, (float)sr, &local_mixer);
         }
 
+        harm_rt_t local_harm;
+        if (stage_harm) {
+            compute_harm_rt(&harm_snap, sr, ab_bypass, &local_harm);
+        }
+
         taskENTER_CRITICAL(&s_peq_lock);
         if (s_state_gen == gen) {
             s_pending_crossfade_step = step;
@@ -946,6 +1271,46 @@ static void stage_pending_from_active(bool reset_states, bool stage_mixer, bool 
             if (stage_fir) {
                 s_pending_fir_update = true;
             }
+            if (stage_harm) {
+                s_harm_pending = local_harm;
+                s_harm_pending_crossfade_step = step;
+                s_harm_pending_reset_states = (s_harm_pending_update && s_harm_pending_reset_states) || reset_states;
+                s_harm_pending_update = true;
+            }
+            taskEXIT_CRITICAL(&s_peq_lock);
+            return;
+        }
+        taskEXIT_CRITICAL(&s_peq_lock);
+    }
+}
+
+static void stage_pending_from_active(bool reset_states, bool stage_mixer, bool stage_fir)
+{
+    stage_pending_from_active_ex(reset_states, stage_mixer, stage_fir, false);
+}
+
+static void stage_pending_harmonics(bool reset_states)
+{
+    for (;;) {
+        taskENTER_CRITICAL(&s_peq_lock);
+        uint32_t gen = s_state_gen;
+        int sr = s_sample_rate;
+        bool ab_bypass = s_ab_bypass;
+        peq_harmonics_cfg_t harm_snap = s_harm_cfg;
+        taskEXIT_CRITICAL(&s_peq_lock);
+
+        float step = (sr > 0) ? (1.0f / (0.015f * (float)sr)) : 1.0f;
+        if (!isfinite(step) || step <= 0.0f) step = 1.0f;
+
+        harm_rt_t local_harm;
+        compute_harm_rt(&harm_snap, sr, ab_bypass, &local_harm);
+
+        taskENTER_CRITICAL(&s_peq_lock);
+        if (s_state_gen == gen) {
+            s_harm_pending = local_harm;
+            s_harm_pending_crossfade_step = step;
+            s_harm_pending_reset_states = (s_harm_pending_update && s_harm_pending_reset_states) || reset_states;
+            s_harm_pending_update = true;
             taskEXIT_CRITICAL(&s_peq_lock);
             return;
         }
@@ -1017,6 +1382,7 @@ esp_err_t peq_dsp_init(int sample_rate)
 
     setup_default_slots();
     load_user_profile_nvs();
+    init_harmonics_luts_once();
 
     float crossfade_step = 1.0f / (0.015f * (float)sample_rate);
     biquad_state_t init_bq_l[PEQ_MAX_BANDS];
@@ -1038,6 +1404,9 @@ esp_err_t peq_dsp_init(int sample_rate)
 
     mixer_rt_t init_mixer;
     compute_mixer_rt(&s_mixer, (float)sample_rate, &init_mixer);
+
+    harm_rt_t init_harm;
+    compute_harm_rt(&s_harm_cfg, sample_rate, false, &init_harm);
 
     configure_limiter_rt_for_sr(sample_rate);
     rebuild_fir_rt_locked(sample_rate, s_fir_enabled, s_fir_taps_l, s_fir_taps_r);
@@ -1077,6 +1446,16 @@ esp_err_t peq_dsp_init(int sample_rate)
     s_pending_limiter_enabled = s_limiter_enabled;
     s_limiter_rt_en = s_limiter_enabled;
 
+    s_harm_active = init_harm;
+    s_harm_target = init_harm;
+    s_harm_pending = init_harm;
+    s_harm_in_crossfade = false;
+    s_harm_crossfade_progress = 0.0f;
+    s_harm_crossfade_step = crossfade_step;
+    s_harm_pending_crossfade_step = crossfade_step;
+    s_harm_pending_update = false;
+    s_harm_pending_reset_states = false;
+
     s_mixer_rt = init_mixer;
     s_pending_mixer_rt = init_mixer;
     s_pending_mixer_update = false;
@@ -1089,9 +1468,10 @@ esp_err_t peq_dsp_init(int sample_rate)
     s_wake_ramp_gain = 1.0f;
     taskEXIT_CRITICAL(&s_peq_lock);
 
-    ESP_LOGI(TAG, "PEQ DSP v0.2.0 init @ %d Hz (Slot %d: \"%s\", Lim=%d, Loud=%d, FIR=%d)",
+    ESP_LOGI(TAG, "PEQ DSP v0.2.0 init @ %d Hz (Slot %d: \"%s\", Lim=%d, Loud=%d, FIR=%d, Bass=%d, Exc=%d)",
              sample_rate, s_active_preset, s_slots[s_active_preset].left.name,
-             s_limiter_enabled ? 1 : 0, (int)s_loudness_mode, s_fir_enabled ? 1 : 0);
+             s_limiter_enabled ? 1 : 0, (int)s_loudness_mode, s_fir_enabled ? 1 : 0,
+             s_harm_cfg.bass_enabled ? 1 : 0, s_harm_cfg.exciter_enabled ? 1 : 0);
     return ESP_OK;
 }
 
@@ -1108,7 +1488,7 @@ void peq_dsp_set_sample_rate(int sample_rate)
     s_state_gen++;
     taskEXIT_CRITICAL(&s_peq_lock);
 
-    stage_pending_from_active(true, true, true);
+    stage_pending_from_active_ex(true, true, true, true);
 }
 
 void peq_dsp_select_preset(peq_preset_id_t preset_id)
@@ -1209,7 +1589,9 @@ esp_err_t peq_dsp_save_user_profile_nvs(void)
 
     esp_err_t err = save_slot_nvs_internal(slot);
     if (err != ESP_OK) return err;
-    return save_meta_nvs_internal();
+    err = save_meta_nvs_internal();
+    if (err != ESP_OK) return err;
+    return save_harm_nvs_internal();
 }
 
 esp_err_t peq_dsp_rename_slot(int slot_id, const char *new_name)
@@ -1372,7 +1754,7 @@ void peq_dsp_set_ab_bypass(bool bypass)
     taskEXIT_CRITICAL(&s_peq_lock);
 
     ESP_LOGI(TAG, "Instant A/B Bypass: %s", bypass ? "BYPASSED (Flat)" : "EQ ACTIVE");
-    stage_pending_from_active(false, false, false);
+    stage_pending_from_active_ex(false, false, false, true);
 }
 
 bool peq_dsp_get_ab_bypass(void)
@@ -1531,6 +1913,39 @@ void peq_dsp_get_dynamics_cfg(peq_dynamics_cfg_t *out_cfg)
     out_cfg->fir_enabled = s_fir_enabled;
     out_cfg->fir_taps_l = s_fir_taps_l;
     out_cfg->fir_taps_r = s_fir_taps_r;
+    taskEXIT_CRITICAL(&s_peq_lock);
+}
+
+void peq_dsp_set_harmonics_cfg(const peq_harmonics_cfg_t *cfg)
+{
+    if (!cfg) return;
+    peq_harmonics_cfg_t clamped = *cfg;
+    clamp_harmonics_cfg(&clamped);
+
+    taskENTER_CRITICAL(&s_peq_lock);
+    bool changed = (s_harm_cfg.bass_enabled != clamped.bass_enabled ||
+                    s_harm_cfg.bass_amount_pct != clamped.bass_amount_pct ||
+                    s_harm_cfg.bass_freq_hz != clamped.bass_freq_hz ||
+                    s_harm_cfg.exciter_enabled != clamped.exciter_enabled ||
+                    s_harm_cfg.exciter_mode != clamped.exciter_mode ||
+                    s_harm_cfg.exciter_amount_pct != clamped.exciter_amount_pct ||
+                    s_harm_cfg.exciter_freq_hz != clamped.exciter_freq_hz);
+    if (!changed) {
+        taskEXIT_CRITICAL(&s_peq_lock);
+        return;
+    }
+    s_harm_cfg = clamped;
+    s_state_gen++;
+    taskEXIT_CRITICAL(&s_peq_lock);
+
+    stage_pending_harmonics(false);
+}
+
+void peq_dsp_get_harmonics_cfg(peq_harmonics_cfg_t *out_cfg)
+{
+    if (!out_cfg) return;
+    taskENTER_CRITICAL(&s_peq_lock);
+    *out_cfg = s_harm_cfg;
     taskEXIT_CRITICAL(&s_peq_lock);
 }
 
@@ -1754,6 +2169,107 @@ static inline float biquad_filter_sample(biquad_state_t *bq, float in, float *w1
     return out;
 }
 
+static inline float dc_block_sample(dc_block_state_t *dc, float in, bool is_right)
+{
+    float *x1 = is_right ? &dc->x1_r : &dc->x1_l;
+    float *y1 = is_right ? &dc->y1_r : &dc->y1_l;
+    float out = in - *x1 + dc->r * (*y1);
+    *x1 = in;
+    *y1 = (fabsf(out) < 1e-15f) ? 0.0f : out;
+    return out;
+}
+
+static inline float eval_harm_lut(const float *lut, float x)
+{
+    if (!lut || !isfinite(x)) return 0.0f;
+    if (x <= -HARM_LUT_MAX_IN) return lut[0];
+    if (x >= HARM_LUT_MAX_IN) return lut[HARM_LUT_SIZE - 1U];
+    float pos = (x + HARM_LUT_MAX_IN) * (2047.0f / HARM_LUT_MAX_IN);
+    if (pos < 0.0f) pos = 0.0f;
+    uint32_t idx = (uint32_t)pos;
+    if (idx >= HARM_LUT_SIZE - 1U) {
+        return lut[HARM_LUT_SIZE - 1U];
+    }
+    float frac = pos - (float)idx;
+    float y0 = lut[idx];
+    float y1 = lut[idx + 1U];
+    return y0 + frac * (y1 - y0);
+}
+
+static inline float hb_allpass_cascade(float x, float *state, const float *coeffs)
+{
+    float v = x;
+    for (int k = 0; k < HARM_HB_SECTIONS; k++) {
+        float t = v - coeffs[k] * state[k];
+        float y = coeffs[k] * t + state[k];
+        if (fabsf(t) < 1e-15f) t = 0.0f;
+        state[k] = t;
+        v = y;
+    }
+    return v;
+}
+
+static inline float harm_waveshape_sample(const float *lut, float in,
+                                          hb_os2x_state_t *os, bool use_oversampling)
+{
+    if (!lut) return 0.0f;
+    if (!use_oversampling) {
+        return eval_harm_lut(lut, in);
+    }
+    float y0 = hb_allpass_cascade(in, os->up_s0, s_hb_a0);
+    float y1 = hb_allpass_cascade(in, os->up_s1, s_hb_a1);
+    float w0 = eval_harm_lut(lut, y0);
+    float w1 = eval_harm_lut(lut, y1);
+    return 0.5f * (hb_allpass_cascade(w1, os->dn_s0, s_hb_a0) +
+                   hb_allpass_cascade(w0, os->dn_s1, s_hb_a1));
+}
+
+static inline void stage_harm_biquad_target(biquad_state_t *tgt, const biquad_state_t *pend,
+                                            const biquad_state_t *act, bool reset_states,
+                                            bool in_crossfade)
+{
+    tgt->b0 = pend->b0;
+    tgt->b1 = pend->b1;
+    tgt->b2 = pend->b2;
+    tgt->a1 = pend->a1;
+    tgt->a2 = pend->a2;
+    if (reset_states) {
+        tgt->w1_l = 0.0f;
+        tgt->w2_l = 0.0f;
+        tgt->w1_r = 0.0f;
+        tgt->w2_r = 0.0f;
+    } else if (!in_crossfade) {
+        tgt->w1_l = act->w1_l;
+        tgt->w2_l = act->w2_l;
+        tgt->w1_r = act->w1_r;
+        tgt->w2_r = act->w2_r;
+    }
+}
+
+static inline void reset_harm_bass_states(harm_rt_t *rt)
+{
+    rt->bass_pre_lpf.w1_l = 0.0f;  rt->bass_pre_lpf.w2_l = 0.0f;
+    rt->bass_pre_lpf.w1_r = 0.0f;  rt->bass_pre_lpf.w2_r = 0.0f;
+    rt->bass_post_lpf.w1_l = 0.0f; rt->bass_post_lpf.w2_l = 0.0f;
+    rt->bass_post_lpf.w1_r = 0.0f; rt->bass_post_lpf.w2_r = 0.0f;
+    rt->bass_dc.x1_l = 0.0f;       rt->bass_dc.y1_l = 0.0f;
+    rt->bass_dc.x1_r = 0.0f;       rt->bass_dc.y1_r = 0.0f;
+    memset(&rt->bass_os_l, 0, sizeof(rt->bass_os_l));
+    memset(&rt->bass_os_r, 0, sizeof(rt->bass_os_r));
+}
+
+static inline void reset_harm_exc_states(harm_rt_t *rt)
+{
+    rt->exc_pre_hpf.w1_l = 0.0f;  rt->exc_pre_hpf.w2_l = 0.0f;
+    rt->exc_pre_hpf.w1_r = 0.0f;  rt->exc_pre_hpf.w2_r = 0.0f;
+    rt->exc_post_hpf.w1_l = 0.0f; rt->exc_post_hpf.w2_l = 0.0f;
+    rt->exc_post_hpf.w1_r = 0.0f; rt->exc_post_hpf.w2_r = 0.0f;
+    rt->exc_dc.x1_l = 0.0f;       rt->exc_dc.y1_l = 0.0f;
+    rt->exc_dc.x1_r = 0.0f;       rt->exc_dc.y1_r = 0.0f;
+    memset(&rt->exc_os_l, 0, sizeof(rt->exc_os_l));
+    memset(&rt->exc_os_r, 0, sizeof(rt->exc_os_r));
+}
+
 static void consume_pending_updates_core1(void)
 {
     int sr_for_rebuild = 0;
@@ -1828,6 +2344,56 @@ static void consume_pending_updates_core1(void)
         if (s_sample_rate != s_rt_sr) {
             sr_for_rebuild = s_sample_rate;
         }
+    }
+    if (s_harm_pending_update) {
+        bool rst = s_harm_pending_reset_states;
+        s_harm_target.bass_active = s_harm_pending.bass_active;
+        s_harm_target.exc_active = s_harm_pending.exc_active;
+        s_harm_target.exc_mode = s_harm_pending.exc_mode;
+        s_harm_target.bass_mix = s_harm_pending.bass_mix;
+        s_harm_target.exc_mix = s_harm_pending.exc_mix;
+        s_harm_target.use_oversampling = s_harm_pending.use_oversampling;
+
+        stage_harm_biquad_target(&s_harm_target.bass_pre_lpf, &s_harm_pending.bass_pre_lpf,
+                                 &s_harm_active.bass_pre_lpf, rst, s_harm_in_crossfade);
+        stage_harm_biquad_target(&s_harm_target.bass_post_lpf, &s_harm_pending.bass_post_lpf,
+                                 &s_harm_active.bass_post_lpf, rst, s_harm_in_crossfade);
+        stage_harm_biquad_target(&s_harm_target.exc_pre_hpf, &s_harm_pending.exc_pre_hpf,
+                                 &s_harm_active.exc_pre_hpf, rst, s_harm_in_crossfade);
+        stage_harm_biquad_target(&s_harm_target.exc_post_hpf, &s_harm_pending.exc_post_hpf,
+                                 &s_harm_active.exc_post_hpf, rst, s_harm_in_crossfade);
+
+        s_harm_target.bass_dc.r = s_harm_pending.bass_dc.r;
+        s_harm_target.exc_dc.r = s_harm_pending.exc_dc.r;
+        if (rst) {
+            s_harm_target.bass_dc.x1_l = 0.0f; s_harm_target.bass_dc.y1_l = 0.0f;
+            s_harm_target.bass_dc.x1_r = 0.0f; s_harm_target.bass_dc.y1_r = 0.0f;
+            s_harm_target.exc_dc.x1_l = 0.0f;  s_harm_target.exc_dc.y1_l = 0.0f;
+            s_harm_target.exc_dc.x1_r = 0.0f;  s_harm_target.exc_dc.y1_r = 0.0f;
+            memset(&s_harm_target.bass_os_l, 0, sizeof(s_harm_target.bass_os_l));
+            memset(&s_harm_target.bass_os_r, 0, sizeof(s_harm_target.bass_os_r));
+            memset(&s_harm_target.exc_os_l, 0, sizeof(s_harm_target.exc_os_l));
+            memset(&s_harm_target.exc_os_r, 0, sizeof(s_harm_target.exc_os_r));
+        } else if (!s_harm_in_crossfade) {
+            s_harm_target.bass_dc.x1_l = s_harm_active.bass_dc.x1_l;
+            s_harm_target.bass_dc.y1_l = s_harm_active.bass_dc.y1_l;
+            s_harm_target.bass_dc.x1_r = s_harm_active.bass_dc.x1_r;
+            s_harm_target.bass_dc.y1_r = s_harm_active.bass_dc.y1_r;
+            s_harm_target.exc_dc.x1_l = s_harm_active.exc_dc.x1_l;
+            s_harm_target.exc_dc.y1_l = s_harm_active.exc_dc.y1_l;
+            s_harm_target.exc_dc.x1_r = s_harm_active.exc_dc.x1_r;
+            s_harm_target.exc_dc.y1_r = s_harm_active.exc_dc.y1_r;
+            s_harm_target.bass_os_l = s_harm_active.bass_os_l;
+            s_harm_target.bass_os_r = s_harm_active.bass_os_r;
+            s_harm_target.exc_os_l = s_harm_active.exc_os_l;
+            s_harm_target.exc_os_r = s_harm_active.exc_os_r;
+        }
+
+        s_harm_crossfade_step = s_harm_pending_crossfade_step;
+        s_harm_crossfade_progress = 0.0f;
+        s_harm_in_crossfade = true;
+        s_harm_pending_update = false;
+        s_harm_pending_reset_states = false;
     }
     if (s_pending_mixer_update) {
         s_mixer_rt = s_pending_mixer_rt;
@@ -1944,6 +2510,107 @@ static inline void process_peq_loudness_sample(float in_l, float in_r, float *ou
     *out_r_ptr = out_r;
 }
 
+static inline void process_harm_rt_sample(harm_rt_t *rt, float in_l, float in_r,
+                                          float inv_fs, float fs,
+                                          float *out_l_ptr, float *out_r_ptr)
+{
+    if (!rt->bass_active && !rt->exc_active) {
+        *out_l_ptr = in_l;
+        *out_r_ptr = in_r;
+        return;
+    }
+
+    float x_l = in_l * inv_fs;
+    float x_r = in_r * inv_fs;
+    float add_l = 0.0f;
+    float add_r = 0.0f;
+
+    if (rt->bass_active && s_harm_lut_bass) {
+        float pre_l = biquad_filter_sample(&rt->bass_pre_lpf, x_l,
+                                           &rt->bass_pre_lpf.w1_l, &rt->bass_pre_lpf.w2_l);
+        float pre_r = biquad_filter_sample(&rt->bass_pre_lpf, x_r,
+                                           &rt->bass_pre_lpf.w1_r, &rt->bass_pre_lpf.w2_r);
+        float ws_l = harm_waveshape_sample(s_harm_lut_bass, pre_l,
+                                           &rt->bass_os_l, rt->use_oversampling);
+        float ws_r = harm_waveshape_sample(s_harm_lut_bass, pre_r,
+                                           &rt->bass_os_r, rt->use_oversampling);
+        float post_l = biquad_filter_sample(&rt->bass_post_lpf, ws_l,
+                                            &rt->bass_post_lpf.w1_l, &rt->bass_post_lpf.w2_l);
+        float post_r = biquad_filter_sample(&rt->bass_post_lpf, ws_r,
+                                            &rt->bass_post_lpf.w1_r, &rt->bass_post_lpf.w2_r);
+        float dc_l = dc_block_sample(&rt->bass_dc, post_l, false);
+        float dc_r = dc_block_sample(&rt->bass_dc, post_r, true);
+        add_l += rt->bass_mix * dc_l;
+        add_r += rt->bass_mix * dc_r;
+    }
+
+    if (rt->exc_active) {
+        uint32_t m = (uint32_t)rt->exc_mode;
+        const float *exc_lut = (m < (uint32_t)PEQ_EXCITER_MODE_COUNT) ? s_harm_lut_exciter[m] : NULL;
+        if (exc_lut) {
+            float pre_l = biquad_filter_sample(&rt->exc_pre_hpf, x_l,
+                                               &rt->exc_pre_hpf.w1_l, &rt->exc_pre_hpf.w2_l);
+            float pre_r = biquad_filter_sample(&rt->exc_pre_hpf, x_r,
+                                               &rt->exc_pre_hpf.w1_r, &rt->exc_pre_hpf.w2_r);
+            float ws_l = harm_waveshape_sample(exc_lut, pre_l,
+                                               &rt->exc_os_l, rt->use_oversampling);
+            float ws_r = harm_waveshape_sample(exc_lut, pre_r,
+                                               &rt->exc_os_r, rt->use_oversampling);
+            float post_l = biquad_filter_sample(&rt->exc_post_hpf, ws_l,
+                                                &rt->exc_post_hpf.w1_l, &rt->exc_post_hpf.w2_l);
+            float post_r = biquad_filter_sample(&rt->exc_post_hpf, ws_r,
+                                                &rt->exc_post_hpf.w1_r, &rt->exc_post_hpf.w2_r);
+            float dc_l = dc_block_sample(&rt->exc_dc, post_l, false);
+            float dc_r = dc_block_sample(&rt->exc_dc, post_r, true);
+            add_l += rt->exc_mix * dc_l;
+            add_r += rt->exc_mix * dc_r;
+        }
+    }
+
+    *out_l_ptr = in_l + add_l * fs;
+    *out_r_ptr = in_r + add_r * fs;
+}
+
+static inline void process_harmonics_sample(float in_l, float in_r,
+                                            float inv_fs, float fs,
+                                            float *out_l_ptr, float *out_r_ptr)
+{
+    bool active_any = (s_harm_active.bass_active || s_harm_active.exc_active);
+    if (!active_any && !s_harm_in_crossfade) {
+        *out_l_ptr = in_l;
+        *out_r_ptr = in_r;
+        return;
+    }
+
+    float act_l, act_r;
+    process_harm_rt_sample(&s_harm_active, in_l, in_r, inv_fs, fs, &act_l, &act_r);
+
+    if (!s_harm_in_crossfade) {
+        *out_l_ptr = act_l;
+        *out_r_ptr = act_r;
+        return;
+    }
+
+    float tgt_l, tgt_r;
+    process_harm_rt_sample(&s_harm_target, in_l, in_r, inv_fs, fs, &tgt_l, &tgt_r);
+
+    float p = s_harm_crossfade_progress;
+    *out_l_ptr = (1.0f - p) * act_l + p * tgt_l;
+    *out_r_ptr = (1.0f - p) * act_r + p * tgt_r;
+
+    s_harm_crossfade_progress += s_harm_crossfade_step;
+    if (s_harm_crossfade_progress >= 1.0f) {
+        s_harm_active = s_harm_target;
+        s_harm_in_crossfade = false;
+        if (!s_harm_active.bass_active) {
+            reset_harm_bass_states(&s_harm_active);
+        }
+        if (!s_harm_active.exc_active) {
+            reset_harm_exc_states(&s_harm_active);
+        }
+    }
+}
+
 static inline void process_mixer_sample(float in_l, float in_r, float *out_l_ptr, float *out_r_ptr)
 {
     float mx_l = s_mixer_rt.m_ll * in_l + s_mixer_rt.m_rl * in_r;
@@ -2030,14 +2697,16 @@ void peq_dsp_process_interleaved_s16(int16_t *samples, size_t num_frames)
     bool mixer_identity = (!s_mixer_rt.crossfeed_en &&
                            s_mixer_rt.m_ll == 1.0f && s_mixer_rt.m_rl == 0.0f &&
                            s_mixer_rt.m_lr == 0.0f && s_mixer_rt.m_rr == 1.0f);
-    if (s_active_is_flat && !s_in_crossfade && mixer_identity) {
+    bool harm_bypassed = (!s_harm_active.bass_active && !s_harm_active.exc_active && !s_harm_in_crossfade);
+    if (s_active_is_flat && !s_in_crossfade && harm_bypassed && mixer_identity) {
         return;
     }
 
     for (size_t f = 0; f < num_frames; f++) {
-        float eq_l, eq_r, mx_l, mx_r;
+        float eq_l, eq_r, hm_l, hm_r, mx_l, mx_r;
         process_peq_loudness_sample((float)samples[2 * f], (float)samples[2 * f + 1], &eq_l, &eq_r);
-        process_mixer_sample(eq_l, eq_r, &mx_l, &mx_r);
+        process_harmonics_sample(eq_l, eq_r, 1.0f / 32768.0f, 32768.0f, &hm_l, &hm_r);
+        process_mixer_sample(hm_l, hm_r, &mx_l, &mx_r);
         samples[2 * f]     = clamp_s16(mx_l);
         samples[2 * f + 1] = clamp_s16(mx_r);
     }
@@ -2107,10 +2776,11 @@ void peq_dsp_process_interleaved_s24_to_s32(const uint8_t *src_s24_packed, int32
             ch_r_ptr = s_fir_out_r;
         }
 
-        /* Stage 3: Mixer / Crossfeed, Volume, Lookahead Limiter & 24-bit I2S Pack */
+        /* Stage 3: Harmonics -> Mixer / Crossfeed -> Volume -> Lookahead Limiter -> 24-bit I2S Pack */
         for (size_t i = 0; i < chunk; i++) {
-            float mx_l, mx_r, fin_l, fin_r;
-            process_mixer_sample(ch_l_ptr[i], ch_r_ptr[i], &mx_l, &mx_r);
+            float hm_l, hm_r, mx_l, mx_r, fin_l, fin_r;
+            process_harmonics_sample(ch_l_ptr[i], ch_r_ptr[i], 1.0f / FULLSCALE_S24_F, FULLSCALE_S24_F, &hm_l, &hm_r);
+            process_mixer_sample(hm_l, hm_r, &mx_l, &mx_r);
             apply_limiter_and_ramp(mx_l * volume_factor, mx_r * volume_factor,
                                    &fin_l, &fin_r, &blk_lim, &blk_clip);
 
@@ -2174,8 +2844,9 @@ void peq_dsp_process_interleaved_s16_to_s32(const int16_t *src_s16, int32_t *dst
         }
 
         for (size_t i = 0; i < chunk; i++) {
-            float mx_l, mx_r, fin_l, fin_r;
-            process_mixer_sample(ch_l_ptr[i], ch_r_ptr[i], &mx_l, &mx_r);
+            float hm_l, hm_r, mx_l, mx_r, fin_l, fin_r;
+            process_harmonics_sample(ch_l_ptr[i], ch_r_ptr[i], 1.0f / FULLSCALE_S24_F, FULLSCALE_S24_F, &hm_l, &hm_r);
+            process_mixer_sample(hm_l, hm_r, &mx_l, &mx_r);
             apply_limiter_and_ramp(mx_l * volume_factor, mx_r * volume_factor,
                                    &fin_l, &fin_r, &blk_lim, &blk_clip);
 

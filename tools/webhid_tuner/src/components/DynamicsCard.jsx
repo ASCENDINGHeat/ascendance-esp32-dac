@@ -1,21 +1,28 @@
 import React, { useRef } from 'react';
 import { clamp } from '../dsp/biquad.js';
+import { DEFAULT_HARMONICS, EXCITER_MODES } from '../hid/protocol.js';
 
 export function DynamicsCard({
   dynamics,
+  harmonics = DEFAULT_HARMONICS,
   sampleRateHz,
   onChangeDynamics,
+  onChangeHarmonics,
   onChangePower,
   onUploadFirFile,
   onClearFir,
 }) {
   const firInputRef = useRef(null);
   const maxCap = sampleRateHz > 48000 ? 128 : 256;
+  const harm = harmonics || DEFAULT_HARMONICS;
+  const emitHarmonics = (patch) => {
+    if (onChangeHarmonics) onChangeHarmonics({ ...harm, ...patch });
+  };
 
   return (
     <div className="card">
       <div className="card-header">
-        <span>Dynamics, FIR Impulse Filter &amp; Power Settings</span>
+        <span>Dynamics, Harmonics, FIR Impulse Filter &amp; Power Settings</span>
         <span
           id="firStatusBadge"
           style={{
@@ -127,6 +134,149 @@ export function DynamicsCard({
               <option value={60}>Dim: 60s / Sleep 180s</option>
               <option value={120}>Dim: 120s / Sleep 180s</option>
             </select>
+          </div>
+        </div>
+      </div>
+
+      <div
+        className="mixer-grid"
+        style={{
+          marginBottom: '12px',
+          borderTop: '1px solid var(--border-color)',
+          paddingTop: '12px',
+        }}
+      >
+        <div style={{ opacity: harm.bassEnabled ? 1 : 0.72 }}>
+          <div className="control-label-row">
+            <label>
+              <input
+                type="checkbox"
+                id="chkBassEnhEnabled"
+                checked={!!harm.bassEnabled}
+                onChange={(e) => emitHarmonics({ bassEnabled: e.target.checked })}
+              />{' '}
+              Bass Enhancer
+            </label>
+            <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+              Sub-bass harmonics
+            </span>
+          </div>
+          <div className="control-group" style={{ marginBottom: '8px' }}>
+            <div className="control-label-row">
+              <label htmlFor="bassAmountSlider">Bass Drive %:</label>
+              <span
+                id="bassAmountLabel"
+                style={{ fontFamily: 'monospace', color: 'var(--accent-color)' }}
+              >
+                {harm.bassAmount}%
+              </span>
+            </div>
+            <input
+              type="range"
+              id="bassAmountSlider"
+              min={0}
+              max={100}
+              step={1}
+              value={harm.bassAmount}
+              onChange={(e) =>
+                emitHarmonics({ bassAmount: clamp(parseInt(e.target.value, 10), 0, 100) })
+              }
+            />
+          </div>
+          <div className="control-group" style={{ marginBottom: 0 }}>
+            <div className="control-label-row">
+              <label htmlFor="bassFreqSlider">Cutoff (50–150 Hz):</label>
+              <span
+                id="bassFreqLabel"
+                style={{ fontFamily: 'monospace', color: 'var(--accent-color)' }}
+              >
+                {harm.bassFreq} Hz
+              </span>
+            </div>
+            <input
+              type="range"
+              id="bassFreqSlider"
+              min={50}
+              max={150}
+              step={1}
+              value={harm.bassFreq}
+              onChange={(e) =>
+                emitHarmonics({ bassFreq: clamp(parseInt(e.target.value, 10), 50, 150) })
+              }
+            />
+          </div>
+        </div>
+
+        <div style={{ opacity: harm.exciterEnabled ? 1 : 0.72 }}>
+          <div className="control-label-row">
+            <label>
+              <input
+                type="checkbox"
+                id="chkExciterEnabled"
+                checked={!!harm.exciterEnabled}
+                onChange={(e) => emitHarmonics({ exciterEnabled: e.target.checked })}
+              />{' '}
+              Harmonic Exciter
+            </label>
+            <select
+              id="exciterModeSelect"
+              aria-label="Harmonic Exciter Mode"
+              style={{ width: 'auto', padding: '3px 8px' }}
+              value={harm.exciterMode}
+              onChange={(e) =>
+                emitHarmonics({ exciterMode: clamp(parseInt(e.target.value, 10), 0, 2) })
+              }
+            >
+              {EXCITER_MODES.map((label, idx) => (
+                <option key={label} value={idx}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="control-group" style={{ marginBottom: '8px' }}>
+            <div className="control-label-row">
+              <label htmlFor="exciterAmountSlider">Excite %:</label>
+              <span
+                id="exciterAmountLabel"
+                style={{ fontFamily: 'monospace', color: 'var(--accent-color)' }}
+              >
+                {harm.exciterAmount}%
+              </span>
+            </div>
+            <input
+              type="range"
+              id="exciterAmountSlider"
+              min={0}
+              max={100}
+              step={1}
+              value={harm.exciterAmount}
+              onChange={(e) =>
+                emitHarmonics({ exciterAmount: clamp(parseInt(e.target.value, 10), 0, 100) })
+              }
+            />
+          </div>
+          <div className="control-group" style={{ marginBottom: 0 }}>
+            <div className="control-label-row">
+              <label htmlFor="exciterFreqSlider">Cutoff (1.5–8.0 kHz):</label>
+              <span
+                id="exciterFreqLabel"
+                style={{ fontFamily: 'monospace', color: 'var(--accent-color)' }}
+              >
+                {(harm.exciterFreq / 1000).toFixed(2)} kHz
+              </span>
+            </div>
+            <input
+              type="range"
+              id="exciterFreqSlider"
+              min={1500}
+              max={8000}
+              step={50}
+              value={harm.exciterFreq}
+              onChange={(e) =>
+                emitHarmonics({ exciterFreq: clamp(parseInt(e.target.value, 10), 1500, 8000) })
+              }
+            />
           </div>
         </div>
       </div>

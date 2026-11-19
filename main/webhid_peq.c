@@ -447,6 +447,20 @@ static bool webhid_build_band_packet(uint8_t band_idx, peq_channel_t ch, webhid_
         memcpy(&pkt->reserved[0], slot_name, 16);
         memcpy(&pkt->reserved[16], &dyn.fir_taps_r, sizeof(uint16_t));
         memcpy(&pkt->reserved[18], &fir_max, sizeof(uint16_t));
+
+        peq_harmonics_cfg_t harm;
+        peq_dsp_get_harmonics_cfg(&harm);
+        uint8_t harm_flags = (harm.bass_enabled ? 0x01 : 0x00) |
+                             (harm.exciter_enabled ? 0x02 : 0x00) |
+                             (((uint8_t)harm.exciter_mode & 0x03) << 2);
+        uint16_t bass_hz = harm.bass_freq_hz;
+        uint16_t exc_hz = harm.exciter_freq_hz;
+        pkt->reserved[20] = harm_flags;
+        pkt->reserved[21] = harm.bass_amount_pct;
+        pkt->reserved[22] = harm.exciter_amount_pct;
+        memcpy(&pkt->reserved[23], &bass_hz, sizeof(uint16_t));
+        memcpy(&pkt->reserved[25], &exc_hz, sizeof(uint16_t));
+        pkt->reserved[27] = 0;
         return true;
     }
 
@@ -680,6 +694,38 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
             break;
         }
 
+        case WEBHID_CMD_SET_HARMONICS: {
+            uint8_t flags = pkt->band_idx;
+            uint8_t bass_amt = (pkt->filter_type <= 100) ? pkt->filter_type : 100;
+            uint8_t exc_amt = (pkt->enabled <= 100) ? pkt->enabled : 100;
+            uint16_t bass_freq = pkt->freq_hz;
+            uint16_t exc_freq = pkt->q_x100;
+
+            if (bass_freq < 50) bass_freq = 50;
+            if (bass_freq > 150) bass_freq = 150;
+            if (exc_freq < 1500) exc_freq = 1500;
+            if (exc_freq > 8000) exc_freq = 8000;
+
+            uint8_t raw_mode = (flags >> 2) & 0x03;
+            if (raw_mode >= (uint8_t)PEQ_EXCITER_MODE_COUNT) {
+                raw_mode = (uint8_t)(PEQ_EXCITER_MODE_COUNT - 1);
+            }
+
+            peq_harmonics_cfg_t cfg = {
+                .bass_enabled = (flags & 0x01) != 0,
+                .bass_amount_pct = bass_amt,
+                .bass_freq_hz = bass_freq,
+                .exciter_enabled = (flags & 0x02) != 0,
+                .exciter_mode = (peq_exciter_mode_t)raw_mode,
+                .exciter_amount_pct = exc_amt,
+                .exciter_freq_hz = exc_freq,
+            };
+            peq_dsp_set_harmonics_cfg(&cfg);
+            oled_display_notify_activity();
+            webhid_peq_send_band_report(WEBHID_REPORT_SUB_EXT_STATE);
+            break;
+        }
+
         case WEBHID_CMD_SET_MIXER: {
             peq_mixer_config_t cfg;
             memset(&cfg, 0, sizeof(cfg));
@@ -829,6 +875,11 @@ esp_err_t webhid_peq_send_band_report_ch(uint8_t band_idx, peq_channel_t ch)
 esp_err_t webhid_peq_send_band_report(uint8_t band_idx)
 {
     return webhid_peq_send_band_report_ch(band_idx, PEQ_CH_LEFT);
+}
+
+esp_err_t webhid_peq_notify_state_changed(void)
+{
+    return webhid_peq_send_band_report(WEBHID_REPORT_SUB_EXT_STATE);
 }
 
 bool webhid_peq_is_mounted(void)

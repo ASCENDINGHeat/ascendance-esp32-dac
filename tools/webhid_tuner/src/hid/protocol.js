@@ -14,6 +14,7 @@ export const CMD_RENAME_SLOT = 0x0a;
 export const CMD_SET_DYNAMICS = 0x0b;
 export const CMD_SET_POWER_CFG = 0x0c;
 export const CMD_FACTORY_RESET_SLOT = 0x0d;
+export const CMD_SET_HARMONICS = 0x0e;
 export const CMD_SET_MIXER = 0x13;
 export const CMD_UPLOAD_FIR_CHUNK = 0x14;
 
@@ -23,6 +24,8 @@ export const SUB_MIXER = 0xfe;
 export const CH_LINKED = 0;
 export const CH_LEFT = 1;
 export const CH_RIGHT = 2;
+
+export const EXCITER_MODES = ['Tube Warmth', 'Tape', 'Air Sheen'];
 
 export const DEFAULT_MIXER = {
   mode: 0,
@@ -42,6 +45,16 @@ export const DEFAULT_DYNAMICS = {
   firTapsL: 0,
   firTapsR: 0,
   firMaxTaps: 256,
+};
+
+export const DEFAULT_HARMONICS = {
+  bassEnabled: false,
+  bassAmount: 40,
+  bassFreq: 90,
+  exciterEnabled: false,
+  exciterMode: 0,
+  exciterAmount: 30,
+  exciterFreq: 4500,
 };
 
 export function defaultSlotNames() {
@@ -203,6 +216,40 @@ export function encodeFirChunkPackets(ch, floatArray, commitNvs = true) {
   return packets;
 }
 
+export function clampHarmonicsConfig(cfg = {}) {
+  const merged = { ...DEFAULT_HARMONICS, ...(cfg || {}) };
+  const exciterModeRaw = Number(merged.exciterMode);
+  const bassAmountRaw = Number(merged.bassAmount);
+  const exciterAmountRaw = Number(merged.exciterAmount);
+  const bassFreqRaw = Number(merged.bassFreq);
+  const exciterFreqRaw = Number(merged.exciterFreq);
+  return {
+    bassEnabled: Boolean(merged.bassEnabled),
+    bassAmount: clamp(Math.round(Number.isFinite(bassAmountRaw) ? bassAmountRaw : 0), 0, 100),
+    bassFreq: clamp(Math.round(Number.isFinite(bassFreqRaw) ? bassFreqRaw : 50), 50, 150),
+    exciterEnabled: Boolean(merged.exciterEnabled),
+    exciterMode: clamp(Math.round(Number.isFinite(exciterModeRaw) ? exciterModeRaw : 0), 0, 2),
+    exciterAmount: clamp(Math.round(Number.isFinite(exciterAmountRaw) ? exciterAmountRaw : 0), 0, 100),
+    exciterFreq: clamp(Math.round(Number.isFinite(exciterFreqRaw) ? exciterFreqRaw : 1500), 1500, 8000),
+  };
+}
+
+export function encodeSetHarmonics(cfg) {
+  const safe = clampHarmonicsConfig(cfg);
+  const { buffer, view } = makeReport();
+  view.setUint8(2, CMD_SET_HARMONICS);
+  const flags =
+    (safe.bassEnabled ? 0x01 : 0x00) |
+    (safe.exciterEnabled ? 0x02 : 0x00) |
+    ((safe.exciterMode & 0x03) << 2);
+  view.setUint8(3, flags);
+  view.setUint8(4, safe.bassAmount);
+  view.setUint8(5, safe.exciterAmount);
+  view.setUint16(6, safe.bassFreq, true);
+  view.setUint16(10, safe.exciterFreq, true);
+  return new Uint8Array(buffer);
+}
+
 export function decodeInputReport(dataView) {
   if (!dataView || dataView.byteLength < 26) return null;
   if (dataView.getUint16(0, true) !== WEBHID_MAGIC_16) return null;
@@ -231,6 +278,21 @@ export function decodeInputReport(dataView) {
     const nameBytes = new Uint8Array(dataView.buffer, dataView.byteOffset + 12, 16);
     const nul = nameBytes.indexOf(0);
     const slotName = new TextDecoder().decode(nul >= 0 ? nameBytes.subarray(0, nul) : nameBytes);
+
+    let harmonics = { ...DEFAULT_HARMONICS };
+    if (dataView.byteLength >= 40) {
+      const harmFlags = dataView.getUint8(32);
+      harmonics = {
+        bassEnabled: (harmFlags & 0x01) !== 0,
+        bassAmount: clamp(dataView.getUint8(33), 0, 100),
+        bassFreq: clamp(dataView.getUint16(35, true), 50, 150),
+        exciterEnabled: (harmFlags & 0x02) !== 0,
+        exciterMode: clamp((harmFlags >> 2) & 0x03, 0, 2),
+        exciterAmount: clamp(dataView.getUint8(34), 0, 100),
+        exciterFreq: clamp(dataView.getUint16(37, true), 1500, 8000),
+      };
+    }
+
     return {
       kind: 'extState',
       slotIdx,
@@ -246,6 +308,7 @@ export function decodeInputReport(dataView) {
         firTapsR: dataView.getUint16(28, true),
         firMaxTaps: dataView.getUint16(30, true),
       },
+      harmonics,
     };
   }
 

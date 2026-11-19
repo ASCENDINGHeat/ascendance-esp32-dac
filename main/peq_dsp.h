@@ -110,6 +110,23 @@ typedef struct {
     uint16_t            fir_taps_r;
 } peq_dynamics_cfg_t;
 
+typedef enum {
+    PEQ_EXCITER_TUBE = 0,
+    PEQ_EXCITER_TAPE = 1,
+    PEQ_EXCITER_AIR = 2,
+    PEQ_EXCITER_MODE_COUNT
+} peq_exciter_mode_t;
+
+typedef struct {
+    bool               bass_enabled;
+    uint8_t            bass_amount_pct;     // 0..100 %
+    uint16_t           bass_freq_hz;        // 50..150 Hz
+    bool               exciter_enabled;
+    peq_exciter_mode_t exciter_mode;        // PEQ_EXCITER_TUBE..PEQ_EXCITER_AIR
+    uint8_t            exciter_amount_pct;  // 0..100 %
+    uint16_t           exciter_freq_hz;     // 1500..8000 Hz
+} peq_harmonics_cfg_t;
+
 /**
  * @brief Initialize the Parametric Equalizer DSP engine.
  *
@@ -197,6 +214,11 @@ void peq_dsp_set_oled_dim_sec(uint16_t sec);
 uint16_t peq_dsp_get_oled_dim_sec(void);
 
 void peq_dsp_get_dynamics_cfg(peq_dynamics_cfg_t *out_cfg);
+
+/* ---- Psychoacoustic Bass Enhancer & Tube/Tape/Air Harmonic Exciter ---- */
+
+void peq_dsp_set_harmonics_cfg(const peq_harmonics_cfg_t *cfg);
+void peq_dsp_get_harmonics_cfg(peq_harmonics_cfg_t *out_cfg);
 
 esp_err_t peq_dsp_set_fir_enabled(bool enabled);
 bool peq_dsp_is_fir_enabled(void);

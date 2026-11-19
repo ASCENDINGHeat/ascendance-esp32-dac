@@ -12,6 +12,7 @@ import {
   CH_LINKED,
   CH_RIGHT,
   DEFAULT_DYNAMICS,
+  DEFAULT_HARMONICS,
   DEFAULT_MIXER,
   SUB_EXT_STATE,
   SUB_MIXER,
@@ -31,6 +32,7 @@ import {
   encodeSelectProfile,
   encodeSetBandCount,
   encodeSetBandLive,
+  encodeSetHarmonics,
 } from './hid/protocol.js';
 import {
   downloadTextFile,
@@ -59,6 +61,7 @@ export default function App() {
   const [slotNames, setSlotNames] = useState(() => defaultSlotNames());
   const [mixer, setMixer] = useState(() => ({ ...DEFAULT_MIXER }));
   const [dynamics, setDynamics] = useState(() => ({ ...DEFAULT_DYNAMICS }));
+  const [harmonics, setHarmonics] = useState(() => ({ ...DEFAULT_HARMONICS }));
   const [showPhase, setShowPhase] = useState(false);
   const [showGroupDelay, setShowGroupDelay] = useState(false);
   const [hoveredBandIdx, setHoveredBandIdx] = useState(-1);
@@ -118,6 +121,9 @@ export default function App() {
         }
       }
       setDynamics(decoded.dynamics);
+      if (decoded.harmonics) {
+        setHarmonics(decoded.harmonics);
+      }
       return;
     }
 
@@ -403,7 +409,7 @@ export default function App() {
       return;
     }
     await sendReport(encodeSaveToPreset());
-    appendLog(`Saved Slot ${activeSlotIdx + 1} (${slotNames[activeSlotIdx]}) & Dynamics to DAC!`);
+    appendLog(`Saved Slot ${activeSlotIdx + 1} (${slotNames[activeSlotIdx]}), Dynamics & Harmonics to DAC!`);
     alert('Settings permanently saved to DAC!');
   }, [activeSlotIdx, appendLog, sendReport, slotNames]);
 
@@ -482,6 +488,14 @@ export default function App() {
     (nextDyn) => {
       setDynamics(nextDyn);
       sendReport(encodeDynamicsConfig(nextDyn));
+    },
+    [sendReport]
+  );
+
+  const handleChangeHarmonics = useCallback(
+    (nextHarmonics) => {
+      setHarmonics(nextHarmonics);
+      sendReport(encodeSetHarmonics(nextHarmonics));
     },
     [sendReport]
   );
@@ -627,8 +641,10 @@ export default function App() {
 
       <DynamicsCard
         dynamics={dynamics}
+        harmonics={harmonics}
         sampleRateHz={sampleRateHz}
         onChangeDynamics={handleChangeDynamics}
+        onChangeHarmonics={handleChangeHarmonics}
         onChangePower={handleChangePower}
         onUploadFirFile={handleUploadFirFile}
         onClearFir={handleClearFir}

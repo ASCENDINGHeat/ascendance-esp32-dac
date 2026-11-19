@@ -68,6 +68,17 @@ enum class OledViewMode(val code: Int, val label: String) {
     }
 }
 
+enum class ExciterMode(val code: Int, val label: String) {
+    TUBE(0, "Tube Warmth"),
+    TAPE(1, "Tape"),
+    AIR(2, "Air Sheen");
+
+    companion object {
+        fun fromCode(code: Int): ExciterMode =
+            entries.firstOrNull { it.code == code } ?: TUBE
+    }
+}
+
 @Serializable
 data class DynamicsConfig(
     val limiterEnabled: Boolean = true,
@@ -80,6 +91,40 @@ data class DynamicsConfig(
     val firTapsR: Int = 0,
     val firMaxTaps: Int = 256
 )
+
+@Serializable
+data class HarmonicsConfig(
+    val bassEnabled: Boolean = false,
+    val bassAmountPct: Int = 35,
+    val bassFreqHz: Int = 80,
+    val exciterEnabled: Boolean = false,
+    val exciterMode: Int = ExciterMode.TUBE.code,
+    val exciterAmountPct: Int = 25,
+    val exciterFreqHz: Int = 3500
+) {
+    val exciterModeEnum: ExciterMode
+        get() = ExciterMode.fromCode(exciterMode)
+
+    fun clamped(): HarmonicsConfig = copy(
+        bassAmountPct = bassAmountPct.coerceIn(
+            DspDefaults.MIN_HARMONICS_AMOUNT_PCT,
+            DspDefaults.MAX_HARMONICS_AMOUNT_PCT
+        ),
+        bassFreqHz = bassFreqHz.coerceIn(
+            DspDefaults.MIN_BASS_FREQ_HZ,
+            DspDefaults.MAX_BASS_FREQ_HZ
+        ),
+        exciterMode = ExciterMode.fromCode(exciterMode).code,
+        exciterAmountPct = exciterAmountPct.coerceIn(
+            DspDefaults.MIN_HARMONICS_AMOUNT_PCT,
+            DspDefaults.MAX_HARMONICS_AMOUNT_PCT
+        ),
+        exciterFreqHz = exciterFreqHz.coerceIn(
+            DspDefaults.MIN_EXCITER_FREQ_HZ,
+            DspDefaults.MAX_EXCITER_FREQ_HZ
+        )
+    )
+}
 
 @Serializable
 data class PeqBand(
@@ -151,6 +196,12 @@ object DspDefaults {
     const val MAX_Q = 10.00f
     const val MIN_PREAMP_DB = -12.0f
     const val MAX_PREAMP_DB = 0.0f
+    const val MIN_HARMONICS_AMOUNT_PCT = 0
+    const val MAX_HARMONICS_AMOUNT_PCT = 100
+    const val MIN_BASS_FREQ_HZ = 50
+    const val MAX_BASS_FREQ_HZ = 150
+    const val MIN_EXCITER_FREQ_HZ = 1500
+    const val MAX_EXCITER_FREQ_HZ = 8000
 
     val SUPPORTED_SAMPLE_RATES = listOf(44100, 48000, 96000)
 

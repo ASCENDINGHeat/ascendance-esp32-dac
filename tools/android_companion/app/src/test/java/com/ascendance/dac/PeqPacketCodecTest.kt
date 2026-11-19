@@ -2,7 +2,9 @@ package com.ascendance.dac
 
 import com.ascendance.dac.model.DspDefaults
 import com.ascendance.dac.model.DynamicsConfig
+import com.ascendance.dac.model.ExciterMode
 import com.ascendance.dac.model.FilterType
+import com.ascendance.dac.model.HarmonicsConfig
 import com.ascendance.dac.model.LoudnessMode
 import com.ascendance.dac.model.MixerConfig
 import com.ascendance.dac.model.MixerMode
@@ -11,7 +13,9 @@ import com.ascendance.dac.model.PeqBand
 import com.ascendance.dac.model.PeqChannel
 import com.ascendance.dac.usb.HidIncomingMessage
 import com.ascendance.dac.usb.PeqPacketCodec
+import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -175,5 +179,140 @@ class PeqPacketCodecTest {
         assertEquals("Slot 2", DspDefaults.formatSlotLabel(1, ""))
         assertEquals("1: HD600", DspDefaults.formatSlotLabel(0, "HD600"))
         assertEquals("3: Bass", DspDefaults.formatSlotLabel(2, " Bass "))
+    }
+
+    @Test
+    fun encodesHarmonicsGoldenVector() {
+        val pkt = PeqPacketCodec.buildSetHarmonics(
+            HarmonicsConfig(
+                bassEnabled = true,
+                bassAmountPct = 60,
+                bassFreqHz = 90,
+                exciterEnabled = true,
+                exciterMode = ExciterMode.TAPE.code,
+                exciterAmountPct = 35,
+                exciterFreqHz = 4500
+            )
+        )
+        assertEquals(64, pkt.size)
+        val expected = ByteArray(64)
+        val header = byteArrayOf(
+            0x51,
+            0x45,
+            0x0E,
+            0x07,
+            0x3C,
+            0x23,
+            0x5A,
+            0x00,
+            0x00,
+            0x00,
+            0x94.toByte(),
+            0x11
+        )
+        System.arraycopy(header, 0, expected, 0, header.size)
+        assertArrayEquals(expected, pkt)
+    }
+
+    @Test
+    fun clampsOutOfRangeHarmonicsInputs() {
+        val lowPkt = PeqPacketCodec.buildSetHarmonics(
+            HarmonicsConfig(
+                bassEnabled = false,
+                bassAmountPct = -25,
+                bassFreqHz = 10,
+                exciterEnabled = false,
+                exciterMode = 99,
+                exciterAmountPct = -5,
+                exciterFreqHz = 400
+            )
+        )
+        val lowBb = ByteBuffer.wrap(lowPkt).order(ByteOrder.LITTLE_ENDIAN)
+        assertEquals(0x4551, lowBb.getShort(0).toInt() and 0xFFFF)
+        assertEquals(PeqPacketCodec.CMD_SET_HARMONICS, lowBb.get(2).toInt() and 0xFF)
+        assertEquals(0x00, lowBb.get(3).toInt() and 0xFF)
+        assertEquals(0, lowBb.get(4).toInt() and 0xFF)
+        assertEquals(0, lowBb.get(5).toInt() and 0xFF)
+        assertEquals(50, lowBb.getShort(6).toInt() and 0xFFFF)
+        assertEquals(1500, lowBb.getShort(10).toInt() and 0xFFFF)
+
+        val highPkt = PeqPacketCodec.buildSetHarmonics(
+            HarmonicsConfig(
+                bassEnabled = true,
+                bassAmountPct = 250,
+                bassFreqHz = 400,
+                exciterEnabled = true,
+                exciterMode = ExciterMode.AIR.code,
+                exciterAmountPct = 180,
+                exciterFreqHz = 16000
+            )
+        )
+        val highBb = ByteBuffer.wrap(highPkt).order(ByteOrder.LITTLE_ENDIAN)
+        assertEquals(0x0B, highBb.get(3).toInt() and 0xFF)
+        assertEquals(100, highBb.get(4).toInt() and 0xFF)
+        assertEquals(100, highBb.get(5).toInt() and 0xFF)
+        assertEquals(150, highBb.getShort(6).toInt() and 0xFFFF)
+        assertEquals(8000, highBb.getShort(10).toInt() and 0xFFFF)
+    }
+
+    @Test
+    fun decodesExtendedStateReportHarmonicsRoundTrip() {
+        val goldenRaw = ByteBuffer.allocate(64).order(ByteOrder.LITTLE_ENDIAN).apply {
+            putShort(0, 0x4551)
+            put(2, PeqPacketCodec.CMD_SET_DYNAMICS.toByte())
+            put(3, PeqPacketCodec.BAND_IDX_EXT_STATE_QUERY.toByte())
+            put(4, 2)
+            put(5, 0x01)
+            putShort(6, 10)
+            putShort(8, 60)
+            putShort(10, 0)
+            "Slot 3".toByteArray(Charsets.UTF_8).forEachIndexed { idx, b -> put(12 + idx, b) }
+            putShort(28, 0)
+            putShort(30, 256)
+            // reserved[20..27] at packet bytes 32..39
+            put(32, 0x07) // bass=1, exciter=1, mode=TAPE(1)
+            put(33, 60)
+            put(34, 35)
+            putShort(35, 90)
+            putShort(37, 4500)
+            put(39, 0)
+        }.array()
+
+        val msg = PeqPacketCodec.parseReport(goldenRaw) as? HidIncomingMessage.ExtendedStateReport
+        assertNotNull(msg)
+        assertTrue(msg!!.harmonics.bassEnabled)
+        assertEquals(60, msg.harmonics.bassAmountPct)
+        assertEquals(90, msg.harmonics.bassFreqHz)
+        assertTrue(msg.harmonics.exciterEnabled)
+        assertEquals(ExciterMode.TAPE.code, msg.harmonics.exciterMode)
+        assertEquals(ExciterMode.TAPE, msg.harmonics.exciterModeEnum)
+        assertEquals(35, msg.harmonics.exciterAmountPct)
+        assertEquals(4500, msg.harmonics.exciterFreqHz)
+
+        val clampedRaw = ByteBuffer.allocate(64).order(ByteOrder.LITTLE_ENDIAN).apply {
+            putShort(0, 0x4551)
+            put(2, PeqPacketCodec.CMD_SET_DYNAMICS.toByte())
+            put(3, PeqPacketCodec.BAND_IDX_EXT_STATE_QUERY.toByte())
+            put(4, 0)
+            put(5, 0x01)
+            putShort(30, 256)
+            // reserved[20..27]: bass off, exciter on, mode AIR(2), out-of-range amounts/freqs
+            put(32, (0x02 or (ExciterMode.AIR.code shl 2)).toByte())
+            put(33, 200.toByte())
+            put(34, 150.toByte())
+            putShort(35, 20)
+            putShort(37, 12000)
+            put(39, 0)
+        }.array()
+
+        val clampedMsg = PeqPacketCodec.parseReport(clampedRaw) as? HidIncomingMessage.ExtendedStateReport
+        assertNotNull(clampedMsg)
+        assertFalse(clampedMsg!!.harmonics.bassEnabled)
+        assertEquals(100, clampedMsg.harmonics.bassAmountPct)
+        assertEquals(50, clampedMsg.harmonics.bassFreqHz)
+        assertTrue(clampedMsg.harmonics.exciterEnabled)
+        assertEquals(ExciterMode.AIR.code, clampedMsg.harmonics.exciterMode)
+        assertEquals(100, clampedMsg.harmonics.exciterAmountPct)
+        assertEquals(8000, clampedMsg.harmonics.exciterFreqHz)
     }
 }

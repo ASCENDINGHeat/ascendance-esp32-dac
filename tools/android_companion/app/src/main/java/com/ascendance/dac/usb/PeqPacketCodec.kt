@@ -2,6 +2,7 @@ package com.ascendance.dac.usb
 
 import com.ascendance.dac.model.DspDefaults
 import com.ascendance.dac.model.DynamicsConfig
+import com.ascendance.dac.model.HarmonicsConfig
 import com.ascendance.dac.model.LoudnessMode
 import com.ascendance.dac.model.MixerConfig
 import com.ascendance.dac.model.OledViewMode
@@ -35,7 +36,8 @@ sealed interface HidIncomingMessage {
     data class ExtendedStateReport(
         val activeSlot: Int,
         val slotName: String,
-        val dynamics: DynamicsConfig
+        val dynamics: DynamicsConfig,
+        val harmonics: HarmonicsConfig = HarmonicsConfig()
     ) : HidIncomingMessage
 }
 
@@ -59,6 +61,7 @@ object PeqPacketCodec {
     const val CMD_SET_DYNAMICS = 0x0B
     const val CMD_SET_POWER_CFG = 0x0C
     const val CMD_FACTORY_RESET_SLOT = 0x0D
+    const val CMD_SET_HARMONICS = 0x0E
     const val CMD_SET_MIXER = 0x13
     const val CMD_UPLOAD_FIR_CHUNK = 0x14
 
@@ -204,6 +207,20 @@ object PeqPacketCodec {
         return bb.array()
     }
 
+    fun buildSetHarmonics(config: HarmonicsConfig): ByteArray {
+        val safe = config.clamped()
+        val bb = newPacket(CMD_SET_HARMONICS)
+        val flags = (if (safe.bassEnabled) 0x01 else 0x00) or
+            (if (safe.exciterEnabled) 0x02 else 0x00) or
+            ((safe.exciterMode and 0x03) shl 2)
+        bb.put(3, flags.toByte())
+        bb.put(4, safe.bassAmountPct.toByte())
+        bb.put(5, safe.exciterAmountPct.toByte())
+        bb.putShort(6, safe.bassFreqHz.toShort())
+        bb.putShort(10, safe.exciterFreqHz.toShort())
+        return bb.array()
+    }
+
     fun parseReport(raw: ByteArray): HidIncomingMessage? {
         if (raw.size < 28) return null
         val bb = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN)
@@ -252,10 +269,27 @@ object PeqPacketCodec {
                 firTapsR = firTapsR,
                 firMaxTaps = if (firMaxTaps > 0) firMaxTaps else 256
             )
+            val harmonics = if (raw.size >= 39) {
+                val harmFlags = bb.get(32).toInt() and 0xFF
+                val bassFreqRaw = bb.getShort(35).toInt() and 0xFFFF
+                val exciterFreqRaw = bb.getShort(37).toInt() and 0xFFFF
+                HarmonicsConfig(
+                    bassEnabled = (harmFlags and 0x01) != 0,
+                    bassAmountPct = bb.get(33).toInt() and 0xFF,
+                    bassFreqHz = if (bassFreqRaw > 0) bassFreqRaw else HarmonicsConfig().bassFreqHz,
+                    exciterEnabled = (harmFlags and 0x02) != 0,
+                    exciterMode = (harmFlags shr 2) and 0x03,
+                    exciterAmountPct = bb.get(34).toInt() and 0xFF,
+                    exciterFreqHz = if (exciterFreqRaw > 0) exciterFreqRaw else HarmonicsConfig().exciterFreqHz
+                ).clamped()
+            } else {
+                HarmonicsConfig()
+            }
             return HidIncomingMessage.ExtendedStateReport(
                 activeSlot = activeSlot,
                 slotName = slotName,
-                dynamics = cfg
+                dynamics = cfg,
+                harmonics = harmonics
             )
         }
 

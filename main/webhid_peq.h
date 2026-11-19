@@ -40,6 +40,7 @@ typedef enum {
     WEBHID_CMD_SET_DYNAMICS       = 0x0B,  // Configure Limiter, Equal Loudness (ISO 226), FIR enable, OLED view
     WEBHID_CMD_SET_POWER_CFG      = 0x0C,  // Configure Auto-Mute silence sec & OLED dimmer sec
     WEBHID_CMD_FACTORY_RESET_SLOT = 0x0D,  // Reset specified slot (0..7) to Reference Flat + "Slot N"
+    WEBHID_CMD_SET_HARMONICS      = 0x0E,  // Configure Psychoacoustic Bass Enhancer & Harmonic Exciter
     WEBHID_CMD_SET_MIXER          = 0x13,  // Configure 2x2 Channel Matrix & Chu Moy Crossfeed
     WEBHID_CMD_UPLOAD_FIR_CHUNK   = 0x14,  // Stream float32 FIR impulse response chunks (up to 12 floats/report)
 } webhid_cmd_t;
@@ -80,6 +81,11 @@ esp_err_t webhid_peq_send_band_report_ch(uint8_t band_idx, peq_channel_t ch);
  * @brief Send active PEQ band profile (primary/left bank) to connected WebHID host.
  */
 esp_err_t webhid_peq_send_band_report(uint8_t band_idx);
+
+/**
+ * @brief Broadcast extended DAC state telemetry (0xFD) to connected WebHID host.
+ */
+esp_err_t webhid_peq_notify_state_changed(void);
 
 /**
  * @brief Query if a USB host is currently mounted and active.

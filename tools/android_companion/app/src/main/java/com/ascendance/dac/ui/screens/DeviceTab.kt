@@ -3,6 +3,7 @@ package com.ascendance.dac.ui.screens
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -24,6 +25,8 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
 import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -35,10 +38,16 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.ascendance.dac.model.DspDefaults
+import com.ascendance.dac.model.ExciterMode
+import com.ascendance.dac.model.HarmonicsConfig
 import com.ascendance.dac.model.OledViewMode
 import com.ascendance.dac.ui.DacUiState
+import com.ascendance.dac.ui.DacViewModel
 import com.ascendance.dac.ui.theme.AscendanceColors
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @Composable
 fun DeviceTab(
@@ -51,8 +60,17 @@ fun DeviceTab(
     onToggleOfflineDemo: (Boolean) -> Unit,
     onSetOledView: (Int) -> Unit,
     onSetPowerConfig: (Int, Int) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onUpdateHarmonics: ((HarmonicsConfig) -> Unit)? = null
 ) {
+    val resolvedUpdateHarmonics: (HarmonicsConfig) -> Unit =
+        if (onUpdateHarmonics != null) {
+            onUpdateHarmonics
+        } else {
+            val vm: DacViewModel = viewModel()
+            vm::updateHarmonics
+        }
+
     Column(
         modifier = modifier
             .fillMaxWidth()
@@ -171,6 +189,158 @@ fun DeviceTab(
                         enabled = !state.usbInfo.connected
                     )
                 }
+            }
+        }
+
+        // Psychoacoustic Bass Enhancer & Harmonic Exciter
+        val harm = state.harmonics
+        Surface(
+            color = AscendanceColors.CardDark,
+            shape = RoundedCornerShape(12.dp),
+            border = BorderStroke(1.dp, AscendanceColors.BorderDark)
+        ) {
+            Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    text = "Bass Enhancer & Harmonic Exciter",
+                    color = AscendanceColors.TextSecondary,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Bass Enhancer", color = AscendanceColors.TextPrimary, fontSize = 13.sp)
+                        Text(
+                            "Psychoacoustic missing-fundamental low-end warmth",
+                            color = AscendanceColors.TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                    Switch(
+                        checked = harm.bassEnabled,
+                        onCheckedChange = { resolvedUpdateHarmonics(harm.copy(bassEnabled = it)) }
+                    )
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Bass Drive", color = AscendanceColors.TextSecondary, fontSize = 11.sp)
+                    Text(
+                        text = "${harm.bassAmountPct}%",
+                        color = if (harm.bassEnabled) AscendanceColors.AccentBlue else AscendanceColors.TextSecondary,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp
+                    )
+                }
+                Slider(
+                    value = harm.bassAmountPct.toFloat(),
+                    onValueChange = { resolvedUpdateHarmonics(harm.copy(bassAmountPct = it.roundToInt())) },
+                    valueRange = DspDefaults.MIN_HARMONICS_AMOUNT_PCT.toFloat()..DspDefaults.MAX_HARMONICS_AMOUNT_PCT.toFloat(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = AscendanceColors.AccentBlue,
+                        activeTrackColor = AscendanceColors.AccentBlue
+                    )
+                )
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Cutoff (50–150 Hz)", color = AscendanceColors.TextSecondary, fontSize = 11.sp)
+                    Text(
+                        text = "${harm.bassFreqHz} Hz",
+                        color = if (harm.bassEnabled) AscendanceColors.AccentBlue else AscendanceColors.TextSecondary,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp
+                    )
+                }
+                Slider(
+                    value = harm.bassFreqHz.toFloat(),
+                    onValueChange = { resolvedUpdateHarmonics(harm.copy(bassFreqHz = it.roundToInt())) },
+                    valueRange = DspDefaults.MIN_BASS_FREQ_HZ.toFloat()..DspDefaults.MAX_BASS_FREQ_HZ.toFloat(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = AscendanceColors.AccentBlue,
+                        activeTrackColor = AscendanceColors.AccentBlue
+                    )
+                )
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(1.dp)
+                        .background(AscendanceColors.BorderDark)
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Harmonic Exciter", color = AscendanceColors.TextPrimary, fontSize = 13.sp)
+                        Text(
+                            "Upper-harmonic saturation & presence sheen",
+                            color = AscendanceColors.TextSecondary,
+                            fontSize = 11.sp
+                        )
+                    }
+                    Switch(
+                        checked = harm.exciterEnabled,
+                        onCheckedChange = { resolvedUpdateHarmonics(harm.copy(exciterEnabled = it)) }
+                    )
+                }
+
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    ExciterMode.entries.forEachIndexed { idx, mode ->
+                        SegmentedButton(
+                            selected = harm.exciterMode == mode.code,
+                            onClick = { resolvedUpdateHarmonics(harm.copy(exciterMode = mode.code)) },
+                            shape = SegmentedButtonDefaults.itemShape(index = idx, count = ExciterMode.entries.size),
+                            label = { Text(mode.label, fontSize = 11.sp) }
+                        )
+                    }
+                }
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Excite", color = AscendanceColors.TextSecondary, fontSize = 11.sp)
+                    Text(
+                        text = "${harm.exciterAmountPct}%",
+                        color = if (harm.exciterEnabled) AscendanceColors.AccentAmber else AscendanceColors.TextSecondary,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp
+                    )
+                }
+                Slider(
+                    value = harm.exciterAmountPct.toFloat(),
+                    onValueChange = { resolvedUpdateHarmonics(harm.copy(exciterAmountPct = it.roundToInt())) },
+                    valueRange = DspDefaults.MIN_HARMONICS_AMOUNT_PCT.toFloat()..DspDefaults.MAX_HARMONICS_AMOUNT_PCT.toFloat(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = AscendanceColors.AccentAmber,
+                        activeTrackColor = AscendanceColors.AccentAmber
+                    )
+                )
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text("Cutoff (1.5–8.0 kHz)", color = AscendanceColors.TextSecondary, fontSize = 11.sp)
+                    Text(
+                        text = String.format(Locale.US, "%.1f kHz", harm.exciterFreqHz / 1000.0f),
+                        color = if (harm.exciterEnabled) AscendanceColors.AccentAmber else AscendanceColors.TextSecondary,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp
+                    )
+                }
+                Slider(
+                    value = harm.exciterFreqHz.toFloat(),
+                    onValueChange = {
+                        val hz = (it / 100f).roundToInt() * 100
+                        resolvedUpdateHarmonics(harm.copy(exciterFreqHz = hz))
+                    },
+                    valueRange = DspDefaults.MIN_EXCITER_FREQ_HZ.toFloat()..DspDefaults.MAX_EXCITER_FREQ_HZ.toFloat(),
+                    colors = SliderDefaults.colors(
+                        thumbColor = AscendanceColors.AccentAmber,
+                        activeTrackColor = AscendanceColors.AccentAmber
+                    )
+                )
             }
         }
 

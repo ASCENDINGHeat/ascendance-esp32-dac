@@ -152,8 +152,8 @@ Commercial audiophile dongle DACs with built-in DSP (such as the **FiiO JA11**, 
   │                     │                       └───────────┬───────────┘       │
   │                     ▼                                   ▼                   │
   │         ┌───────────────────────────────────────────────────────┐           │
-  │         │ CORE 1: DSP PEQ + MATRIX + CROSSFEED ENGINE           │           │
-  │         │ 15 ms Crossfade -> 32-bit I2S MSB -> PCM5102A         │           │
+  │         │ CORE 1: PEQ + FIR + HARMONICS + MATRIX + LIMITER DSP  │           │
+  │         │ 15 ms Crossfade -> 24-bit Clamp -> 32-bit I2S MSB     │           │
   │         └───────────────────────────────────────────────────────┘           │
   └─────────────────────────────────────────────────────────────────────────────┘
 ```
@@ -214,6 +214,7 @@ typedef enum {
     WEBHID_CMD_SET_DYNAMICS       = 0x0B,  // Set Limiter, Equal Loudness (ISO 226), FIR enable & OLED view
     WEBHID_CMD_SET_POWER_CFG      = 0x0C,  // Set Auto-Mute on Silence sec & OLED Auto-Dim sec
     WEBHID_CMD_FACTORY_RESET_SLOT = 0x0D,  // Reset specific slot (0..7) to Reference Flat + "Slot N"
+    WEBHID_CMD_SET_HARMONICS      = 0x0E,  // Configure Bass Enhancer & Tube/Tape/Air Harmonic Exciter
     WEBHID_CMD_SET_MIXER          = 0x13,  // 2x2 Channel Matrix & Chu Moy Crossfeed configuration
     WEBHID_CMD_UPLOAD_FIR_CHUNK   = 0x14   // Stream float32 FIR impulse chunks (up to 12 floats/report)
 } webhid_cmd_t;
@@ -221,15 +222,40 @@ typedef enum {
 typedef struct __attribute__((packed)) {
     uint16_t magic;         // WEBHID_MAGIC_16 (0x4551) [bytes 0..1]
     uint8_t  cmd;           // webhid_cmd_t             [byte 2]
-    uint8_t  band_idx;      // Band/slot/toggle/sub arg [byte 3]
-    uint8_t  filter_type;   // 0=Bypass..7=BPF (or int8 balance / loudness / FIR count) [byte 4]
-    uint8_t  enabled;       // 1=Active, 0=Bypass (or width_pct / dynamics flags)    [byte 5]
-    uint16_t freq_hz;       // 20..20000 Hz (or crossfeed / auto_mute_sec / fir_total) [bytes 6..7]
+    uint8_t  band_idx;      // Band/slot/toggle/sub arg (or harmonics flags) [byte 3]
+    uint8_t  filter_type;   // 0=Bypass..7=BPF (or int8 balance / loudness / bass_amount_pct) [byte 4]
+    uint8_t  enabled;       // 1=Active, 0=Bypass (or width_pct / dynamics flags / exciter_amount_pct) [byte 5]
+    uint16_t freq_hz;       // 20..20000 Hz (or crossfeed / auto_mute_sec / fir_total / bass_freq_hz) [bytes 6..7]
     int16_t  gain_db_x10;   // e.g. +35 = +3.5 dB (or oled_dim_sec)                   [bytes 8..9]
-    uint16_t q_x100;        // e.g. 141 = 1.41 (or fir_taps_l / fir_offset)            [bytes 10..11]
-    uint8_t  reserved[52];  // bytes 12..63: metadata, slot name UTF-8, matrix or FIR floats
+    uint16_t q_x100;        // e.g. 141 = 1.41 (or fir_taps_l / fir_offset / exciter_freq_hz) [bytes 10..11]
+    uint8_t  reserved[52];  // bytes 12..63: metadata, slot name UTF-8, matrix, FIR floats, or 0xFD harmonics mirror
 } webhid_peq_packet_t;
 ```
+
+#### `WEBHID_CMD_SET_HARMONICS` (`0x0E`) & `0xFD` Telemetry Extension
+`WEBHID_CMD_SET_HARMONICS` (`0x0E`) updates the global **Psychoacoustic Bass Enhancer** and **Tube/Tape/Air Harmonic Exciter** in volatile RAM with a `15 ms` click-free wet/dry crossfade (persisted only on explicit save under global NVS key `"harm_cfg_v1"`, struct `peq_harm_nvs_v1_t`, with CRC32 + `memcmp` delta verification). Signal processing runs on Core 1 after PEQ/Loudness and FIR filtering (and before the 2×2 Matrix, Volume, Lookahead Limiter, and 24-bit clamp) using precomputed 4096-point `float32` PSRAM LUTs (`MALLOC_CAP_SPIRAM`, with static internal DIRAM filter/oversampling states) and `2×` polyphase half-band oversampling at `<= 48 kHz` (`1×` at `96 kHz`); engaging `ab_bypass == true` (`0x08`) smoothly crossfades both harmonic stages to dry bypass over `15 ms`. Upon receiving `0x0E`, the firmware clamps inputs and broadcasts an updated `0xFD` (`WEBHID_REPORT_SUB_EXT_STATE`) report.
+
+| Byte Offset | `webhid_peq_packet_t` Member | `0x0E` Command Field | Valid Range / Encoding |
+| :---: | :--- | :--- | :--- |
+| `0..1` | `magic` | Magic header | `0x4551` little-endian (`51 45`) |
+| `2` | `cmd` | Command ID | `0x0E` (`WEBHID_CMD_SET_HARMONICS`) |
+| `3` | `band_idx` | `flags` | `bit 0 = bass_enabled`, `bit 1 = exciter_enabled`, `bits 2..3 = exciter_mode` (`0=Tube`, `1=Tape`, `2=Air`) |
+| `4` | `filter_type` | `bass_amount_pct` | `0..100` (%) |
+| `5` | `enabled` | `exciter_amount_pct` | `0..100` (%) |
+| `6..7` | `freq_hz` | `bass_freq_hz` | `uint16` LE, `50..150` Hz |
+| `8..9` | `gain_db_x10` | Unused | `0` |
+| `10..11` | `q_x100` | `exciter_freq_hz` | `uint16` LE, `1500..8000` Hz |
+| `12..63` | `reserved[0..51]` | Padding | `0` |
+
+* **Golden Test Vector** (Bass On, Exciter On, Mode `Tape (1)`, Bass `60 %`, Exciter `35 %`, Bass `90 Hz`, Exciter `4500 Hz`):
+  * Bytes `0..11`: `51 45 0E 07 3C 23 5A 00 00 00 94 11` (bytes `12..63` all `00`).
+* **`0xFD` Extended-State Telemetry Mirror (`reserved[20..27]`):** Existing `reserved[0..19]` bytes remain unchanged (`reserved[0..15]` = 16-byte UTF-8 slot name, `reserved[16..17]` = `fir_taps_r`, `reserved[18..19]` = `fir_max`). Bytes `reserved[20..27]` (packet offsets `32..39`) mirror the harmonics state:
+  * `reserved[20]` = `flags` (`bit 0 = bass_enabled`, `bit 1 = exciter_enabled`, `bits 2..3 = exciter_mode`)
+  * `reserved[21]` = `bass_amount_pct` (`0..100`)
+  * `reserved[22]` = `exciter_amount_pct` (`0..100`)
+  * `reserved[23..24]` = `bass_freq_hz` (`uint16` LE, `50..150`)
+  * `reserved[25..26]` = `exciter_freq_hz` (`uint16` LE, `1500..8000`)
+  * `reserved[27]` = `0`
 
 ---
 
@@ -385,11 +411,12 @@ class UsbDacTuner {
 >   * **Mouse Wheel / Scroll Q Adjustment & Double-Click Actions:** Scroll to adjust `Q` (`0.10..10.00`) with `-3 dB` guides; double-click node to reset gain or empty canvas to add a band.
 > * **Dual-Mono L/R PEQ & Preamp-Normalized A/B Toggle:** Switch between **Linked Stereo** and independent **Left / Right** 10-band curves, or toggle **A/B Bypass** (`0x08`) transiently over 15 ms crossfade.
 > * **Channel Matrix & Headphone Crossfeed:** Stereo, Mono Mix, L-Only, R-Only, Swap L/R, Mid-Side Width (`0–200%`), L/R Balance, **Custom Channel Matrix**, and 3-level **Headphone Crossfeed (Chu Moy)** (`Off / Low / High`).
+> * **Bass Enhancer & Harmonic Exciter:** Psychoacoustic **Bass Enhancer** (`0–100%`, `50–150 Hz`) and **Harmonic Exciter** (`Tube Warmth / Tape / Air Sheen`, `0–100%`, `1.5–8.0 kHz`) via `0x0E` with `0xFD` `reserved[20..27]` telemetry sync.
 > * **Equalizer APO / AutoEQ Import & Export:** One-click `.txt` (APO syntax) and `.json` snapshot import/export with clamped `Freq` (`20..20,000 Hz`), `Gain` (`-24.0..+12.0 dB`), `Q` (`0.10..10.00`), and `Preamp` (`-12.0..0.0 dB`).
-> * **60 FPS Live Preview Tuning & DAC Preset Storage:** Streams live updates in volatile memory with **0 flash wear**; commits Dual-Mono, Matrix, and Dynamics settings (`nvs_meta_v3` / `peq_slot_0..7`) via explicit **Save to DAC** with CRC32 and delta checks.
+> * **60 FPS Live Preview Tuning & DAC Preset Storage:** Streams live updates in volatile memory with **0 flash wear**; commits Dual-Mono, Matrix, Dynamics (`nvs_meta_v3` / `peq_slot_0..7`), and global Harmonics (`harm_cfg_v1`) via explicit **Save to DAC** with CRC32 and delta checks.
 >
 > **Native Android Companion App (`tools/android_companion/`):**  
-> Because Android Chrome does not implement the WebHID API (`navigator.hid`), a native Kotlin + Jetpack Compose Android companion app (`com.ascendance.dac`, Android 8.0+) is provided in [`tools/android_companion/`](../../tools/android_companion/). It uses `android.hardware.usb.UsbManager` to claim **only USB control interface #2** (`EP 0x02 OUT` / `EP 0x82 IN`, `VID 0x303A` / `PID 0x4002`), keeping UAC 1.0 Audio Interfaces `0`/`1` free so Spotify/Tidal/Android audio continues uninterrupted while tuning Dual-Mono L/R PEQ, Channel Matrix & Crossfeed, A/B Toggle, **DAC Presets (1–8)**, AutoEQ/APO `.txt`/`.json` profiles, **FIR Impulse Filters**, and an unlimited local phone profile library (plus **Offline Preview Mode**).
+> Because Android Chrome does not implement the WebHID API (`navigator.hid`), a native Kotlin + Jetpack Compose Android companion app (`com.ascendance.dac`, Android 8.0+) is provided in [`tools/android_companion/`](../../tools/android_companion/). It uses `android.hardware.usb.UsbManager` to claim **only USB control interface #2** (`EP 0x02 OUT` / `EP 0x82 IN`, `VID 0x303A` / `PID 0x4002`), keeping UAC 1.0 Audio Interfaces `0`/`1` free so Spotify/Tidal/Android audio continues uninterrupted while tuning Dual-Mono L/R PEQ, Channel Matrix & Crossfeed, **Bass Enhancer & Harmonic Exciter**, A/B Toggle, **DAC Presets (1–8)**, AutoEQ/APO `.txt`/`.json` profiles, **FIR Impulse Filters**, and an unlimited local phone profile library (plus **Offline Preview Mode**).
 
 ---
 
@@ -398,7 +425,7 @@ class UsbDacTuner {
 ### 6.1 Critical Invariants
 1. **Never Reconfigure GPIO 19 & 20:** When USB is enabled, GPIO 19 (`USB_D-`) and GPIO 20 (`USB_D+`) are locked to the internal USB-OTG PHY. Never assign I2S, I2C, or buttons to these pins.
 2. **Interrupt Context Rules:** Avoid blocking calls inside USB callbacks; enqueue PCM frames into TinyUSB's `16,384`-byte SW FIFO ringbuffer and defer Core 1 I2S reclocking cleanly via spinlock-guarded pending sample-rate flags.
-3. **Volatile Auditioning & Explicit Save Rule:** `tud_hid_set_report_cb` MUST update volatile SRAM state only on live commands (`0x02`, `0x03`, `0x08`, `0x09`, `0x13`). Committing to NVS v2 occurs ONLY on explicit `WEBHID_CMD_SAVE_TO_PRESET` (`0x05`) with CRC32 + `memcmp` delta checking.
+3. **Volatile Auditioning & Explicit Save Rule:** `tud_hid_set_report_cb` MUST update volatile SRAM state only on live commands (`0x02`, `0x03`, `0x08`, `0x09`, `0x0B`, `0x0C`, `0x0E`, `0x13`). Committing to NVS v3 (`peq_slot_0..7`, `nvs_meta_v3`, and global `harm_cfg_v1`) occurs ONLY on explicit `WEBHID_CMD_SAVE_TO_PRESET` (`0x05`) or explicit save triggers with CRC32 + `memcmp` delta checking.
 
 ### 6.2 Implementation Checklist
 Future AI agents tasked with maintaining or extending this USB DAC stack should follow this architecture:

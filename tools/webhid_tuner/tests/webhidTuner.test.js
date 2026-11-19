@@ -8,11 +8,13 @@ import {
   CMD_GET_ACTIVE_PROFILE,
   CMD_SET_BAND_LIVE,
   CMD_SET_DYNAMICS,
+  CMD_SET_HARMONICS,
   WEBHID_MAGIC_16,
   decodeInputReport,
   encodeFirChunkPackets,
   encodeRenameSlot,
   encodeSetBandLive,
+  encodeSetHarmonics,
   formatSlotOptionLabel,
 } from '../src/hid/protocol.js';
 import {
@@ -79,7 +81,61 @@ describe('WebHID Tuner DSP, Protocol & Parsers', () => {
     expect(firPkts[1][5]).toBe(1);
   });
 
-  it('decodes extended dynamics (0xFD) and profile (0x01) HID reports', () => {
+  it('encodes CMD_SET_HARMONICS (0x0E) matching the golden vector', () => {
+    const pkt = encodeSetHarmonics({
+      bassEnabled: true,
+      exciterEnabled: true,
+      exciterMode: 1,
+      bassAmount: 60,
+      exciterAmount: 35,
+      bassFreq: 90,
+      exciterFreq: 4500,
+    });
+
+    expect(pkt).toHaveLength(64);
+    expect(CMD_SET_HARMONICS).toBe(0x0e);
+    expect(Array.from(pkt.slice(0, 12))).toEqual([
+      0x51, 0x45, 0x0e, 0x07, 0x3c, 0x23, 0x5a, 0x00, 0x00, 0x00, 0x94, 0x11,
+    ]);
+    expect(Array.from(pkt.slice(12)).every((b) => b === 0)).toBe(true);
+  });
+
+  it('clamps out-of-range inputs in encodeSetHarmonics()', () => {
+    const lowPkt = encodeSetHarmonics({
+      bassEnabled: false,
+      exciterEnabled: true,
+      exciterMode: -5,
+      bassAmount: -10,
+      exciterAmount: -1,
+      bassFreq: 20,
+      exciterFreq: 500,
+    });
+    const lowDv = new DataView(lowPkt.buffer);
+    expect(lowDv.getUint8(2)).toBe(CMD_SET_HARMONICS);
+    expect(lowDv.getUint8(3)).toBe(0x02);
+    expect(lowDv.getUint8(4)).toBe(0);
+    expect(lowDv.getUint8(5)).toBe(0);
+    expect(lowDv.getUint16(6, true)).toBe(50);
+    expect(lowDv.getUint16(10, true)).toBe(1500);
+
+    const highPkt = encodeSetHarmonics({
+      bassEnabled: true,
+      exciterEnabled: false,
+      exciterMode: 7,
+      bassAmount: 180,
+      exciterAmount: 255,
+      bassFreq: 400,
+      exciterFreq: 16000,
+    });
+    const highDv = new DataView(highPkt.buffer);
+    expect(highDv.getUint8(3)).toBe(0x01 | (2 << 2));
+    expect(highDv.getUint8(4)).toBe(100);
+    expect(highDv.getUint8(5)).toBe(100);
+    expect(highDv.getUint16(6, true)).toBe(150);
+    expect(highDv.getUint16(10, true)).toBe(8000);
+  });
+
+  it('decodes extended dynamics (0xFD) including harmonics reserved[20..27] and profile (0x01)', () => {
     const buf = new ArrayBuffer(64);
     const dv = new DataView(buf);
     dv.setUint16(0, WEBHID_MAGIC_16, true);
@@ -94,6 +150,23 @@ describe('WebHID Tuner DSP, Protocol & Parsers', () => {
     dv.setUint16(28, 128, true);
     dv.setUint16(30, 256, true);
 
+    const encodedHarm = encodeSetHarmonics({
+      bassEnabled: true,
+      exciterEnabled: true,
+      exciterMode: 2,
+      bassAmount: 75,
+      exciterAmount: 42,
+      bassFreq: 110,
+      exciterFreq: 6200,
+    });
+    const harmView = new DataView(encodedHarm.buffer);
+    dv.setUint8(32, harmView.getUint8(3));
+    dv.setUint8(33, harmView.getUint8(4));
+    dv.setUint8(34, harmView.getUint8(5));
+    dv.setUint16(35, harmView.getUint16(6, true), true);
+    dv.setUint16(37, harmView.getUint16(10, true), true);
+    dv.setUint8(39, 0);
+
     const ext = decodeInputReport(dv);
     expect(ext.kind).toBe('extState');
     expect(ext.slotIdx).toBe(2);
@@ -101,6 +174,15 @@ describe('WebHID Tuner DSP, Protocol & Parsers', () => {
     expect(ext.dynamics.loudnessMode).toBe(2);
     expect(ext.dynamics.oledView).toBe(3);
     expect(ext.dynamics.firTapsL).toBe(256);
+    expect(ext.harmonics).toEqual({
+      bassEnabled: true,
+      bassAmount: 75,
+      bassFreq: 110,
+      exciterEnabled: true,
+      exciterMode: 2,
+      exciterAmount: 42,
+      exciterFreq: 6200,
+    });
 
     const pBuf = new ArrayBuffer(64);
     const pdv = new DataView(pBuf);

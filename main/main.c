@@ -261,6 +261,9 @@ static void update_menu_ui(void)
         memset(&mixer, 0, sizeof(mixer));
     }
 
+    peq_harmonics_cfg_t harm;
+    peq_dsp_get_harmonics_cfg(&harm);
+
     ui_menu_state_t ms;
     memset(&ms, 0, sizeof(ms));
     ms.selected_idx = s_menu_selection;
@@ -272,6 +275,9 @@ static void update_menu_ui(void)
     ms.loudness_mode = (uint8_t)peq_dsp_get_loudness_mode();
     ms.limiter_enabled = peq_dsp_is_limiter_enabled();
     ms.oled_view = (uint8_t)oled_display_get_playback_view();
+    ms.bass_enabled = harm.bass_enabled;
+    ms.exciter_enabled = harm.exciter_enabled;
+    ms.exciter_mode = (uint8_t)harm.exciter_mode;
     oled_display_update_menu_ex(&ms);
 }
 
@@ -517,6 +523,34 @@ static void handle_menu_event(const control_event_t *evt)
             peq_dsp_set_oled_view((uint8_t)nv);
             oled_display_set_playback_view(nv);
             update_menu_ui();
+            break;
+        }
+        case MENU_ITEM_BASS_ENH: {
+            peq_harmonics_cfg_t harm;
+            peq_dsp_get_harmonics_cfg(&harm);
+            harm.bass_enabled = !harm.bass_enabled;
+            peq_dsp_set_harmonics_cfg(&harm);
+            update_menu_ui();
+            webhid_peq_notify_state_changed();
+            break;
+        }
+        case MENU_ITEM_EXCITER: {
+            peq_harmonics_cfg_t harm;
+            peq_dsp_get_harmonics_cfg(&harm);
+            if (!harm.exciter_enabled) {
+                harm.exciter_enabled = true;
+                harm.exciter_mode = PEQ_EXCITER_TUBE;
+            } else if (harm.exciter_mode == PEQ_EXCITER_TUBE) {
+                harm.exciter_mode = PEQ_EXCITER_TAPE;
+            } else if (harm.exciter_mode == PEQ_EXCITER_TAPE) {
+                harm.exciter_mode = PEQ_EXCITER_AIR;
+            } else {
+                harm.exciter_enabled = false;
+                harm.exciter_mode = PEQ_EXCITER_TUBE;
+            }
+            peq_dsp_set_harmonics_cfg(&harm);
+            update_menu_ui();
+            webhid_peq_notify_state_changed();
             break;
         }
         case MENU_ITEM_PREAMP_GAIN: {

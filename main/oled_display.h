@@ -32,6 +32,8 @@ typedef enum {
     MENU_ITEM_LOUDNESS,
     MENU_ITEM_LIMITER,
     MENU_ITEM_OLED_VIEW,
+    MENU_ITEM_BASS_ENH,
+    MENU_ITEM_EXCITER,
     MENU_ITEM_PREAMP_GAIN,
     MENU_ITEM_AUDIO_SOURCE,
     MENU_ITEM_SAVE_NVS,
@@ -71,6 +73,9 @@ typedef struct {
     uint8_t loudness_mode;
     bool  limiter_enabled;
     uint8_t oled_view;
+    bool  bass_enabled;
+    bool  exciter_enabled;
+    uint8_t exciter_mode;
 } ui_menu_state_t;
 
 typedef struct {

@@ -23,14 +23,16 @@ The firmware implements **Schematic 2 (`docs/schematics/DSP+DAC+SCREEN.svg`)**, 
  │   • SSD1306 128x64 OLED Display Driver (I2C Master: SDA=8, SCL=9)          │
  │   • Onboard WS2812B aRGB LED Volume Loudness Indicator (GPIO 48 via RMT)   │
  │   • Audio Source Arbiter & Zero-Pop Handover Protocol                       │
- │   • Versioned NVS v2 Persistence (`user_cfg_v2`, CRC32 + V1 migration)      │
+ │   • Versioned NVS v3 Persistence (`peq_slot_0..7`, `nvs_meta_v3`,              │
+ │     `fir_taps_l`/`r`, `harm_cfg_v1`, CRC32 + `memcmp` delta verification)   │
  ├─────────────────────────────────────────────────────────────────────────────┤
  │ Core 1 (Real-Time Audio DSP Subsystem)                                      │
  │   • Safe Zero-Pop Sample-Rate Reclocking (44.1 / 48.0 / 96.0 kHz)           │
- │   • 1-to-10 Band Dual-Mono L/R PEQ (8 RBJ Biquad Topologies)                │
+ │   • 1-to-10 Band Dual-Mono L/R PEQ (8 RBJ Biquad Topologies) + Loudness     │
+ │   • `esp-dsp` FIR Impulse Filter + PSRAM-LUT Bass & Tube/Tape/Air Exciter   │
  │   • 2x2 Channel Matrix & 3-Level Chu Moy Headphone Crossfeed                │
  │   • 15 ms Click-Free Crossfader + Preamp-Normalized Instant A/B Bypass      │
- │   • 24-bit Saturation Clamping `[-8388608, 8388607]` -> 32-bit I2S MSB      │
+ │   • -0.5 dBFS Lookahead Limiter + 24-bit Clamp -> 32-bit I2S MSB            │
  │   • Master I2S0 DMA Audio Pipeline (32-bit Stereo Slots)                    │
  ├─────────────────────────────────────────────────────────────────────────────┤
  │ External Audio Hardware Interconnects                                       │
@@ -120,7 +122,9 @@ To ensure driverless plug-and-play operation across Windows 10/11, macOS, Linux,
   - Host mute triggers `audio_pipeline_set_mute()` (hardware pin GPIO 7).
   - Host volume slider converts dB (`<= -80 dB` $\rightarrow$ `0%`, otherwise `round(100 * 10^(dB / 40))`) to align with the firmware's quadratic perceptual volume taper (`(volume / 100)^2`).
 * **`tud_audio_get_req_ep_cb` / `tud_audio_set_req_ep_cb`:** Reports active UAC sample rate (`44100`, `48000`, or `96000` Hz), rejects other rates on `SET_CUR`, and stages `s_pending_sample_rate` under `s_uac_rate_lock` for safe Core 1 zero-pop reclocking (`audio_pipeline_set_sample_rate()` + `peq_dsp_set_sample_rate()` + `oled_display_set_sample_rate()`).
-* **`tud_hid_get_report_cb` / `tud_hid_set_report_cb` / `webhid_peq_send_band_report_ch`:** Supports `0x01..0x09` + `0x13` (GetProfile/`0xFE` custom matrix, SetBandLive, SetPreampLive, SelectProfile, SaveToPreset, ResetToPreset, SetBandCount, SetAbBypass, SetDualMono, SetMixer) and syncs Dual-Mono/A-B/Mixer/sample-rate metadata in `reserved[0..13]`.
+* **`tud_hid_get_report_cb` / `tud_hid_set_report_cb` / `webhid_peq_send_band_report_ch`:** Supports `0x01..0x0E`, `0x13`, and `0x14` (GetProfile / `0xFE` matrix / `0xFD` extended state, SetBandLive, SetPreampLive, SelectProfile, SaveToPreset, ResetToPreset, SetBandCount, SetAbBypass, SetDualMono, RenameSlot, SetDynamics, SetPowerCfg, FactoryResetSlot, SetHarmonics, SetMixer, UploadFirChunk).
+  - **`WEBHID_CMD_SET_HARMONICS` (`0x0E`):** 64-byte `0x4551` LE report carrying `flags` in `byte 3` (`bit 0 = bass_enabled`, `bit 1 = exciter_enabled`, `bits 2..3 = exciter_mode` where `0=Tube`, `1=Tape`, `2=Air`), `bass_amount_pct` (`0..100`) in `byte 4`, `exciter_amount_pct` (`0..100`) in `byte 5`, `bass_freq_hz` (`uint16` LE, `50..150`) in `bytes 6..7`, and `exciter_freq_hz` (`uint16` LE, `1500..8000`) in `bytes 10..11` (golden vector: `51 45 0E 07 3C 23 5A 00 00 00 94 11` followed by 52 zero bytes). Firmware clamps all values, calls `peq_dsp_set_harmonics_cfg()`, and broadcasts an updated `0xFD` report.
+  - **`0xFD` Extended-State Telemetry Mirror (`reserved[20..27]`):** Preserves `reserved[0..19]` (slot name + FIR tap metadata) and mirrors harmonics state into `reserved[20]` (`flags`), `reserved[21]` (`bass_amount_pct`), `reserved[22]` (`exciter_amount_pct`), `reserved[23..24]` (`bass_freq_hz` LE), `reserved[25..26]` (`exciter_freq_hz` LE), and `reserved[27] = 0`. Both HID `0x0E` updates and OLED menu harmonics toggles broadcast `0xFD` via `webhid_peq_notify_state_changed()`.
 
 ---
 
@@ -160,7 +164,7 @@ When parameters, channel mode, matrix/crossfeed, or A/B bypass state change:
 1. Core 0 computes new biquads and mixer coefficients on the stack outside locks, then atomically stages `s_pending_*` under `portMUX_TYPE` spinlock (`s_peq_lock`) with generation validation (`s_state_gen`).
 2. Core 1 (`peq_dsp_process_interleaved_s24_to_s32` / `peq_dsp_process_interleaved_s16_to_s32`) consumes staged updates into `s_target_*` and runs an interpolation loop across $N_{\text{fade}} = \text{round}(0.015 \times f_s)$ samples ($662 / 720 / 1440$ samples):
    $$y[n] = (1.0 - \beta) \cdot y_{\text{active}}[n] + \beta \cdot y_{\text{target}}[n], \quad \beta \in [0.0, 1.0]$$
-3. **Preamp-Normalized Instant A/B Bypass:** `peq_dsp_set_ab_bypass()` toggles flat EQ comparison across the 15 ms crossfade while keeping `preamp_gain_db` engaged so A vs. B remains loudness-matched (transient only, never persisted to NVS).
+3. **Preamp-Normalized Instant A/B Bypass:** `peq_dsp_set_ab_bypass()` (`0x08`) toggles flat EQ comparison across the 15 ms crossfade while keeping `preamp_gain_db` engaged so A vs. B remains loudness-matched (transient only, never persisted to NVS). When `ab_bypass == true`, Equal Loudness and both the Bass Enhancer and Harmonic Exciter smoothly crossfade to dry bypass over `15 ms`.
 
 ### 4.4 Saturation Protection, True-Peak Limiter, Equal Loudness & FIR (`v0.2.0`)
 * **Pre-Gain Headroom:** Pre-attenuates digital input ($0.0\text{ to }-12.0\text{ dB}$) to prevent positive EQ boost stages from exceeding $0\text{ dBFS}$.
@@ -168,10 +172,18 @@ When parameters, channel mode, matrix/crossfeed, or A/B bypass state change:
 * **Equal Loudness (ISO 226):** Modes `0=Off`, `1=ISO Mild` (`+4.0 dB` @ 80 Hz / `+1.5 dB` @ 10 kHz), `2=ISO Full` (`+6.5 dB` / `+2.5 dB`), dynamically scaled when master volume `< 80%` and defeated cleanly during A/B bypass.
 * **FIR Impulse Filter (`esp-dsp`):** Hardware PIE-accelerated `dsps_fir_f32` convolution with sample-rate adaptive tap limit (`256` taps/ch @ `44.1 / 48 kHz`, `128` taps/ch @ `96 kHz`) stored in 16-byte aligned internal DRAM and NVS keys `fir_taps_l`/`fir_taps_r`.
 
-### 4.5 8 Editable DAC Presets (`NVS v3`, `Slot 1`–`Slot 8`)
+### 4.5 Psychoacoustic Bass Enhancer & Tube/Tape/Air Harmonic Exciter
+* **C API & Clamped Ranges ([`main/peq_dsp.h`](../../main/peq_dsp.h)):** Configured via `peq_dsp_set_harmonics_cfg()` / `peq_dsp_get_harmonics_cfg()` using `peq_harmonics_cfg_t` and `peq_exciter_mode_t` (`PEQ_EXCITER_TUBE = 0`, `PEQ_EXCITER_TAPE = 1`, `PEQ_EXCITER_AIR = 2`). Amounts clamp to `0..100%`, Bass cutoff clamps to `50..150 Hz`, and Exciter cutoff clamps to `1500..8000 Hz`.
+* **Signal Chain Placement:** Executes on Core 1 **after** Stage 1 (PEQ + Equal Loudness) and Stage 2 (`esp-dsp` FIR Impulse Filter), and **before** Stage 3 (`2×2` Channel Matrix & Crossfeed $\rightarrow$ Master Volume $\rightarrow$ `-0.5 dBFS` Lookahead Limiter $\rightarrow$ 24-bit saturation clamp).
+* **PSRAM Waveshaper LUTs & Static DIRAM State:** Inside `peq_dsp_init()`, `4096`-point `float32` interpolated waveshaper LUTs (`HARM_LUT_SIZE = 4096`) are allocated once in Octal PSRAM (`heap_caps_malloc(..., MALLOC_CAP_SPIRAM)` with standard `malloc()` fallback) for the Bass missing-fundamental asymmetric soft harmonic generator (`2f + 3f`) and the three Exciter curves (`Tube Warmth`, `Tape Saturation`, `Air Sheen`). All crossover Butterworth biquads, `20 Hz` DC blockers, and `2×` polyphase half-band allpass oversampling delay states (`hb_os2x_state_t`, 13th-order elliptic $>94\text{ dB}$ stopband) reside in static internal DIRAM with zero heap allocation in the audio path and subnormal flushing (`< 1e-15f`).
+* **Sample-Rate Adaptive Oversampling:** Runs `2×` polyphase half-band upsampling $\rightarrow$ LUT interpolation $\rightarrow$ downsampling at `<= 48 kHz` (`44.1 / 48 kHz`) to suppress aliasing harmonics, switching cleanly to `1×` direct LUT evaluation at `96 kHz`.
+* **Click-Free 15 ms Crossfade & A/B Bypass:** Parameter changes stage from Core 0 under `portMUX_TYPE` (`s_peq_lock`) and crossfade wet/dry smoothly on Core 1 over `15 ms`; `ab_bypass == true` (`0x08`) fades both harmonic stages to dry bypass over `15 ms`.
+
+### 4.6 8 Editable DAC Presets (`NVS v3`) & Global `harm_cfg_v1` Persistence
 All hardcoded factory presets (`Flat`, `Bass Boost`, `Harman`) have been removed in `v0.2.0`. The firmware initializes **8 fully editable, custom-named DAC preset slots (`Slot 0..7`)** (`peq_slot_0`..`peq_slot_7` + global `nvs_meta_v3` in namespace `audio_peq`):
 * On clean boot or `peq_dsp_reset_slot_to_flat()`, all 8 slots seed to **Reference Flat** (`"Slot 1"`..`"Slot 8"`, 5 ISO bands @ `0.0 dB`).
-* Legacy `v0.1.0` NVS v2 (`user_cfg_v2`) or V1 (`user_profile`) blobs automatically migrate into `Slot 0`. Every write uses CRC32 + `memcmp` delta verification to eliminate redundant flash wear.
+* Legacy `v0.1.0` NVS v2 (`user_cfg_v2`) or V1 (`user_profile`) blobs automatically migrate into `Slot 0`.
+* **Global Harmonics Key (`"harm_cfg_v1"`):** Global Bass Enhancer & Harmonic Exciter settings persist in NVS under `"harm_cfg_v1"` (`peq_harm_nvs_v1_t`) with CRC32 + `memcmp` delta verification. Live HID (`0x0E`) and OLED menu changes remain volatile in RAM and are written to flash **only** on explicit save (`peq_dsp_save_user_profile_nvs()` / `0x05` / long-press Save).
 
 ---
 
@@ -234,9 +246,9 @@ Implemented in [`main/controls.c`](../../main/controls.c), [`main/oled_display.c
 * **Button 1 (GPIO 18 / ◄ / SW6):** Short Click opens Main Menu; Long Press cycles DAC preset slots backward (`Slot 8`..`1`).
 * **Button 2 (GPIO 10 / ► / SW_NAV2):** Short Click cycles DAC preset slots forward (`Slot 1`..`8`); Double-Click cycles **OLED Screen View** (`Classic -> EQ Curve -> VU Meters -> Split`).
 
-#### 2. Main Menu Navigation Mode (11 Items)
-* **Rotary Rotation / Button 2 (►):** Scrolls through all 11 options (`1. Live EQ Adjust`, `2. Slot:<Name>`, `3. A/B:<Active/Bypass>`, `4. Crossfeed:<Off/Low/High>`, `5. Loudness:<Off/Mild/Full>`, `6. Limiter:<On/Off>`, `7. View:<Classic/Curve/VU/Split>`, `8. Preamp:<dB>`, `9. Input:<Source>`, `10. Save to DAC`, `11. Exit Menu`).
-* **Encoder Switch (GPIO 17):** Confirms/cycles highlighted item; Long Press saves immediately to DAC (`"Saved to DAC"`).
+#### 2. Main Menu Navigation Mode (13 Items)
+* **Rotary Rotation / Button 2 (►):** Scrolls through all 13 options (every rendered string $\le 20$ chars at `x = 2`): `1. Live EQ Adjust`, `2. Slot:<Name>`, `3. A/B:<Active/Bypass>`, `4. Crossfeed:<Off/Low/High>`, `5. Loudness:<Off/Mild/Full>`, `6. Limiter:<On/Off>`, `7. View:<Classic/Curve/VU/Split>`, `8. Bass Enh:<On/Off>`, `9. Exciter:<Off/Tube/Tape/Air>`, `10. Preamp:<dB>`, `11. Input:<Source>`, `12. Save to DAC`, `13. Exit Menu`.
+* **Encoder Switch (GPIO 17):** Confirms/cycles highlighted item (`8. Bass Enh` toggles `On/Off`, `9. Exciter` cycles `Off -> Tube -> Tape -> Air -> Off`, both triggering an immediate `0xFD` WebHID telemetry notification via `webhid_peq_notify_state_changed()`); Long Press saves immediately to DAC (`"Saved to DAC"`).
 * **Button 1 (◄):** Exits menu back to Playback Mode.
 
 #### 3. On-Device Live EQ Adjust Mode (Digit-by-Digit PEQ Tuner)
@@ -298,9 +310,9 @@ Location: [`tools/webhid_tuner/`](../../tools/webhid_tuner/) (`src/`, `public/ma
   - **Frequency Response Visualizer:** Computes cascaded complex transfer function magnitude (`dB`), Phase (`-180°..+180°`), and Group Delay (`ms`) across all 8 filter topologies (`0..7`).
   - **Draggable Nodes, Wheel Q, Double-Click:** Drag center frequency ($20\text{ Hz}\dots 20\text{ kHz}$) & gain ($-24.0\dots +12.0\text{ dB}$), scroll for `Q` ($0.10\dots 10.00$), double-click to reset or add bands.
 * **Dual-Mono L/R PEQ, A/B Toggle, Channel Matrix & Crossfeed:** Switch between Linked Stereo and Left/Right tabs, toggle Preamp-Normalized A/B Bypass (`0x08`), adjust Balance, M/S Stereo Width (`0–200%`), **Custom Channel Matrix**, and **Headphone Crossfeed (Chu Moy)** (`Off/Low/High`).
-* **Dynamics, FIR Impulse Filter & Power Settings:** Configure **True-Peak Limiter**, **Equal Loudness (ISO 226)**, **FIR Impulse Filter** (`.txt` / `.csv` / `.wav`), **OLED Screen View**, **Auto-Mute on Silence**, and **OLED Auto-Dim & Sleep**.
+* **Dynamics, Harmonics, FIR Impulse Filter & Power Settings:** Configure **True-Peak Limiter**, **Equal Loudness (ISO 226)**, **Bass Enhancer** (`0–100%`, `50–150 Hz`) & **Harmonic Exciter** (`Tube Warmth / Tape / Air Sheen`, `0–100%`, `1.5–8.0 kHz` via `0x0E` with `0xFD` `reserved[20..27]` telemetry), **FIR Impulse Filter** (`.txt` / `.csv` / `.wav`), **OLED Screen View**, **Auto-Mute on Silence**, and **OLED Auto-Dim & Sleep**.
 * **Equalizer APO / AutoEQ `.txt` & `.json` Import/Export:** Imports/exports standard Equalizer APO filter files (`PK`, `LSC`, `HSC`, `HPQ`, `LPQ`, `NO`, `BP`) and full Dual-Mono/Matrix JSON backups.
-* **Live Preview Tuning:** Streams live updates in volatile memory with **0 flash wear**; commits to NVS (`nvs_meta_v3` / `peq_slot_0..7`) only on explicit **Save to DAC**.
+* **Live Preview Tuning:** Streams live updates in volatile memory with **0 flash wear**; commits to NVS (`nvs_meta_v3` / `peq_slot_0..7` / `harm_cfg_v1`) only on explicit **Save to DAC**.
 
 ---
 

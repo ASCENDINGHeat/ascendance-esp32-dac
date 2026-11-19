@@ -28,15 +28,17 @@ The firmware transforms the ESP32-S3 into a driverless, high-resolution **USB Au
  │   • SSD1306 128x64 OLED Display Driver (I2C Master: SDA=8, SCL=9, Prio 2)  │
  │   • Onboard WS2812B aRGB LED Volume Loudness Driver (GPIO 48 via RMT)       │
  │   • Audio Source Arbiter State Machine & 4-Phase Mute Protocol              │
- │   • NVS v2 Persistence (`user_cfg_v2`, CRC32 + Automatic V1 Migration)      │
+ │   • NVS v3 Persistence (`peq_slot_0..7`, `nvs_meta_v3`, `fir_taps_l`/`r`,   │
+ │     `harm_cfg_v1`, CRC32 + `memcmp` delta verification)                     │
  ├─────────────────────────────────────────────────────────────────────────────┤
  │ Core 1 (Hard Real-Time Audio DSP Subsystem)                                 │
  │   • High-Priority Audio DSP Task (`audio_dsp_task`, Priority 10, 8,192 B)   │
  │   • Safe Zero-Pop Sample-Rate Reclocking (44.1 / 48.0 / 96.0 kHz)           │
- │   • 1-to-10 Band Dual-Mono L/R PEQ (8 RBJ Biquad Topologies)                │
+ │   • 1-to-10 Band Dual-Mono L/R PEQ (8 RBJ Biquad Topologies) + Loudness     │
+ │   • `esp-dsp` FIR Impulse Filter + PSRAM-LUT Bass & Tube/Tape/Air Exciter   │
  │   • 2x2 Channel Matrix Mixer & 3-Level Chu Moy Headphone Crossfeed          │
  │   • 15 ms Click-Free Crossfader + Preamp-Normalized Instant A/B Bypass      │
- │   • Preamp Gain Headroom & 24-bit Clamping `[-8388608, 8388607]`            │
+ │   • -0.5 dBFS Lookahead Limiter + 24-bit Clamp `[-8388608, 8388607]`        │
  │   • Master I2S0 DMA Streamer (32-bit Stereo Slots MSB-Aligned)              │
  ├─────────────────────────────────────────────────────────────────────────────┤
  │ External Audio & User Interface Hardware                                    │
@@ -123,7 +125,7 @@ Operating over Native USB Full-Speed (12.0 Mbps) on GPIO 19 (`D-`) and GPIO 20 (
 * **Interface Association Descriptor (IAD):** Groups Interface 0 (Audio Control) and Interface 1 (Audio Streaming) as a compliant UAC 1.0 speaker.
 * **Interface 0 (Audio Control):** Feature Unit provides Master Volume and Mute control integrated directly into the OS volume mixer.
 * **Interface 1 (Audio Streaming):** Isochronous OUT endpoint (`0x01`, `588` max bytes, 1 ms polling, `16,384`-byte TinyUSB SW FIFO) delivering **24-bit PCM** at **44.1 kHz, 48.0 kHz, or 96.0 kHz**.
-* **Interface 2 (Vendor WebHID):** Interrupt endpoints (`EP 0x02 OUT`, `EP 0x82 IN`, 64 bytes) for bidirectional communication with the WebHID browser tuner (Dual-Mono L/R PEQ, A/B Toggle, 2×2 Matrix/Crossfeed, Sample Rate Telemetry).
+* **Interface 2 (Vendor WebHID):** Interrupt endpoints (`EP 0x02 OUT`, `EP 0x82 IN`, 64 bytes) for bidirectional communication with the WebHID browser tuner and Android Companion app (Dual-Mono L/R PEQ, A/B Toggle, 2×2 Matrix/Crossfeed, Dynamics, FIR Impulse Filter, Bass Enhancer & Harmonic Exciter via `0x0E`, and `0xFD` `reserved[20..27]` / Sample Rate Telemetry).
 
 ### 2.3 Hardware Pulse Counter (PCNT) Driver ([`main/controls.c`](../../main/controls.c))
 Quadrature decoding of the EC11 rotary encoder uses the ESP32-S3 dedicated hardware PCNT peripheral:
@@ -187,19 +189,27 @@ To eliminate clicks, pops, or zipper noise when dragging sliders or switching pr
 1. Core 0 computes target biquad and mixer coefficients on the stack outside locks, then atomically stages `s_pending_*` under `portMUX_TYPE` spinlock (`s_peq_lock`) with generation validation (`s_state_gen`).
 2. Core 1 (`peq_dsp_process_interleaved_s24_to_s32` / `peq_dsp_process_interleaved_s16_to_s32`) consumes staged updates and runs an interpolation loop across $N_{\text{fade}} = \text{round}(0.015 \times f_s)$ samples ($662 / 720 / 1440$ samples):
    $$y[n] = (1.0 - \beta) \cdot y_{\text{active}}[n] + \beta \cdot y_{\text{target}}[n], \quad \beta \in [0.0, 1.0]$$
-3. **Preamp-Normalized Instant A/B Bypass:** `peq_dsp_set_ab_bypass()` toggles flat EQ comparison cleanly across the 15 ms crossfade while keeping `preamp_gain_db` active (transient only, never saved to NVS).
+3. **Preamp-Normalized Instant A/B Bypass:** `peq_dsp_set_ab_bypass()` (`0x08`) toggles flat EQ comparison cleanly across the 15 ms crossfade while keeping `preamp_gain_db` active (transient only, never saved to NVS). When `ab_bypass == true`, Equal Loudness and both the Bass Enhancer and Harmonic Exciter smoothly crossfade to dry bypass over `15 ms`.
 4. `biquad_filter_sample()` flushes subnormal delay states ($< 1 \times 10^{-15}$) to zero, and `calculate_biquad()` validates `isfinite()` / non-zero `a0` with safe passthrough fallback.
 
 ### 3.4 Saturation Protection & Pre-Gain Headroom
 * **Preamp Attenuation:** Provides $0.0\text{ to }-12.0\text{ dB}$ digital pre-attenuation to prevent large positive biquad boosts from exceeding $0\text{ dBFS}$.
-* **Hard Saturation Clamping:** Non-finite samples are zeroed and all floating-point audio samples are clamped to signed 24-bit full-scale bounds (`[-8388608.0f, 8388607.0f]`) before MSB-aligned 32-bit I2S slot output (`(int32_t)((uint32_t)(int32_t)lrintf(val) << 8)`).
+* **Lookahead Limiter & Saturation Clamping:** `-0.5 dBFS` (`7918595.0f`) `1.5 ms` lookahead limiter (`LA_MAX_FRAMES = 144`) + asymptotic soft-knee saturation above `-0.2 dBFS`; non-finite samples are zeroed and all floating-point audio samples are clamped to signed 24-bit full-scale bounds (`[-8388608.0f, 8388607.0f]`) before MSB-aligned 32-bit I2S slot output (`(int32_t)((uint32_t)(int32_t)lrintf(val) << 8)`).
 
-### 3.5 8 Editable DAC Presets (`NVS v3`) & Dynamics
+### 3.5 Psychoacoustic Bass Enhancer & Tube/Tape/Air Harmonic Exciter
+* **Signal Chain Placement:** Inside Core 1's real-time processing functions (`peq_dsp_process_interleaved_s24_to_s32()`, `s16_to_s32()`, `s16()`), the harmonics stage sits **after** Stage 1 (PEQ + Equal Loudness) and Stage 2 (`esp-dsp` FIR Impulse Filter), and **before** Stage 3 (`2×2` Channel Matrix & Crossfeed $\rightarrow$ Master Volume $\rightarrow$ `-0.5 dBFS` Lookahead Limiter $\rightarrow$ 24-bit clamp).
+* **PSRAM Waveshaper LUTs (`peq_dsp_init()`):** Allocates four `4096`-point `float32` interpolated waveshaper LUTs once in Octal PSRAM (`heap_caps_malloc(..., MALLOC_CAP_SPIRAM)` with standard `malloc()` fallback):
+  - **Bass Enhancer (`2f + 3f`):** Asymmetric soft missing-fundamental harmonic generator, band-limited via Butterworth pre/post LPFs (`50..150 Hz` cutoff, `0..100%` amount) and a `20 Hz` DC blocker.
+  - **Harmonic Exciter (`PEQ_EXCITER_TUBE = 0`, `PEQ_EXCITER_TAPE = 1`, `PEQ_EXCITER_AIR = 2`):** Sidechain Butterworth HPF (`1500..8000 Hz` cutoff, `0..100%` amount) feeding `Tube Warmth`, `Tape Saturation`, or `Air Sheen` LUTs + DC blocker.
+* **Static DIRAM State & Sample-Rate Adaptive Oversampling:** Crossover biquads, DC blockers, and `2×` polyphase half-band allpass oversampling states (`hb_os2x_state_t`, 13th-order elliptic $>94\text{ dB}$ stopband) reside strictly in static internal DIRAM with zero heap allocation in the audio path and subnormal flushing (`< 1e-15f`). Runs `2×` oversampling at `<= 48 kHz` (`44.1 / 48 kHz`) and `1×` direct LUT lookup at `96 kHz`.
+* **Click-Free Crossfade & A/B Bypass:** Core 0 stages parameter updates (`peq_dsp_set_harmonics_cfg()`) under `portMUX_TYPE` (`s_peq_lock`) and Core 1 crossfades wet/dry over `15 ms`; `ab_bypass == true` (`0x08`) fades harmonics to dry bypass over `15 ms`.
+
+### 3.6 8 Editable DAC Presets (`NVS v3`), Dynamics & Global `harm_cfg_v1`
 All hardcoded factory presets (`Flat`, `Bass Boost`, `Harman`) have been removed in `v0.2.0`. Instead, `peq_dsp_init()` provisions **8 independently editable, custom-named NVS v3 preset slots (`Slot 0..7`)** (`"Slot 1"`..`"Slot 8"` seeded to Reference Flat on clean boot, with one-way migration from `v0.1.0` `user_cfg_v2` / V1 into `Slot 0`).
 
 * **Per-Slot NVS Keys:** `peq_slot_0`..`peq_slot_7` storing `linked_stereo`, Left/Right profiles, and CRC32.
-* **Global Meta & FIR Keys:** `nvs_meta_v3` stores `active_slot`, True-Peak Limiter enable, Equal Loudness (ISO 226) mode (`Off / Mild / Full`), OLED Screen View, `auto_mute_sec`, `oled_dim_sec`, FIR enable, and `peq_mixer_config_t`; `fir_taps_l`/`fir_taps_r` store up to 256 float32 impulse taps per channel (`128` active max at `96 kHz`).
-* **Zero Flash Wear During Tuning:** Live WebHID / Android Companion **Preview Live** slider updates modify SRAM only. Explicit commits (`WEBHID_CMD_SAVE_TO_PRESET` or long-press Save) check `memcmp()` before writing flash.
+* **Global Meta, FIR & Harmonics Keys:** `nvs_meta_v3` stores `active_slot`, True-Peak Limiter enable, Equal Loudness (ISO 226) mode (`Off / Mild / Full`), OLED Screen View, `auto_mute_sec`, `oled_dim_sec`, FIR enable, and `peq_mixer_config_t`; `fir_taps_l`/`fir_taps_r` store up to 256 float32 impulse taps per channel (`128` active max at `96 kHz`); global key `"harm_cfg_v1"` (`peq_harm_nvs_v1_t`) stores Bass Enhancer & Harmonic Exciter configuration with CRC32 + `memcmp` delta verification.
+* **Zero Flash Wear During Tuning:** Live WebHID (`0x0E`) / Android Companion **Preview Live** slider updates and OLED menu quick toggles modify SRAM only. Explicit commits (`WEBHID_CMD_SAVE_TO_PRESET` `0x05`, `peq_dsp_save_user_profile_nvs()`, or long-press Save) check `memcmp()` before writing flash.
 
 ---
 
@@ -219,7 +229,7 @@ Implemented in [`main/audio_source_arbiter.c`](../../main/audio_source_arbiter.c
 
 | Source Identifier | Name | Description |
 | :--- | :--- | :--- |
-| `AUDIO_SOURCE_STANDALONE` | **USB DAC / DSP** *(Default)* | Consumes incoming UAC 1.0 stream from TinyUSB FIFO, runs PEQ biquads, loudness, FIR, mixer, and lookahead limiter, and outputs 32-bit slots to I2S. |
+| `AUDIO_SOURCE_STANDALONE` | **USB DAC / DSP** *(Default)* | Consumes incoming UAC 1.0 stream from TinyUSB FIFO, runs PEQ biquads, loudness, FIR, Bass Enhancer & Harmonic Exciter, 2×2 mixer, and lookahead limiter, and outputs 32-bit slots to I2S. |
 | `AUDIO_SOURCE_TONE_TEST` | **Tone Generator** | Synthesizes an A minor arpeggio (A4, C5, E5, A5) cycling every 250 ms to evaluate EQ curves without host audio. |
 | `AUDIO_SOURCE_SWEEP` | **Frequency Sweep** | Generates a continuous sweep from 100 Hz to 4,000 Hz for acoustic diagnostics. |
 
@@ -250,24 +260,26 @@ The control subsystem operates across three modes (**Default Playback**, **Main 
 
 | Control Input | Action | Function | UI Response | WS2812B aRGB LED Response |
 | :--- | :--- | :--- | :--- | :--- |
-| **Rotary Turn** | CW / CCW | **Scroll Menu Items** up / down | Inverse highlight bar moves across 11 menu options | Maintained at current volume loudness |
+| **Rotary Turn** | CW / CCW | **Scroll Menu Items** up / down | Inverse highlight bar moves across 13 menu options | Maintained at current volume loudness |
 | **Button 2 (►)** | Short Click | **Move Down** menu item list | Selection bar advances to next item | Maintained at current volume loudness |
 | **Button 1 (◄)** | Short Click | **Exit Menu / Back** to Playback Mode | Reverts immediately to Default Playback display | Maintained at current volume loudness |
-| **Encoder SW** | Short Click | **Confirm / Cycle** | Enters Live EQ Editor or cycles parameter | Maintained at current volume loudness |
+| **Encoder SW** | Short Click | **Confirm / Cycle** | Enters Live EQ Editor or cycles parameter (broadcasts `0xFD` on harmonics changes) | Maintained at current volume loudness |
 | **Encoder SW** | Long Press ($>800\text{ ms}$) | **Quick Save to DAC** | `"Saved to DAC"` popup overlay | Maintained at current volume loudness |
 
-#### 3. Menu Architecture (11 Selectable Options)
+#### 3. Menu Architecture (13 Selectable Options, $\le 20$ Chars at `x = 2`)
 1. **1. Live EQ Adjust:** Enters on-device digit-by-digit PEQ editor on active slot.
 2. **2. Slot:<Name>:** Cycles DAC Presets `Slot 1`–`Slot 8`.
-3. **3. A/B:<Active/Bypass>:** Toggles transient preamp-normalized A/B comparison.
+3. **3. A/B:<Active/Bypass>:** Toggles transient preamp-normalized A/B comparison (crossfades PEQ, Loudness, Bass Enhancer, and Exciter over `15 ms`).
 4. **4. Crossfeed:<Off/Low/High>:** Cycles Headphone Crossfeed (Chu Moy) level.
 5. **5. Loudness:<Off/Mild/Full>:** Cycles Equal Loudness (ISO 226) mode.
 6. **6. Limiter:<On/Off>:** Toggles True-Peak Limiter (`-0.5 dBFS`, 1.5 ms lookahead).
 7. **7. View:<Classic/Curve/VU/Split>:** Cycles Playback Body visualizer mode.
-8. **8. Preamp:<dB>:** Cycles headroom attenuation ($0.0, -2.0, -4.0, -6.0\text{ dB}$).
-9. **9. Input:<Source>:** Cycles `USB DAC` $\rightarrow$ `Tone Generator` $\rightarrow$ `Frequency Sweep`.
-10. **10. Save to DAC:** Commits active slot & dynamics config to persistent DAC flash.
-11. **11. Exit Menu:** Closes menu and returns to Playback Mode.
+8. **8. Bass Enh:<On/Off>:** Quick-toggles Psychoacoustic Bass Enhancer (`Off` / `On`) and triggers an immediate `0xFD` WebHID telemetry update.
+9. **9. Exciter:<Off/Tube/Tape/Air>:** Cycles Harmonic Exciter (`Off` $\rightarrow$ `Tube` $\rightarrow$ `Tape` $\rightarrow$ `Air` $\rightarrow$ `Off`) and triggers an immediate `0xFD` WebHID telemetry update.
+10. **10. Preamp:<dB>:** Cycles headroom attenuation ($0.0, -2.0, -4.0, -6.0\text{ dB}$).
+11. **11. Input:<Source>:** Cycles `USB DAC` $\rightarrow$ `Tone Generator` $\rightarrow$ `Frequency Sweep`.
+12. **12. Save to DAC:** Commits active slot, dynamics, and global harmonics (`harm_cfg_v1`) to persistent DAC flash.
+13. **13. Exit Menu:** Closes menu and returns to Playback Mode.
 
 #### 4. On-Device EQ Adjust Mode (Live Digit-by-Digit PEQ Tuner)
 Triggered by selecting **"1. Live EQ Adjust"** from the Main Menu. Allows comprehensive, standalone tuning of the parametric equalizer without needing a PC or companion app:
@@ -348,8 +360,9 @@ The live tuner operates without drivers, native software installations, or cloud
 ```
 
 * **Frequency Response Visualizer:** HTML5 Canvas interactive graph with Magnitude (`dB`), Phase (`-180°..+180°`), Group Delay (`ms`), draggable nodes, and mouse-wheel Q factor adjustment.
-* **Dual-Mono L/R, A/B Toggle, Channel Matrix & Crossfeed:** Linked Stereo or independent Left/Right tuning, transient A/B Bypass (`0x08`), **Custom Channel Matrix** (`0x13`), **Headphone Crossfeed (Chu Moy)**, **Dynamics & FIR Impulse Filter**, and Equalizer APO `.txt` / `.json` import & export.
-* **Bidirectional Synchronization:** Automatically syncs hardware state (`num_bands`, active preset slot & name, Dual-Mono flags, mixer state, dynamics/FIR/power settings, sample rate) upon USB connection.
+* **Dual-Mono L/R, A/B Toggle, Channel Matrix & Crossfeed:** Linked Stereo or independent Left/Right tuning, transient A/B Bypass (`0x08`), **Custom Channel Matrix** (`0x13`), **Headphone Crossfeed (Chu Moy)**, **Dynamics & FIR Impulse Filter**, **Bass Enhancer & Harmonic Exciter** (`0x0E`), and Equalizer APO `.txt` / `.json` import & export.
+* **`WEBHID_CMD_SET_HARMONICS` (`0x0E`) & `0xFD` `reserved[20..27]`:** In a 64-byte `0x4551` LE packet, `byte 3` carries `flags` (`bit 0 = bass_enabled`, `bit 1 = exciter_enabled`, `bits 2..3 = exciter_mode` `0=Tube, 1=Tape, 2=Air`), `byte 4` = `bass_amount_pct` (`0..100`), `byte 5` = `exciter_amount_pct` (`0..100`), `bytes 6..7` = `bass_freq_hz` (`uint16` LE, `50..150`), and `bytes 10..11` = `exciter_freq_hz` (`uint16` LE, `1500..8000`); golden vector: `51 45 0E 07 3C 23 5A 00 00 00 94 11` (followed by 52 zero bytes). In `0xFD` extended-state telemetry, `reserved[20..27]` mirrors `flags`, `bass_amount_pct`, `exciter_amount_pct`, `bass_freq_hz` LE, `exciter_freq_hz` LE, and `0`.
+* **Bidirectional Synchronization:** Automatically syncs hardware state (`num_bands`, active preset slot & name, Dual-Mono flags, mixer state, dynamics/FIR/power settings, Bass Enhancer & Harmonic Exciter state, sample rate) upon USB connection and on OLED menu toggles.
 
 ---
 
@@ -373,9 +386,9 @@ When writing or refactoring C code for this repository, AI agents MUST strictly 
 
 1. **Octal PSRAM Pin Protection (FATAL):** Never allocate, reconfigure, or route signals to `GPIO 33, 34, 35, 36, 37`. These pins are dedicated to the Octal PSRAM bus (`APS6404L`). Accessing them triggers an unrecoverable `Cache disabled but cached memory region accessed` kernel panic.
 2. **Core 1 Isolation for Audio DSP:** The real-time audio loop (`audio_dsp_task`, biquad calculations, I2S DMA feeding) must execute strictly on **Core 1** at high priority (Priority 10). Never run non-deterministic tasks (USB stack, NVS flash commits, display I/O) on Core 1.
-3. **Zero Dynamic Allocation in Audio Loops:** Never call `malloc()`, `calloc()`, or `realloc()` inside `audio_dsp_task` or `peq_dsp_process_interleaved_s24_to_s32()`. Pre-allocate all buffers in static BSS or during initialization.
+3. **Zero Dynamic Allocation in Audio Loops:** Never call `malloc()`, `calloc()`, or `realloc()` inside `audio_dsp_task` or `peq_dsp_process_interleaved_s24_to_s32()` / `s16_to_s32()` / `s16()`. Pre-allocate all processing delay/crossover/oversampling states in static internal DIRAM and allocate the 4096-point waveshaper LUTs once in Octal PSRAM (`MALLOC_CAP_SPIRAM`) during `peq_dsp_init()`.
 4. **Saturation Clamping:** All floating-point DSP output samples must be clamped to signed 24-bit full-scale bounds (`[-8388608.0f, 8388607.0f]`) before shifting MSB-aligned into 32-bit I2S slots (`int32_t`).
 5. **Click-Free Coefficient Updates:** Never swap biquad filter coefficients instantaneously during playback. Always invoke the 15 ms double-buffered linear crossfade engine to avoid audible clicks.
-6. **Flash Wear Protection:** Never write to NVS flash inside real-time control loops or WebHID slider dragging callbacks. All live adjustments must remain volatile in SRAM, reserving NVS v2 (`user_cfg_v2`) writes for explicit user commit commands.
+6. **Flash Wear Protection:** Never write to NVS flash inside real-time control loops or WebHID slider dragging callbacks. All live adjustments (`0x02`, `0x03`, `0x08`, `0x09`, `0x0B`, `0x0C`, `0x0E`, `0x13`) must remain volatile in SRAM, reserving NVS v3 (`peq_slot_0..7`, `nvs_meta_v3`, `fir_taps_l`/`r`, and `harm_cfg_v1`) writes for explicit user commit commands.
 7. **Hardware Soft-Mute Protocol:** Always pull `GPIO 7 LOW` before altering I2S clock dividers, switching audio sample rates, or transitioning audio sources. Hold mute for at least 15 ms, reconfigure the pipeline, and hold for 15 ms after unmuting.
 8. **I2S Master Clock Synthesizer:** Do NOT configure an external MCLK GPIO on the ESP32-S3. The GY-PCM5102A hardware board has its `SCK` jumper tied to `L` (GND) to utilize its internal low-jitter PLL derived directly from BCK (GPIO 6).
