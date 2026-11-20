@@ -2131,6 +2131,10 @@ void peq_dsp_get_vu_metrics(peq_vu_metrics_t *out_vu, bool clear_clip)
     out_vu->limiter_active = s_vu_lim_active;
     out_vu->clip_latched   = s_vu_clip_latched;
     out_vu->silence_ms     = s_vu_silence_ms;
+    /* Reset inter-frame peak/limiter accumulators so each 100 ms UI frame captures true max */
+    s_vu_peak_lin_l = 0.0f;
+    s_vu_peak_lin_r = 0.0f;
+    s_vu_lim_active = false;
     if (clear_clip) {
         s_vu_clip_latched = false;
     }
@@ -2140,6 +2144,17 @@ void peq_dsp_get_vu_metrics(peq_vu_metrics_t *out_vu, bool clear_clip)
     out_vu->peak_db_r = (pk_r > 1e-5f) ? (20.0f * log10f(pk_r)) : -96.0f;
     out_vu->rms_db_l  = (rm_l > 1e-5f) ? (20.0f * log10f(rm_l)) : -96.0f;
     out_vu->rms_db_r  = (rm_r > 1e-5f) ? (20.0f * log10f(rm_r)) : -96.0f;
+}
+
+void peq_dsp_clear_vu_metrics(void)
+{
+    taskENTER_CRITICAL(&s_peq_lock);
+    s_vu_peak_lin_l = 0.0f;
+    s_vu_peak_lin_r = 0.0f;
+    s_vu_rms_lin_l  = 0.0f;
+    s_vu_rms_lin_r  = 0.0f;
+    s_vu_lim_active = false;
+    taskEXIT_CRITICAL(&s_peq_lock);
 }
 
 void peq_dsp_trigger_wake_ramp(void)
@@ -2720,11 +2735,17 @@ static void publish_block_metrics(float pk_l, float pk_r, float sq_sum_l, float 
     uint32_t sil_ms = (s_rt_sr > 0) ? (uint32_t)((s_silence_samples * 1000ULL) / (uint64_t)s_rt_sr) : 0;
 
     taskENTER_CRITICAL(&s_peq_lock);
-    s_vu_peak_lin_l = pk_l;
-    s_vu_peak_lin_r = pk_r;
-    s_vu_rms_lin_l  = rms_l;
-    s_vu_rms_lin_r  = rms_r;
-    s_vu_lim_active = lim_active;
+    if (pk_l > s_vu_peak_lin_l) s_vu_peak_lin_l = pk_l;
+    if (pk_r > s_vu_peak_lin_r) s_vu_peak_lin_r = pk_r;
+    s_vu_rms_lin_l = (rms_l > s_vu_rms_lin_l)
+                     ? (0.50f * rms_l + 0.50f * s_vu_rms_lin_l)
+                     : (0.15f * rms_l + 0.85f * s_vu_rms_lin_l);
+    s_vu_rms_lin_r = (rms_r > s_vu_rms_lin_r)
+                     ? (0.50f * rms_r + 0.50f * s_vu_rms_lin_r)
+                     : (0.15f * rms_r + 0.85f * s_vu_rms_lin_r);
+    if (s_vu_rms_lin_l < 1.0f) s_vu_rms_lin_l = 0.0f;
+    if (s_vu_rms_lin_r < 1.0f) s_vu_rms_lin_r = 0.0f;
+    if (lim_active) s_vu_lim_active = true;
     if (clipped) s_vu_clip_latched = true;
     s_vu_silence_ms = sil_ms;
     taskEXIT_CRITICAL(&s_peq_lock);
@@ -2784,12 +2805,15 @@ void peq_dsp_process_interleaved_s24_to_s32(const uint8_t *src_s24_packed, int32
             apply_limiter_and_ramp(mx_l * volume_factor, mx_r * volume_factor,
                                    &fin_l, &fin_r, &blk_lim, &blk_clip);
 
-            float al = fabsf(fin_l);
-            float ar = fabsf(fin_r);
+            /* Meter pre-volume (post-DSP/mixer) level unless muted so VU stays lively at any knob position */
+            float ml = (volume_factor > 0.0f) ? mx_l : 0.0f;
+            float mr = (volume_factor > 0.0f) ? mx_r : 0.0f;
+            float al = fabsf(ml);
+            float ar = fabsf(mr);
             if (al > blk_pk_l) blk_pk_l = al;
             if (ar > blk_pk_r) blk_pk_r = ar;
-            blk_sq_l += fin_l * fin_l;
-            blk_sq_r += fin_r * fin_r;
+            blk_sq_l += ml * ml;
+            blk_sq_r += mr * mr;
 
             dst_s32[(pos + i) * 2]     = clamp_s24_to_s32(fin_l);
             dst_s32[(pos + i) * 2 + 1] = clamp_s24_to_s32(fin_r);
@@ -2850,12 +2874,14 @@ void peq_dsp_process_interleaved_s16_to_s32(const int16_t *src_s16, int32_t *dst
             apply_limiter_and_ramp(mx_l * volume_factor, mx_r * volume_factor,
                                    &fin_l, &fin_r, &blk_lim, &blk_clip);
 
-            float al = fabsf(fin_l);
-            float ar = fabsf(fin_r);
+            float ml = (volume_factor > 0.0f) ? mx_l : 0.0f;
+            float mr = (volume_factor > 0.0f) ? mx_r : 0.0f;
+            float al = fabsf(ml);
+            float ar = fabsf(mr);
             if (al > blk_pk_l) blk_pk_l = al;
             if (ar > blk_pk_r) blk_pk_r = ar;
-            blk_sq_l += fin_l * fin_l;
-            blk_sq_r += fin_r * fin_r;
+            blk_sq_l += ml * ml;
+            blk_sq_r += mr * mr;
 
             dst_s32[(pos + i) * 2]     = clamp_s24_to_s32(fin_l);
             dst_s32[(pos + i) * 2 + 1] = clamp_s24_to_s32(fin_r);

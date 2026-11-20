@@ -44,8 +44,8 @@ static float s_curve_db[OLED_WIDTH];
 static bool  s_curve_dirty = true;
 
 // VU 300ms peak-hold state
-static float s_vu_hold_db_l = -48.0f;
-static float s_vu_hold_db_r = -48.0f;
+static float s_vu_hold_db_l = -60.0f;
+static float s_vu_hold_db_r = -60.0f;
 static int   s_vu_hold_ticks_l = 0;
 static int   s_vu_hold_ticks_r = 0;
 
@@ -411,8 +411,8 @@ static void update_vu_hold(const peq_vu_metrics_t *vu)
     } else if (s_vu_hold_ticks_l > 0) {
         s_vu_hold_ticks_l--;
     } else {
-        s_vu_hold_db_l -= 1.8f;
-        if (s_vu_hold_db_l < -48.0f) s_vu_hold_db_l = -48.0f;
+        s_vu_hold_db_l -= 2.2f;
+        if (s_vu_hold_db_l < -60.0f) s_vu_hold_db_l = -60.0f;
     }
 
     if (vu->peak_db_r >= s_vu_hold_db_r) {
@@ -421,16 +421,16 @@ static void update_vu_hold(const peq_vu_metrics_t *vu)
     } else if (s_vu_hold_ticks_r > 0) {
         s_vu_hold_ticks_r--;
     } else {
-        s_vu_hold_db_r -= 1.8f;
-        if (s_vu_hold_db_r < -48.0f) s_vu_hold_db_r = -48.0f;
+        s_vu_hold_db_r -= 2.2f;
+        if (s_vu_hold_db_r < -60.0f) s_vu_hold_db_r = -60.0f;
     }
 }
 
 static int db_to_bar_px(float db, int max_px)
 {
-    if (db <= -48.0f) return 0;
+    if (db <= -60.0f) return 0;
     if (db >= 0.0f) return max_px;
-    int px = (int)lroundf(((db + 48.0f) / 48.0f) * (float)max_px);
+    int px = (int)lroundf(((db + 60.0f) / 60.0f) * (float)max_px);
     if (px < 0) px = 0;
     if (px > max_px) px = max_px;
     return px;
@@ -479,7 +479,7 @@ static void render_vu_body(void)
     } else {
         float max_pk = (vu.peak_db_l > vu.peak_db_r) ? vu.peak_db_l : vu.peak_db_r;
         if (max_pk < -90.0f) {
-            snprintf(db_str, sizeof(db_str), "-48   -24   -12  -6  0");
+            snprintf(db_str, sizeof(db_str), "-60  -36  -18  -6  0");
         } else {
             snprintf(db_str, sizeof(db_str), "PK:%5.1fdB  RMS:%5.1f", max_pk,
                      0.5f * (vu.rms_db_l + vu.rms_db_r));

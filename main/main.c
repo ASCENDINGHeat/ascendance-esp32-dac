@@ -127,6 +127,10 @@ static void audio_dsp_task(void *pvParameters)
                 }
             }
 
+            if (usb_idle_ms == 100) {
+                peq_dsp_clear_vu_metrics();
+            }
+
             if (am_sec > 0 && !webhid_peq_is_suspended()) {
                 if (usb_idle_ms < ((uint32_t)am_sec * 1000UL)) {
                     usb_idle_ms++;
@@ -135,10 +139,15 @@ static void audio_dsp_task(void *pvParameters)
                     audio_pipeline_set_mute(true);
                     ESP_LOGI(TAG, "USB stream idle auto-mute engaged (%us).", am_sec);
                 }
-            } else if (am_sec == 0 && auto_muted_by_silence && !webhid_peq_is_suspended()) {
-                auto_muted_by_silence = false;
-                peq_dsp_trigger_wake_ramp();
-                audio_pipeline_set_mute(false);
+            } else {
+                if (usb_idle_ms < 1000UL) {
+                    usb_idle_ms++;
+                }
+                if (am_sec == 0 && auto_muted_by_silence && !webhid_peq_is_suspended()) {
+                    auto_muted_by_silence = false;
+                    peq_dsp_trigger_wake_ramp();
+                    audio_pipeline_set_mute(false);
+                }
             }
 
             // CONFIG_FREERTOS_HZ=1000 -> 1 ms sleep keeps 96 kHz / 24-bit FIFO responsive
