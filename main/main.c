@@ -860,7 +860,7 @@ void app_main(void)
 
     // Initialize EC11 Rotary Encoder (PCNT on GPIO 15/16) and Buttons (GPIO 17/18/10)
     ESP_ERROR_CHECK(controls_init(&s_ctrl_queue));
-    xTaskCreatePinnedToCore(control_dispatcher_task, "ctrl_disp", 4096, NULL, 4, NULL, 0);
+    xTaskCreatePinnedToCore(control_dispatcher_task, "ctrl_disp", 6144, NULL, 4, NULL, 0);
 
     // Initialize WebHID live PEQ tuning interface on Native USB OTG (GPIO 19/20) on Core 0
     ESP_ERROR_CHECK(webhid_peq_init());

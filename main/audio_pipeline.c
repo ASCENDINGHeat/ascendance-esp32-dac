@@ -226,7 +226,7 @@ void audio_pipeline_write(const void *data, size_t size_bytes)
 
     const int16_t *src = (const int16_t *)data;
     size_t num_samples = size_bytes / sizeof(int16_t);
-    int32_t out_buf[256 * 2]; // 256 stereo 32-bit frames on stack
+    static int32_t out_buf[256 * 2]; // 256 stereo 32-bit frames in BSS (off main stack)
     const size_t chunk_samples = sizeof(out_buf) / sizeof(int32_t);
     float vol = audio_pipeline_get_volume_factor();
 
@@ -254,7 +254,7 @@ void audio_pipeline_write(const void *data, size_t size_bytes)
 void audio_pipeline_play_tone(float freq_hz, int duration_ms, int sample_rate)
 {
     int total_samples = (sample_rate * duration_ms) / 1000;
-    int16_t buffer[256 * 2]; // 256 stereo pairs
+    static int16_t buffer[256 * 2]; // 256 stereo pairs in BSS (off main stack)
     const int buffer_pairs = 256;
     float phase = 0.0f;
     const float phase_step = (2.0f * (float)M_PI * freq_hz) / (float)sample_rate;

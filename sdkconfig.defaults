@@ -29,3 +29,6 @@ CONFIG_FREERTOS_HZ=1000
 
 # Dynamic CPU frequency scaling for USB host suspend (<15 mA sleep)
 CONFIG_PM_ENABLE=y
+
+# Generous main task stack for NVS v3 + DSP + USB initialization
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
