@@ -128,7 +128,7 @@ enum {
     TUD_AUDIO10_DESC_STD_AS_LEN + \
     TUD_AUDIO10_DESC_STD_AS_LEN + \
     TUD_AUDIO10_DESC_CS_AS_INT_LEN + \
-    TUD_AUDIO10_DESC_TYPE_I_FORMAT_LEN(3) + \
+    TUD_AUDIO10_DESC_TYPE_I_FORMAT_LEN(2) + \
     TUD_AUDIO10_DESC_STD_AS_ISO_EP_LEN + \
     TUD_AUDIO10_DESC_CS_AS_ISO_EP_LEN \
 )
@@ -169,11 +169,11 @@ static const uint8_t s_config_desc[] = {
     // Class-Specific AS Interface Header (link to Terminal 1, 1 frame delay, PCM format)
     TUD_AUDIO10_DESC_CS_AS_INT(UAC1_ENTITY_INPUT_TERMINAL, 0x01, AUDIO10_DATA_FORMAT_TYPE_I_PCM),
 
-    // Type I Format Type Descriptor (2 channels, 3 bytes/sample, 24 bits, 44.1/48/96 kHz)
-    TUD_AUDIO10_DESC_TYPE_I_FORMAT(0x02, 3, 24, 44100, 48000, 96000),
+    // Type I Format Type Descriptor (2 channels, 3 bytes/sample, 24 bits, 44.1/48 kHz)
+    TUD_AUDIO10_DESC_TYPE_I_FORMAT(0x02, 3, 24, 44100, 48000),
 
-    // Standard AS Isochronous Audio Data Endpoint (EP 0x01 OUT, Adaptive, 588 max bytes, 1ms)
-    TUD_AUDIO10_DESC_STD_AS_ISO_EP(EPNUM_AUDIO_OUT, (uint8_t)(TUSB_XFER_ISOCHRONOUS | TUSB_ISO_EP_ATT_ADAPTIVE), 588, 0x01, 0x00),
+    // Standard AS Isochronous Audio Data Endpoint (EP 0x01 OUT, Adaptive, 294 max bytes, 1ms)
+    TUD_AUDIO10_DESC_STD_AS_ISO_EP(EPNUM_AUDIO_OUT, (uint8_t)(TUSB_XFER_ISOCHRONOUS | TUSB_ISO_EP_ATT_ADAPTIVE), 294, 0x01, 0x00),
 
     // Class-Specific AS Isochronous Audio Data Endpoint (sampling freq control enabled)
     TUD_AUDIO10_DESC_CS_AS_ISO_EP(AUDIO10_CS_AS_ISO_DATA_EP_ATT_SAMPLING_FRQ, AUDIO10_CS_AS_ISO_DATA_EP_LOCK_DELAY_UNIT_UNDEFINED, 0x0000),
@@ -383,7 +383,7 @@ bool tud_audio_set_req_ep_cb(uint8_t rhport, tusb_control_request_t const *p_req
     if (ctrlSel == AUDIO10_EP_CTRL_SAMPLING_FREQ) {
         if (p_request->bRequest == AUDIO10_CS_REQ_SET_CUR && p_request->wLength == 3) {
             uint32_t req_rate = (uint32_t)pBuff[0] | ((uint32_t)pBuff[1] << 8) | ((uint32_t)pBuff[2] << 16);
-            if (req_rate != 44100 && req_rate != 48000 && req_rate != 96000) {
+            if (req_rate != 44100 && req_rate != 48000) {
                 ESP_LOGW(TAG, "UAC1 Rejected unsupported sample rate: %lu Hz", (unsigned long)req_rate);
                 return false;
             }
