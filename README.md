@@ -8,27 +8,28 @@
 [![Android](https://img.shields.io/badge/Android-USB%20Companion-3ddc84.svg)](tools/android_companion/)
 [![License](https://img.shields.io/badge/License-Apache%202.0-yellow.svg)](LICENSE)
 
-**ASCENDANCE** turns an **ESP32-S3 (N16R8)**, **TI PCM5102A DAC**, and **NXP TDA1308 Class-AB headphone amp** into a driverless **24-bit / 44.1–96 kHz USB DAC** with real-time Dual-Mono DSP, a **128×64 OLED display**, rotary controls, a **desktop WebHID tuner**, and a **native Android Companion app**.
+**ASCENDANCE** turns an **ESP32-S3 (N16R8)**, **TI PCM5102A DAC**, and **NXP TDA1308 Class-AB headphone amp** into a driverless **24-bit / 44.1–48 kHz USB DAC** with real-time Dual-Mono DSP, a **128×64 OLED display**, rotary controls, a **desktop WebHID tuner**, and a **native Android Companion app**.
 
 ---
 
 ## Key Features
 
-- **Driverless Tri-Rate USB Audio:** Plug-and-play USB Audio Class 1.0 (**24-bit / 44.1, 48.0 & 96.0 kHz** stereo) over a single USB-C cable alongside live tuning controls.
+- **Driverless Dual-Rate USB Audio:** Plug-and-play USB Audio Class 1.0 (**24-bit / 44.1 & 48.0 kHz** stereo, `294`-byte isochronous OUT fitting ESP32-S3's `1,024`-byte DWC2 FIFO) over a single USB-C cable alongside live tuning controls.
 - **Dual-Mono 10-Band Parametric EQ:** Dynamically scales **1–10 bands** per channel (Stereo Linked or independent Left/Right) across 8 filter types (`Peaking`, `Low Shelf`, `High Shelf`, `High Pass`, `Low Pass`, `Notch`, `Band Pass`, `Bypass`) with **15 ms click-free crossfading**, Preamp headroom (`0` to `-12 dB`), and instant level-matched **A/B Bypass**.
 - **8 Custom DAC Presets (`Slot 1`–`Slot 8`):** Editable, user-named hardware presets (`16`-char custom names + factory reset + optional `Flat`, `Bass`, `Harman` templates), stored persistently on-device with zero flash wear during live **Preview Live** slider tuning.
+- **Psychoacoustic Bass Enhancer & Harmonic Exciter:** Global PSRAM-backed (`4096`-pt LUTs in `8 MB` Octal PSRAM + `2×` polyphase half-band oversampling) Sub-Bass harmonic synthesis (`50–150 Hz`) and **Tube Warmth / Tape / Air Sheen** Exciter (`1.5–8.0 kHz`), smoothly crossfaded and bypassed with **A/B Bypass**.
 - **Channel Matrix & Headphone Crossfeed:** Balance, M/S Stereo Width (`0–200%`), Mono Downmix, L/R Swap, **Custom Channel Matrix**, and 3-level **Headphone Crossfeed (Chu Moy)**.
-- **Dynamics & FIR Impulse Filter:** **True-Peak Limiter** (`-0.5 dBFS` ceiling, `1.5 ms` lookahead), volume-coupled **Equal Loudness (ISO 226)** (`Off / ISO Mild / ISO Full`), and hardware-accelerated **FIR Impulse Filter** (`.txt` / `.csv` / `.wav`, up to `256` taps @ `48 kHz` / `128` @ `96 kHz`).
-- **OLED Screen Views & Smart Power:** SSD1306 `128×64` display (`0x3C`/`0x3D` auto-probe) with 4 cycleable **OLED Screen Views** (`Classic`, `EQ Curve`, `VU Meters`, `Split`), **OLED Auto-Dim & Sleep**, **Auto-Mute on Silence**, USB suspend low-power mode, and 4-phase zero-pop muting.
+- **Dynamics & FIR Impulse Filter:** **True-Peak Limiter** (`-0.5 dBFS` ceiling, `1.5 ms` lookahead), volume-coupled **Equal Loudness (ISO 226)** (`Off / ISO Mild / ISO Full`), and hardware-accelerated **FIR Impulse Filter** (`.txt` / `.csv` / `.wav`, up to `256` taps/ch @ `44.1 / 48 kHz`).
+- **OLED Screen Views & Smart Power:** SSD1306 `128×64` display (`0x3C`/`0x3D` auto-probe) with 4 cycleable **OLED Screen Views** (`Classic`, `EQ Curve`, `VU Meters` `-60..0 dBFS` pre-volume, `Split`), **OLED Auto-Dim & Sleep**, **Auto-Mute on Silence**, USB suspend low-power mode, and 4-phase zero-pop muting.
 
 ---
 
 ## Architecture at a Glance
 
 ```text
-  Host PC / Mac / Android  ──(USB Audio 24-bit 44.1–96 kHz + USB Control)──► ESP32-S3
+  Host PC / Mac / Android  ──(USB Audio 24-bit 44.1/48 kHz + USB Control)──► ESP32-S3
      ├─ Core 0: USB Stack, OLED UI (10 FPS), Rotary Encoder & Nav Buttons, Preset Storage
-     └─ Core 1: Dual-Mono 10-Band EQ ─► FIR ─► Equal Loudness ─► Matrix/Crossfeed ─► Limiter ─► I2S (32-bit)
+     └─ Core 1: Dual-Mono 10-Band EQ + Loudness ─► FIR ─► Bass/Exciter ─► Matrix ─► Limiter ─► I2S (32-bit)
                                                                                                     │
                                               3.5 mm Headphones ◄── TDA1308 Amp ◄── PCM5102A DAC ◄──┘
 ```
@@ -38,20 +39,20 @@
 ## Tuning & Control Interfaces
 
 ### 1. On-Device Controls & OLED (`ASCENDANCE Hi-Fi`)
-| Control | Playback Screen | Main Menu (11 Items) | Live EQ Adjust |
+| Control | Playback Screen | Main Menu (13 Items) | Live EQ Adjust |
 | :--- | :--- | :--- | :--- |
 | **Rotary Turn** | Master volume (`±2%`) | Scroll menu items | Adjust selected digit / option |
 | **Rotary Click** | Mute / Unmute (Double-click: **Save to DAC**, Long press: cycle **Input**) | Select / Cycle setting (Long press: **Save to DAC**) | Jump parameter (`Band → Freq → Gain → Q → Toolbar`) |
 | **Button 1 (◄)** | Open Main Menu (Long press: prev **Slot**) | Exit Menu | Move cursor Left (Double-click: remove band, Long press: revert) |
 | **Button 2 (►)** | Next **Slot** (Double-click: cycle **OLED Screen View**) | Move Down | Move cursor Right (Double-click: add band) |
 
-Main Menu items: `1. Live EQ Adjust` · `2. Slot` · `3. A/B` · `4. Crossfeed` · `5. Loudness` · `6. Limiter` · `7. View (Classic/Curve/VU/Split)` · `8. Preamp` · `9. Input` · `10. Save to DAC` · `11. Exit Menu`
+Main Menu items: `1. Live EQ Adjust` · `2. Slot` · `3. A/B` · `4. Crossfeed` · `5. Loudness` · `6. Limiter` · `7. View (Classic/Curve/VU/Split)` · `8. Bass Enh` · `9. Exciter (Off/Tube/Tape/Air)` · `10. Preamp` · `11. Input` · `12. Save to DAC` · `13. Exit Menu`
 
 ### 2. WebHID Live Tuner (`tools/webhid_tuner/`)
 Modular React + Vite app bundled into a single offline-ready HTML file (`dist/index.html`) for Chrome, Edge, and Opera:
 1. Build once locally (`cd tools/webhid_tuner && npm install && npm run build`) or download `ascendance-webhid-tuner-<tag>.html` from Releases.
 2. Open `tools/webhid_tuner/dist/index.html` (or run `npm run dev`), connect the **Native USB-C port**, click **Connect USB DAC**, and select **ASCENDANCE Hi-Fi DAC**.
-3. Tune live (`Preview Live`), load **Templates** (`Flat` / `Bass Boost` / `Harman`) or AutoEQ/APO `.txt` / `.json` / FIR `.wav` files, then click **Save to DAC** to store permanently.
+3. Tune live (`Preview Live`), load **Templates** (`Flat` / `Bass Boost` / `Harman`) or AutoEQ/APO `.txt` / `.json` / FIR `.wav` files, adjust **Bass Enhancer & Harmonic Exciter**, then click **Save to DAC** to store permanently.
 
 <details>
 <summary>Linux WebHID udev permission rule (one-time setup)</summary>
@@ -66,9 +67,11 @@ sudo udevadm control --reload-rules && sudo udevadm trigger
 
 ### 3. Android Companion App (`tools/android_companion/`)
 Native Kotlin + Jetpack Compose app (`com.ascendance.dac`, Android 8.0+) for mobile USB-C control without interrupting Spotify, Tidal, or system audio:
-- **EQ & Presets:** Touch/pinch graph, Dual-Mono L/R tabs, **DAC Presets (1–8)** with custom naming, **Template** (`Flat` / `Bass` / `Harman`), **Preview Live** vs **Save to DAC**, plus unlimited local phone profiles and **Offline Preview Mode**.
-- **Matrix & Dynamics:** **Headphone Crossfeed (Chu Moy)**, **Custom Channel Matrix**, **True-Peak Limiter**, **Equal Loudness (ISO 226)**, and **FIR Impulse Filter** upload (`.txt` / `.wav`).
-- **Device & Power:** **USB Connection** / **Sync from DAC**, **OLED Screen View**, **Auto-Mute on Silence**, **OLED Auto-Dim & Sleep**, and **Activity Log**.
+- **Top Bar & Quick Controls:** Tappable active **Slot 1–8** dropdown switcher from any tab, instant **A/B Bypass**, and **Save** with an amber unsaved-changes indicator plus tactile haptic feedback.
+- **EQ:** Touch/pinch Frequency Response / Phase / Group Delay canvas (focused on the EQ tab for maximum vertical breathing room elsewhere), Dual-Mono L/R tabs, and Preamp Headroom.
+- **Tone:** Consolidated **Bass Enhancer & Harmonic Exciter**, **True-Peak Limiter**, **Equal Loudness (ISO 226)**, **Channel Matrix & Crossfeed** (with collapsible **Custom 2×2 Matrix**), and collapsible **FIR Impulse Filter** upload (`.txt` / `.wav`).
+- **Presets:** **DAC Presets (1–8)** with custom naming, **Template** (`Flat` / `Bass` / `Harman`), **Preview Live** vs **Save to DAC**, AutoEQ/APO `.txt`/`.json` import/export, and unlimited local phone profiles.
+- **Device:** **USB Connection** / **Sync from DAC**, **Offline Preview Mode**, **OLED Screen View**, **Auto-Mute on Silence**, **OLED Auto-Dim & Sleep**, persisted **Appearance** themes (`Dark Studio`, `AMOLED`, `Dynamic` Material You), and **Activity Log**.
 
 ---
 
@@ -82,13 +85,13 @@ idf.py build
 idf.py -p /dev/ttyACM0 flash monitor
 ```
 
-* **CI Workflows:** [`.github/workflows/build.yml`](.github/workflows/build.yml) builds the ESP32-S3 firmware (`ASCENDANCE_merged.bin`), [`.github/workflows/android.yml`](.github/workflows/android.yml) runs Android unit tests/lint/APK builds, and [`.github/workflows/release.yml`](.github/workflows/release.yml) publishes tagged release assets.
+* **CI Workflows:** [`.github/workflows/build.yml`](.github/workflows/build.yml) builds the ESP32-S3 firmware (`ASCENDANCE_merged.bin`, `ASCENDANCE.map`, size reports), [`.github/workflows/android.yml`](.github/workflows/android.yml) runs Android unit tests/lint/APK builds, and [`.github/workflows/release.yml`](.github/workflows/release.yml) publishes tagged release assets.
 
 ---
 
 ## Hardware & Documentation
 
-For wiring diagrams, mandatory solder jumpers (`PCM5102A` `SCK/FMT -> GND`, `YD-ESP32-S3` `IN-OUT` jumper), star-grounding rules, and deep DSP/firmware specs, see **[`docs/README.md`](docs/README.md)**:
+For wiring diagrams, mandatory solder jumpers (`PCM5102A` `SCK/FMT -> GND`, `YD-ESP32-S3` `IN-OUT` jumper), star-grounding rules, and deep DSP/firmware specs, see **[`docs/README.md`](docs/README.md)** and **[`CHANGELOG.md`](CHANGELOG.md)**:
 
 - **Hardware & Wiring:** [`docs/hardware/hardware.md`](docs/hardware/hardware.md) · [`docs/hardware/schematics.md`](docs/hardware/schematics.md) (`docs/schematics/DSP+DAC+SCREEN.svg`)
 - **Firmware & Architecture:** [`docs/firmware/current_firmware_implementation.md`](docs/firmware/current_firmware_implementation.md) · [`docs/firmware/software.md`](docs/firmware/software.md) · [`docs/reference/architecture.md`](docs/reference/architecture.md)

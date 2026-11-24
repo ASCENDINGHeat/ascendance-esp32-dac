@@ -48,10 +48,10 @@ Any autonomous agent generating or refactoring code in this repository MUST veri
 3. **Zero Dynamic Allocation in Real-Time Audio Loops:** Never call `malloc()`, `calloc()`, or `realloc()` inside `audio_dsp_task` or `peq_dsp_process_interleaved_s24_to_s32()`. Pre-allocate biquad, FIR (`16`-byte aligned DRAM), and lookahead limiter buffers in static BSS or initialization paths.
 4. **Core Affinity Discipline:** Core 0 handles TinyUSB (`tinyusb_task`), input controls (`controls_task`, `ctrl_disp`), I2C OLED (`oled_ui_task`), WS2812B LED, and NVS flash commits. Core 1 (`audio_dsp_task`, Priority `10`, `8,192 B` stack) is reserved strictly for audio DSP and I2S DMA.
 5. **Click-Free Crossfading & Subnormal Flushing:** Never swap biquad, A/B, Dual-Mono, loudness, FIR, or matrix states instantaneously; stage under `portMUX_TYPE` on Core 0 and interpolate over `15 ms` on Core 1, flushing delay states `< 1e-15f` to zero.
-6. **I2S Reclocking Order:** Never call `i2s_channel_reconfig_std_clock()` while the channel is active. Mute `GPIO 7` LOW, disable the channel (`i2s_channel_disable()`), update the clock (`44.1 / 48.0 / 96.0 kHz`), and re-enable.
+6. **I2S Reclocking Order & DWC2 FIFO Limit:** Never call `i2s_channel_reconfig_std_clock()` while the channel is active. Mute `GPIO 7` LOW, disable the channel (`i2s_channel_disable()`), update the clock (`44.1 / 48.0 kHz`), and re-enable. Keep UAC 1.0 `EP 0x01 OUT` `wMaxPacketSize <= 294` bytes (`48 kHz / 24-bit`); ESP32-S3's DWC2 USB OTG peripheral shares `1,024` bytes of total hardware FIFO RAM across RX + TX endpoints (`588` B @ `96 kHz / 24-bit` exceeds the RX FIFO and drops packets silently).
 7. **Zero-Pop Audio Handover:** Never reclock or switch sources while unmuted. Always execute: *Digital Fade-Out $\rightarrow$ Assert `XMT` (`GPIO 7`) LOW $\rightarrow$ Stop Source $\rightarrow$ Reclock $\rightarrow$ Start Source $\rightarrow$ Assert `XMT` HIGH $\rightarrow$ Fade-In*.
 8. **Hard 24-Bit Saturation Clamping & Limiter Safety:** Bound float samples behind the optional `-0.5 dBFS` (`1.5 ms` lookahead) True-Peak Limiter and clamp strictly to signed 24-bit full-scale `[-8388608.0f, 8388607.0f]` before MSB-aligning into 32-bit I2S slots (`int32_t`).
-9. **Volatile Live Tuning vs. Explicit NVS v3 Flash Commits:** Real-time WebHID / Android Companion tuning modifies RAM only. Persistent commits to `nvs_meta_v3`, `peq_slot_0..7` (`Slot 1`–`Slot 8`), and `fir_taps_l`/`r` occur only on explicit save commands (`0x05`, `0x0A`, `0x0D`, `0x14` with commit flag, or long-press Save) with CRC32 + `memcmp` delta verification.
+9. **Volatile Live Tuning vs. Explicit NVS v3 Flash Commits:** Real-time WebHID / Android Companion tuning (`0x02`, `0x03`, `0x08`, `0x09`, `0x0B`, `0x0C`, `0x0E`, `0x13`) modifies RAM only. Persistent commits to `nvs_meta_v3`, `peq_slot_0..7` (`Slot 1`–`Slot 8`), `fir_taps_l`/`r`, and `harm_cfg_v1` occur only on explicit save commands (`0x05`, `0x0A`, `0x0D`, `0x14` with commit flag, or long-press Save) with CRC32 + `memcmp` delta verification.
 10. **Dual-Port Topology & Power Rail Discipline:** Maintain UART logging on `GPIO 43/44` (CH343P COM port) while using `GPIO 19/20` for Native USB OTG. Bridge the `IN-OUT` solder jumper on the PCB to supply 5V to `5Vin` for the DAC and amplifier; never feed external 5V to `5Vin` while USB is connected.
 
 ---
@@ -133,11 +133,12 @@ When generating board header files (`board_pins.h`), use this exact canonical ma
 
 | Task Name | Core Affinity | Stack Size | Priority | Responsibility |
 | :--- | :---: | :---: | :---: | :--- |
-| **`audio_dsp_task`** | **Core 1** | **8,192 B** | **10** | Real-time 24-bit UAC DSP (10-band EQ, FIR, Loudness, Matrix, Limiter) & I2S0 DMA |
-| **`tinyusb_task`** | **Core 0** | **4,096 B** | **5** | TinyUSB UAC 1.0 tri-rate audio + 64-byte raw HID event dispatcher |
-| **`ctrl_disp`** | **Core 0** | **4,096 B** | **4** | Button/encoder event handler, NVS v3 save engine, and OLED menu state machine |
+| **`audio_dsp_task`** | **Core 1** | **8,192 B** | **10** | Real-time 24-bit UAC DSP (10-band EQ, FIR, Harmonics/PSRAM LUTs, Loudness, Matrix, Limiter) & I2S0 DMA |
+| **`tinyusb_task`** | **Core 0** | **4,096 B** | **5** | TinyUSB UAC 1.0 dual-rate audio (`44.1 / 48 kHz`, `294 B` EP OUT) + 64-byte raw HID dispatcher |
+| **`ctrl_disp`** | **Core 0** | **6,144 B** | **4** | Button/encoder event handler, NVS v3 save engine, and 13-item OLED menu state machine |
 | **`controls_task`** | **Core 0** | **3,072 B** | **3** | 50 Hz hardware PCNT rotary encoder delta poll & button click/double/long debounce |
-| **`oled_ui_task`** | **Core 0** | **4,096 B** | **2** | 10 FPS SSD1306 I2C framebuffer (`Classic`/`Curve`/`VU`/`Split`), hot-plug probe, dimmer |
+| **`oled_ui_task`** | **Core 0** | **4,096 B** | **2** | 10 FPS SSD1306 I2C framebuffer (`Classic`/`Curve`/`VU -60..0 dBFS`/`Split`), hot-plug probe, dimmer |
+| **`main` (`app_main`)** | **Core 0** | **8,192 B** | **1** | Boot init (`CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192`): NVS, I2S, PSRAM LUTs, chime (static BSS), USB |
 | *`audio_stream_task` (Aux)* | Core 1 | 32,768 B | 5 | Research Wi-Fi/MP3 decoder pipeline (not compiled in production USB DAC `main/`) |
 | *`sd_reader_task` (Aux)* | Core 0 | 8,192 B | 8 | Research SDMMC FATFS reader (`128 KB` PSRAM ringbuffer) |
 
@@ -152,6 +153,8 @@ When analyzing compilation errors, CI failures, or serial monitor panic logs, co
 | `-Werror=address-of-packed-member` | Taking pointer to field inside `__attribute__((packed))` HID struct | Copy scalar/array to aligned stack variable before passing pointer (`memcpy`). |
 | `Cache error: Cache access while memory is disabled` | Peripheral assigned to GPIO 33–37 | Reassign peripheral to safe GPIO pins (1–21, 38–48). |
 | `Core 1 panic'ed (Cache access while memory is disabled)` | Real-time audio task executing from Flash during `nvs_commit()` | Keep Core 1 audio & I2S functions IRAM-safe, state in DRAM, and DMA buffer $\ge 42\text{ ms}$. |
+| `A stack overflow in task main has been detected` | Default `3,584 B` `app_main` stack or kilobyte audio arrays on stack | Keep `CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192` in `sdkconfig.defaults` and `static` BSS buffers in `audio_pipeline.c`. |
+| Startup chime works, `USB DAC Active` shows, but USB playback is silent | `EP 0x01 OUT` `wMaxPacketSize` (`588 B` @ `96 kHz`) exceeds ESP32-S3 DWC2 `1,024 B` shared FIFO | Keep `CFG_TUD_AUDIO_FUNC_1_SAMPLE_RATE=48000` and `EP_OUT_SZ_MAX=294` (`44.1 / 48 kHz` 24-bit). |
 | `Task watchdog got triggered on Core 1` during silence | Subnormal / Denormal floating-point operations in IIR biquad | Flush delay states $< 10^{-15}\text{f}$ to zero in biquad loop. |
 | Loud white noise / `NaN` in biquad coefficients | Extreme $Q$ ($>10$) or low frequency ($<20\text{ Hz}$) instability | Clamp $Q \le 10.0$, $f_0 \ge 20\text{ Hz}$, check `isfinite()` / non-zero `a0` before applying. |
 | WebHID `SecurityError: Failed to open the device` on Windows | Windows exclusive lock on Usage Page `0x01` or `0x0C` | Use Vendor-Defined Usage Page (`0xFF60`, Usage `0x61`) in TinyUSB HID report descriptor. |
@@ -162,7 +165,7 @@ When analyzing compilation errors, CI failures, or serial monitor panic logs, co
 | Audio silence during playback (5V rail verified) | PCM5102A mode pins floating | Ground `SCK` (enables PLL), pull `XMT` to `GPIO 7` (HIGH to play), ground `FMT`. |
 | OLED display blank / I2C NACK | I2C address mismatch (`0x3C` vs `0x3D`) or hot-plug disconnect | Firmware auto-probes `0x3C` / `0x3D` at boot and runs a non-blocking `2 s` reconnect probe. |
 | Rollup `Code is nested too deeply` or `EACCES` on Android | `/storage/emulated/0` mounted `noexec` or ARM64 Rollup AST stack check | Run WebHID Vitest & `esbuild` single-file build (`scripts/build-singlefile.mjs`) in executable `$HOME/.cache` if on Android; on Linux/CI run `npm ci && npm test && npm run build`. |
-| PEQ slider dragging causes clicks or flash wear | Committing to NVS on every slider move / no crossfade | Live commands (`0x02`/`0x03`) update volatile RAM with `15 ms` crossfade; flash writes use explicit save (`0x05`) + CRC32 + `memcmp` delta check. |
+| PEQ slider dragging causes clicks or flash wear | Committing to NVS on every slider move / no crossfade | Live commands (`0x02`/`0x03`/`0x0E`) update volatile RAM with `15 ms` crossfade; flash writes use explicit save (`0x05`) + CRC32 + `memcmp` delta check. |
 
 ---
 

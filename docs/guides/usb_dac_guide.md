@@ -139,8 +139,8 @@ Commercial audiophile dongle DACs with built-in DSP (such as the **FiiO JA11**, 
   │   ┌───────────────────────────────────┬─────────────────────────────────┐   │
   │   │ INTERFACE 0 & 1: USB AUDIO (UAC)  │ INTERFACE 2: VENDOR USB HID     │   │
   │   │ • Standard UAC 1.0 Isochronous    │ • Custom 64-byte Raw Reports    │   │
-  │   │ • 24-bit / 44.1, 48 & 96 kHz PCM  │ • WebHID Compatible (Driverless)│   │
-  │   │ • 16 KB SW FIFO Ringbuffer        │ • Live PEQ/Matrix Tuning & Read │   │
+  │   │ • 24-bit / 44.1 & 48.0 kHz PCM    │ • WebHID Compatible (Driverless)│   │
+  │   │ • 294 B EP OUT + 16 KB SW FIFO    │ • Live PEQ/Matrix Tuning & Read │   │
   │   └─────────────────┬─────────────────┴─────────────────┬───────────────┘   │
   │                     │                                   │                   │
   │                     │ Audio Frames (1 ms)               │ Tuning Packets    │
@@ -432,18 +432,18 @@ Future AI agents tasked with maintaining or extending this USB DAC stack should 
 
 - [x] **Step 1:** Add `espressif/esp_tinyusb: "^2.3.0"` to `main/idf_component.yml`.
 - [x] **Step 2:** Configure root `CMakeLists.txt` & `sdkconfig.defaults`:
-  - Enable `CFG_TUD_AUDIO=1`, `CFG_TUD_AUDIO_FUNC_1_SAMPLE_RATE=96000`, `EP_OUT_SZ_MAX=588`, `EP_OUT_SW_BUF_SZ=16384`, `N_BYTES_PER_SAMPLE_RX=3`, `RESOLUTION_RX=24`, and `CONFIG_FREERTOS_HZ=1000`.
+  - Enable `CFG_TUD_AUDIO=1`, `CFG_TUD_AUDIO_FUNC_1_SAMPLE_RATE=48000`, `EP_OUT_SZ_MAX=294` (fits ESP32-S3's `1,024`-byte shared DWC2 hardware FIFO), `EP_OUT_SW_BUF_SZ=16384`, `N_BYTES_PER_SAMPLE_RX=3`, `RESOLUTION_RX=24`, `CONFIG_FREERTOS_HZ=1000`, and `CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192`.
   - Set USB Device Vendor ID (`0x303A`), Product ID (`0x4002`), and Device Strings (`"Ascension Audio ESP32-S3 Hi-Fi DSP DAC"`).
 - [x] **Step 3:** Implement the Composite USB descriptor:
   - 1 AC (Audio Control) Interface (with Volume and Mute feature units).
-  - 1 AS (Audio Streaming) Interface (24-bit stereo, 44.1 / 48.0 / 96.0 kHz Adaptive Isochronous OUT).
+  - 1 AS (Audio Streaming) Interface (24-bit stereo, `44.1 / 48.0 kHz` Adaptive Isochronous OUT, `294` max bytes).
   - 1 HID Interface (64-byte Generic IN/OUT raw report descriptor for WebHID).
 - [x] **Step 4:** Implement TinyUSB Audio & HID callbacks:
   - Audio: `tud_audio_set_itf_cb`, `tud_audio_set_req_entity_cb`, `tud_audio_get_req_entity_cb`, `tud_audio_set_req_ep_cb`, `tud_audio_get_req_ep_cb`.
   - HID: `tud_hid_set_report_cb`, `tud_hid_get_report_cb`, `tud_hid_descriptor_report_cb`.
 - [x] **Step 5:** Create the audio pipeline routing on Core 1:
   - In `AUDIO_SOURCE_STANDALONE`, check `webhid_peq_consume_pending_sample_rate()` for zero-pop reclocking, then stream 24-bit PCM from `webhid_peq_audio_read()` through `peq_dsp_process_interleaved_s24_to_s32()` into `audio_pipeline_write_s32()` (32-bit I2S slots).
-- [x] **Step 6:** Verify compilation with `idf.py build`, flash via UART, and verify driverless UAC 1.0 tri-rate soundcard + WebHID live tuning.
+- [x] **Step 6:** Verify compilation with `idf.py build`, flash via UART, and verify driverless UAC 1.0 dual-rate (`44.1 / 48 kHz`) soundcard + WebHID live tuning.
 
 ---
 

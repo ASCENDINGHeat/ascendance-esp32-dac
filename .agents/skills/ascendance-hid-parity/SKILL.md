@@ -19,12 +19,12 @@ All DAC settings live across three runtimes connected by a single 64-byte raw US
    - Android Kotlin codec & models: [PeqPacketCodec.kt](../../../tools/android_companion/app/src/main/java/com/ascendance/dac/usb/PeqPacketCodec.kt) & [DspModels.kt](../../../tools/android_companion/app/src/main/java/com/ascendance/dac/model/DspModels.kt)
 
 2. **Verify Command, Byte-Offset & Clamp Bounds**
-   - `0x01`: Get active band / metadata (`reserved[0]` = `num_bands`), `0xFD` = extended dynamics + 16-byte UTF-8 slot name, `0xFE` = `2×2` channel matrix floats.
+   - `0x01`: Get active band / metadata (`reserved[0]` = `num_bands`), `0xFD` = extended dynamics + 16-byte UTF-8 slot name + harmonics mirror (`reserved[20..27]`), `0xFE` = `2×2` channel matrix floats.
    - `0x02`..`0x09`, `0x13`: Live PEQ band (`20..20000 Hz`, `-24.0..+12.0 dB`, `0.10..10.00 Q`), Preamp (`-12.0..0.0 dB`), Slot (`0..7`), Save (`0x05`), Reset (`0x06`), Band Count (`1..10`), A/B (`0x08`), Dual-Mono (`0x09`), Mixer (`0x13`).
-   - `0x0A`..`0x0D`, `0x14`: Rename slot (`16` UTF-8 bytes), Set Dynamics (`view`, `loudness`, `limiter | (fir << 1)`), Set Power (`auto_mute_sec`, `oled_dim_sec`), Factory Reset slot (`0x0D`), Chunked FIR float32 upload (`0x14`, `12` floats/packet, capped `256` @ `<=48 kHz` / `128` @ `96 kHz`).
+   - `0x0A`..`0x0E`, `0x14`: Rename slot (`16` UTF-8 bytes), Set Dynamics (`view`, `loudness`, `limiter | (fir << 1)`), Set Power (`auto_mute_sec`, `oled_dim_sec`), Factory Reset slot (`0x0D`), Set Harmonics (`0x0E`: flags, bass `0..100%`, exciter `0..100%`, bass `50..150 Hz`, exciter `1500..8000 Hz`), Chunked FIR float32 upload (`0x14`, `12` floats/packet, `256` taps max @ `44.1 / 48 kHz`).
 
 3. **Enforce User-Friendly UI Copy & OLED Fit**
-   - Use accessible audiophile terms (`ASCENDANCE Hi-Fi` / `ASCENDANCE Hi-Fi DAC`, `Slot 1..8`, `Preview Live`, `Save to DAC`, `FIR Impulse Filter`, `Equal Loudness (ISO 226)`, `OLED Screen View`, `Auto-Mute on Silence`, `OLED Auto-Dim & Sleep`) in user-facing UI strings across OLED ([main/oled_display.c](../../../main/oled_display.c)), WebHID (`src/components/*.jsx`), and Android (`ui/screens/*.kt`).
+   - Use accessible audiophile terms (`ASCENDANCE Hi-Fi` / `ASCENDANCE Hi-Fi DAC`, `Slot 1..8`, `Preview Live`, `Save to DAC`, `Bass Enhancer`, `Harmonic Exciter`, `FIR Impulse Filter`, `Equal Loudness (ISO 226)`, `OLED Screen View`, `Auto-Mute on Silence`, `OLED Auto-Dim & Sleep`) in user-facing UI strings across OLED ([main/oled_display.c](../../../main/oled_display.c)), WebHID (`src/components/*.jsx`), and Android (`ui/screens/*.kt`).
    - Check SSD1306 128×64 menu/hint strings do not exceed 20 characters at `x = 2` (`len * 6 + 2 <= 128`).
 
 4. **Update Unit Tests & Protocol Docs Together**

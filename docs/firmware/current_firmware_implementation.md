@@ -13,7 +13,7 @@ The firmware implements **Schematic 2 (`docs/schematics/DSP+DAC+SCREEN.svg`)**, 
  ┌─────────────────────────────────────────────────────────────────────────────┐
  │ Native USB OTG (GPIO 19: D-, GPIO 20: D+)                                   │
  │   • Interface 0: USB Audio Control (AC) - Mute & Volume Entity              │
- │   • Interface 1: USB Audio Streaming (AS) - 24-bit / 44.1, 48 & 96 kHz PCM  │
+ │   • Interface 1: USB Audio Streaming (AS) - 24-bit / 44.1 & 48.0 kHz PCM    │
  │   • Interface 2: Vendor HID (WebHID) - 64-Byte Raw Report Bi-Directional    │
  ├─────────────────────────────────────────────────────────────────────────────┤
  │ Core 0 (System & Control Subsystems)                                        │
@@ -27,7 +27,7 @@ The firmware implements **Schematic 2 (`docs/schematics/DSP+DAC+SCREEN.svg`)**, 
  │     `fir_taps_l`/`r`, `harm_cfg_v1`, CRC32 + `memcmp` delta verification)   │
  ├─────────────────────────────────────────────────────────────────────────────┤
  │ Core 1 (Real-Time Audio DSP Subsystem)                                      │
- │   • Safe Zero-Pop Sample-Rate Reclocking (44.1 / 48.0 / 96.0 kHz)           │
+ │   • Safe Zero-Pop Sample-Rate Reclocking (44.1 / 48.0 kHz)                  │
  │   • 1-to-10 Band Dual-Mono L/R PEQ (8 RBJ Biquad Topologies) + Loudness     │
  │   • `esp-dsp` FIR Impulse Filter + PSRAM-LUT Bass & Tube/Tape/Air Exciter   │
  │   • 2x2 Channel Matrix & 3-Level Chu Moy Headphone Crossfeed                │
@@ -53,9 +53,9 @@ The firmware implements **Schematic 2 (`docs/schematics/DSP+DAC+SCREEN.svg`)**, 
 
 | GPIO Pin | Function | Peripheral | Electrical Characteristics |
 | :---: | :--- | :--- | :--- |
-| **GPIO 4** | I2S Word Select (`WS` / `LCK`) | Master I2S0 | CMOS Output (44.1 / 48 / 96 kHz frame clock) |
+| **GPIO 4** | I2S Word Select (`WS` / `LCK`) | Master I2S0 | CMOS Output (44.1 / 48.0 kHz frame clock) |
 | **GPIO 5** | I2S Serial Data Out (`DOUT` / `DIN`) | Master I2S0 | CMOS Output (24-bit audio MSB-aligned in 32-bit stereo slots) |
-| **GPIO 6** | I2S Continuous Bit Clock (`BCK`) | Master I2S0 | CMOS Output (`64 * fs`: 2.8224 / 3.072 / 6.144 MHz) |
+| **GPIO 6** | I2S Continuous Bit Clock (`BCK`) | Master I2S0 | CMOS Output (`64 * fs`: 2.8224 / 3.072 MHz) |
 | **GPIO 7** | DAC Hardware Soft Mute (`XMT` / `MUTE`) | GPIO Output | Active-LOW (0 = Mute, 1 = Unmute); Pulled down on boot |
 | **GPIO 8** | I2C Serial Data (`SDA`) | I2C Master 0 | Open-drain, 400 kHz fast mode, external 4.7 kΩ pull-up |
 | **GPIO 9** | I2C Serial Clock (`SCL`) | I2C Master 0 | Open-drain, 400 kHz fast mode, external 4.7 kΩ pull-up |
@@ -104,8 +104,8 @@ To ensure driverless plug-and-play operation across Windows 10/11, macOS, Linux,
    - Alternate Setting 0: Zero-bandwidth idle interface (9 bytes, 0 endpoints).
    - Alternate Setting 1: Active audio streaming interface (9 bytes, 1 endpoint).
    - Class-Specific AS Header (7 bytes, PCM format, 1 frame delay, links Terminal `0x01`).
-   - Type I Format Descriptor (`TUD_AUDIO10_DESC_TYPE_I_FORMAT_LEN(3)` = 17 bytes: 2 channels, 3 bytes/sample, 24-bit resolution, tri-rate `44100, 48000, 96000` Hz).
-   - Standard Isochronous Audio Data Endpoint (9 bytes, `EP 0x01 OUT`, Adaptive, `588` max bytes, 1 ms polling).
+   - Type I Format Descriptor (`TUD_AUDIO10_DESC_TYPE_I_FORMAT_LEN(2)` = 14 bytes: 2 channels, 3 bytes/sample, 24-bit resolution, dual-rate `44100, 48000` Hz).
+   - Standard Isochronous Audio Data Endpoint (9 bytes, `EP 0x01 OUT`, Adaptive, `294` max bytes fitting ESP32-S3's `1,024`-byte DWC2 FIFO, 1 ms polling).
    - Class-Specific Isochronous Endpoint (7 bytes, sampling frequency control).
 5. **Interface 2: Vendor HID (WebHID):**
    - Standard HID Interface Descriptor (32 bytes, `EP 0x02 OUT`, `EP 0x82 IN`, 64-byte packets, 1 ms polling).
@@ -121,7 +121,7 @@ To ensure driverless plug-and-play operation across Windows 10/11, macOS, Linux,
 * **`tud_audio_set_req_entity_cb`:** Synchronizes host volume slider and mute status directly into the firmware pipeline:
   - Host mute triggers `audio_pipeline_set_mute()` (hardware pin GPIO 7).
   - Host volume slider converts dB (`<= -80 dB` $\rightarrow$ `0%`, otherwise `round(100 * 10^(dB / 40))`) to align with the firmware's quadratic perceptual volume taper (`(volume / 100)^2`).
-* **`tud_audio_get_req_ep_cb` / `tud_audio_set_req_ep_cb`:** Reports active UAC sample rate (`44100`, `48000`, or `96000` Hz), rejects other rates on `SET_CUR`, and stages `s_pending_sample_rate` under `s_uac_rate_lock` for safe Core 1 zero-pop reclocking (`audio_pipeline_set_sample_rate()` + `peq_dsp_set_sample_rate()` + `oled_display_set_sample_rate()`).
+* **`tud_audio_get_req_ep_cb` / `tud_audio_set_req_ep_cb`:** Reports active UAC sample rate (`44100` or `48000` Hz), rejects other rates on `SET_CUR`, and stages `s_pending_sample_rate` under `s_uac_rate_lock` for safe Core 1 zero-pop reclocking (`audio_pipeline_set_sample_rate()` + `peq_dsp_set_sample_rate()` + `oled_display_set_sample_rate()`).
 * **`tud_hid_get_report_cb` / `tud_hid_set_report_cb` / `webhid_peq_send_band_report_ch`:** Supports `0x01..0x0E`, `0x13`, and `0x14` (GetProfile / `0xFE` matrix / `0xFD` extended state, SetBandLive, SetPreampLive, SelectProfile, SaveToPreset, ResetToPreset, SetBandCount, SetAbBypass, SetDualMono, RenameSlot, SetDynamics, SetPowerCfg, FactoryResetSlot, SetHarmonics, SetMixer, UploadFirChunk).
   - **`WEBHID_CMD_SET_HARMONICS` (`0x0E`):** 64-byte `0x4551` LE report carrying `flags` in `byte 3` (`bit 0 = bass_enabled`, `bit 1 = exciter_enabled`, `bits 2..3 = exciter_mode` where `0=Tube`, `1=Tape`, `2=Air`), `bass_amount_pct` (`0..100`) in `byte 4`, `exciter_amount_pct` (`0..100`) in `byte 5`, `bass_freq_hz` (`uint16` LE, `50..150`) in `bytes 6..7`, and `exciter_freq_hz` (`uint16` LE, `1500..8000`) in `bytes 10..11` (golden vector: `51 45 0E 07 3C 23 5A 00 00 00 94 11` followed by 52 zero bytes). Firmware clamps all values, calls `peq_dsp_set_harmonics_cfg()`, and broadcasts an updated `0xFD` report.
   - **`0xFD` Extended-State Telemetry Mirror (`reserved[20..27]`):** Preserves `reserved[0..19]` (slot name + FIR tap metadata) and mirrors harmonics state into `reserved[20]` (`flags`), `reserved[21]` (`bass_amount_pct`), `reserved[22]` (`exciter_amount_pct`), `reserved[23..24]` (`bass_freq_hz` LE), `reserved[25..26]` (`exciter_freq_hz` LE), and `reserved[27] = 0`. Both HID `0x0E` updates and OLED menu harmonics toggles broadcast `0xFD` via `webhid_peq_notify_state_changed()`.
@@ -320,24 +320,24 @@ Location: [`tools/webhid_tuner/`](../../tools/webhid_tuner/) (`src/`, `public/ma
 
 * **Build Tool:** ESP-IDF v6.1 (`idf.py build`).
 * **Automated CI & Releases:**
-  - [`.github/workflows/build.yml`](../../.github/workflows/build.yml): Builds ESP32-S3 firmware inside `espressif/idf:v6.1`, generates `ASCENDANCE_merged.bin`, reports `idf.py size` in the job summary, uploads firmware artifacts, runs Vitest & Vite single-file build (`dist/index.html`) for `tools/webhid_tuner`, validates the compiled script via `node --check`, and uploads `ascendance-webhid-tuner`.
+  - [`.github/workflows/build.yml`](../../.github/workflows/build.yml): Builds ESP32-S3 firmware inside `espressif/idf:v6.1`, generates `ASCENDANCE_merged.bin`, reports `idf.py size` / `size-components` / `size-files` in the job summary, uploads firmware + `ASCENDANCE.map` artifacts, runs Vitest & Vite single-file build (`dist/index.html`) for `tools/webhid_tuner`, validates the compiled script via `node --check`, and uploads `ascendance-webhid-tuner`.
   - [`.github/workflows/release.yml`](../../.github/workflows/release.yml): Builds tagged firmware images, Android APK, and single-file WebHID tuner HTML (`dist/index.html`) into a GitHub Release on `v*` tags.
 * **Compiler Flags (`CMakeLists.txt`) & RTOS Config (`sdkconfig.defaults`):**
   ```cmake
   CFG_TUD_AUDIO=1
-  CFG_TUD_AUDIO_FUNC_1_SAMPLE_RATE=96000
+  CFG_TUD_AUDIO_FUNC_1_SAMPLE_RATE=48000
   CFG_TUD_AUDIO_ENABLE_EP_OUT=1
   CFG_TUD_AUDIO_ENABLE_EP_IN=0
-  CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ_MAX=588
+  CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ_MAX=294
   CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ=16384
   CFG_TUD_AUDIO_FUNC_1_N_BYTES_PER_SAMPLE_RX=3
   CFG_TUD_AUDIO_FUNC_1_RESOLUTION_RX=24
   CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX=2
   ```
-  - `sdkconfig.defaults`: Enables `CONFIG_FREERTOS_HZ=1000` (1 ms OS ticks) alongside 16 MB Flash and 8 MB Octal PSRAM.
-  - `audio_dsp_task` (Core 1, Priority 10): 8,192 B stack with static BSS PCM buffers (`s_usb_raw_buf`, `s_synth_s16_buf`, `s_dsp_s32_buf`).
+  - `sdkconfig.defaults`: Enables `CONFIG_FREERTOS_HZ=1000` (1 ms OS ticks) and `CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192` alongside 16 MB Flash and 8 MB Octal PSRAM.
+  - `audio_dsp_task` (Core 1, Priority 10): 8,192 B stack with static BSS PCM buffers (`s_usb_raw_buf`, `s_synth_s16_buf`, `s_dsp_s32_buf`); `ctrl_disp` (Core 0, Priority 4): 6,144 B stack; `audio_pipeline.c` startup chime/write buffers reside in static BSS.
 * **Flash Command (over COM UART port `/dev/ttyACM0`):**
   ```bash
   idf.py -p /dev/ttyACM0 flash monitor
   ```
-* **Verification Status:** WebHID math, Equalizer APO round-trip, 64-byte packet builders, `manifest.json`, `sw.js`, and extracted `index.html` JS syntax verified locally; ESP-IDF v6.1 firmware compilation awaits CI push or local `idf.py build`.
+* **Verification Status:** Verified on `v0.3.1` across ESP-IDF v6.1 CI (`build.yml`), Android Companion CI (`android.yml`), local WebHID Vitest + `esbuild` single-file bundle, and physical ESP32-S3 + PCM5102A + SSD1306 hardware.

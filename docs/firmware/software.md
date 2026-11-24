@@ -17,14 +17,14 @@ The firmware transforms the ESP32-S3 into a driverless, high-resolution **USB Au
  ┌─────────────────────────────────────────────────────────────────────────────┐
  │ Native USB OTG (GPIO 19: D-, GPIO 20: D+)                                   │
  │   • Interface 0: USB Audio Control (AC) - Feature Unit Mute & Volume        │
- │   • Interface 1: USB Audio Streaming (AS) - 24-bit / 44.1, 48 & 96 kHz PCM  │
+ │   • Interface 1: USB Audio Streaming (AS) - 24-bit / 44.1 & 48.0 kHz PCM    │
  │   • Interface 2: Vendor HID (WebHID) - 64-Byte Bidirectional Reports        │
  ├─────────────────────────────────────────────────────────────────────────────┤
  │ Core 0 (System, Control & Visual Subsystems)                                │
  │   • TinyUSB Device Stack Task (`tinyusb_task`, Priority 5, 16 KB SW FIFO)   │
  │   • Hardware PCNT Rotary Encoder (GPIO 15/16) + Push Switch (GPIO 17)       │
  │   • Dual Mode/Nav Pushbuttons (`SW6` GPIO 18, `SW8` GPIO 10)                │
- │   • Control Dispatcher Task (`ctrl_disp`, Priority 4)                       │
+ │   • Control Dispatcher Task (`ctrl_disp`, Priority 4, 6,144 B)              │
  │   • SSD1306 128x64 OLED Display Driver (I2C Master: SDA=8, SCL=9, Prio 2)  │
  │   • Onboard WS2812B aRGB LED Volume Loudness Driver (GPIO 48 via RMT)       │
  │   • Audio Source Arbiter State Machine & 4-Phase Mute Protocol              │
@@ -33,7 +33,7 @@ The firmware transforms the ESP32-S3 into a driverless, high-resolution **USB Au
  ├─────────────────────────────────────────────────────────────────────────────┤
  │ Core 1 (Hard Real-Time Audio DSP Subsystem)                                 │
  │   • High-Priority Audio DSP Task (`audio_dsp_task`, Priority 10, 8,192 B)   │
- │   • Safe Zero-Pop Sample-Rate Reclocking (44.1 / 48.0 / 96.0 kHz)           │
+ │   • Safe Zero-Pop Sample-Rate Reclocking (44.1 / 48.0 kHz)                  │
  │   • 1-to-10 Band Dual-Mono L/R PEQ (8 RBJ Biquad Topologies) + Loudness     │
  │   • `esp-dsp` FIR Impulse Filter + PSRAM-LUT Bass & Tube/Tape/Air Exciter   │
  │   • 2x2 Channel Matrix Mixer & 3-Level Chu Moy Headphone Crossfeed          │
@@ -104,7 +104,7 @@ chan_cfg.dma_desc_num  = 8;
 chan_cfg.dma_frame_num = 256; // 256 stereo frames (2,048 bytes @ 32-bit slots) per descriptor
 
 i2s_std_config_t std_cfg = {
-    .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate), // 44100 / 48000 / 96000 Hz
+    .clk_cfg  = I2S_STD_CLK_DEFAULT_CONFIG(sample_rate), // 44100 / 48000 Hz
     .slot_cfg = I2S_STD_PHILIPS_SLOT_DEFAULT_CONFIG(I2S_DATA_BIT_WIDTH_32BIT, I2S_SLOT_MODE_STEREO),
     .gpio_cfg = {
         .mclk = I2S_GPIO_UNUSED,
@@ -115,8 +115,8 @@ i2s_std_config_t std_cfg = {
     },
 };
 ```
-* **DMA FIFO Sizing:** 8 descriptors $\times$ 256 stereo frames $\times$ 8 bytes (32-bit L/R slots) = 16,384 bytes total (~42.7 ms at 48 kHz, ~21.3 ms at 96 kHz), absorbing FreeRTOS scheduling and NVS commit jitter.
-* **Master Clock Generation:** The Texas Instruments **GY-PCM5102A** DAC generates its internal high-frequency Master Clock (MCLK) via an integrated PLL directly from the Bit Clock (BCK: `2.8224 / 3.072 / 6.144 MHz`). `mclk` is designated `I2S_GPIO_UNUSED`, conserving GPIOs.
+* **DMA FIFO Sizing:** 8 descriptors $\times$ 256 stereo frames $\times$ 8 bytes (32-bit L/R slots) = 16,384 bytes total (~42.7 ms at 48 kHz, ~46.4 ms at 44.1 kHz), absorbing FreeRTOS scheduling and NVS commit jitter.
+* **Master Clock Generation:** The Texas Instruments **GY-PCM5102A** DAC generates its internal high-frequency Master Clock (MCLK) via an integrated PLL directly from the Bit Clock (BCK: `2.8224 / 3.072 MHz`). `mclk` is designated `I2S_GPIO_UNUSED`, conserving GPIOs.
 * **Hardware Soft-Mute (`GPIO 7`):** Actively asserted LOW during boot, frequency switches, and source transitions to ensure zero audible pops or clicks.
 * **Perceptual Volume Taper:** Software master volume uses a quadratic perceptual curve (`norm * norm`) aligned with the UAC 1.0 dB Feature Unit mapping and applied inside Core 1's 32-bit DSP output stage (`audio_pipeline_get_volume_factor()`).
 
@@ -124,7 +124,7 @@ i2s_std_config_t std_cfg = {
 Operating over Native USB Full-Speed (12.0 Mbps) on GPIO 19 (`D-`) and GPIO 20 (`D+`):
 * **Interface Association Descriptor (IAD):** Groups Interface 0 (Audio Control) and Interface 1 (Audio Streaming) as a compliant UAC 1.0 speaker.
 * **Interface 0 (Audio Control):** Feature Unit provides Master Volume and Mute control integrated directly into the OS volume mixer.
-* **Interface 1 (Audio Streaming):** Isochronous OUT endpoint (`0x01`, `588` max bytes, 1 ms polling, `16,384`-byte TinyUSB SW FIFO) delivering **24-bit PCM** at **44.1 kHz, 48.0 kHz, or 96.0 kHz**.
+* **Interface 1 (Audio Streaming):** Isochronous OUT endpoint (`0x01`, `294` max bytes fitting ESP32-S3's `1,024`-byte DWC2 hardware FIFO, 1 ms polling, `16,384`-byte TinyUSB SW FIFO) delivering **24-bit PCM** at **44.1 kHz or 48.0 kHz**.
 * **Interface 2 (Vendor WebHID):** Interrupt endpoints (`EP 0x02 OUT`, `EP 0x82 IN`, 64 bytes) for bidirectional communication with the WebHID browser tuner and Android Companion app (Dual-Mono L/R PEQ, A/B Toggle, 2×2 Matrix/Crossfeed, Dynamics, FIR Impulse Filter, Bass Enhancer & Harmonic Exciter via `0x0E`, and `0xFD` `reserved[20..27]` / Sample Rate Telemetry).
 
 ### 2.3 Hardware Pulse Counter (PCNT) Driver ([`main/controls.c`](../../main/controls.c))
