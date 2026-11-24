@@ -1,6 +1,7 @@
 package com.ascendance.dac.ui
 
 import android.app.Application
+import android.content.Context
 import android.content.Intent
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -15,6 +16,7 @@ import com.ascendance.dac.model.LocalPreset
 import com.ascendance.dac.model.MixerConfig
 import com.ascendance.dac.model.PeqBand
 import com.ascendance.dac.model.PeqChannel
+import com.ascendance.dac.ui.theme.AppThemeMode
 import com.ascendance.dac.usb.AscendanceUsbTransport
 import com.ascendance.dac.usb.HidIncomingMessage
 import com.ascendance.dac.usb.PeqPacketCodec
@@ -54,7 +56,9 @@ data class DacUiState(
     val localPresets: List<LocalPreset> = emptyList(),
     val logs: List<String> = emptyList(),
     val statusBanner: String? = null,
-    val pendingOfflineDraft: Boolean = false
+    val pendingOfflineDraft: Boolean = false,
+    val hasUnsavedChanges: Boolean = false,
+    val themeMode: AppThemeMode = AppThemeMode.DARK_STUDIO
 ) {
     val activeBands: List<PeqBand>
         get() = if (selectedChannel == PeqChannel.RIGHT && !linkedStereo) rightBands else leftBands
@@ -62,10 +66,13 @@ data class DacUiState(
 
 class DacViewModel(application: Application) : AndroidViewModel(application) {
 
+    private val prefs = application.getSharedPreferences("ascendance_prefs", Context.MODE_PRIVATE)
     private val transport = AscendanceUsbTransport(application)
     private val presetRepo = LocalPresetRepository(application)
 
-    private val _uiState = MutableStateFlow(DacUiState())
+    private val _uiState = MutableStateFlow(
+        DacUiState(themeMode = AppThemeMode.fromKey(prefs.getString("theme_mode", null)))
+    )
     val uiState: StateFlow<DacUiState> = _uiState.asStateFlow()
 
     private val bandThrottleJobs = HashMap<Pair<PeqChannel, Int>, Job>()
@@ -112,6 +119,11 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun setThemeMode(mode: AppThemeMode) {
+        prefs.edit().putString("theme_mode", mode.key).apply()
+        _uiState.update { it.copy(themeMode = mode) }
+    }
+
     fun handleNewIntent(intent: Intent?) {
         transport.handleNewIntent(intent)
     }
@@ -141,6 +153,7 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
         if (!_uiState.value.usbInfo.connected) return
         viewModelScope.launch {
             suppressOfflineDraftTracking = true
+            _uiState.update { it.copy(hasUnsavedChanges = false) }
             appendLog("Syncing EQ, Matrix & Dynamics from DAC...")
             for (b in 0 until DspDefaults.MAX_BANDS) {
                 transport.sendPacket(PeqPacketCodec.buildGetBand(b, PeqChannel.LEFT))
@@ -191,6 +204,7 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
                 _uiState.update {
                     it.copy(
                         pendingOfflineDraft = false,
+                        hasUnsavedChanges = false,
                         statusBanner = "Applied profile & saved to DAC."
                     )
                 }
@@ -353,7 +367,8 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 preampDb = clamped,
-                pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft
+                pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft,
+                hasUnsavedChanges = true
             )
         }
         preampThrottleJob?.cancel()
@@ -377,15 +392,18 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
                 cur.linkedStereo -> cur.copy(
                     leftBands = nextList,
                     rightBands = nextList,
-                    pendingOfflineDraft = draftFlag
+                    pendingOfflineDraft = draftFlag,
+                    hasUnsavedChanges = true
                 )
                 ch == PeqChannel.RIGHT -> cur.copy(
                     rightBands = nextList,
-                    pendingOfflineDraft = draftFlag
+                    pendingOfflineDraft = draftFlag,
+                    hasUnsavedChanges = true
                 )
                 else -> cur.copy(
                     leftBands = nextList,
-                    pendingOfflineDraft = draftFlag
+                    pendingOfflineDraft = draftFlag,
+                    hasUnsavedChanges = true
                 )
             }
         }
@@ -420,17 +438,20 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
                     leftBands = newList,
                     rightBands = newList,
                     selectedBandIdx = newList.lastIndex,
-                    pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft
+                    pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft,
+                    hasUnsavedChanges = true
                 )
                 ch == PeqChannel.RIGHT -> it.copy(
                     rightBands = newList,
                     selectedBandIdx = newList.lastIndex,
-                    pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft
+                    pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft,
+                    hasUnsavedChanges = true
                 )
                 else -> it.copy(
                     leftBands = newList,
                     selectedBandIdx = newList.lastIndex,
-                    pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft
+                    pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft,
+                    hasUnsavedChanges = true
                 )
             }
         }
@@ -453,17 +474,20 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
                     leftBands = newList,
                     rightBands = newList,
                     selectedBandIdx = nextSel,
-                    pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft
+                    pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft,
+                    hasUnsavedChanges = true
                 )
                 ch == PeqChannel.RIGHT -> it.copy(
                     rightBands = newList,
                     selectedBandIdx = nextSel,
-                    pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft
+                    pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft,
+                    hasUnsavedChanges = true
                 )
                 else -> it.copy(
                     leftBands = newList,
                     selectedBandIdx = nextSel,
-                    pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft
+                    pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft,
+                    hasUnsavedChanges = true
                 )
             }
         }
@@ -479,7 +503,8 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 mixer = safe,
-                pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft
+                pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft,
+                hasUnsavedChanges = true
             )
         }
         mixerThrottleJob?.cancel()
@@ -491,7 +516,7 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectHardwarePreset(slot: Int) {
         val safeSlot = slot.coerceIn(0, DspDefaults.USER_SLOT_COUNT - 1)
-        _uiState.update { it.copy(activePresetSlot = safeSlot) }
+        _uiState.update { it.copy(activePresetSlot = safeSlot, hasUnsavedChanges = false) }
         if (_uiState.value.usbInfo.connected) {
             transport.sendPacket(PeqPacketCodec.buildSelectProfile(safeSlot))
             viewModelScope.launch {
@@ -530,6 +555,7 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
                 rightBands = bands,
                 selectedBandIdx = 0,
                 pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft,
+                hasUnsavedChanges = true,
                 statusBanner = "Loaded '$curveKey' template into Slot ${it.activePresetSlot + 1}."
             )
         }
@@ -575,6 +601,7 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
                 leftBands = flatBands,
                 rightBands = flatBands,
                 selectedBandIdx = 0,
+                hasUnsavedChanges = false,
                 statusBanner = "Reset Slot ${slot + 1} to Reference Flat."
             )
         }
@@ -588,7 +615,8 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 dynamics = config,
-                pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft
+                pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft,
+                hasUnsavedChanges = true
             )
         }
         if (_uiState.value.usbInfo.connected) {
@@ -601,7 +629,8 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 harmonics = safe,
-                pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft
+                pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft,
+                hasUnsavedChanges = true
             )
         }
         harmonicsThrottleJob?.cancel()
@@ -617,7 +646,10 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
         val safeMute = autoMuteSec.coerceIn(0, 3600)
         val safeDim = oledDimSec.coerceIn(0, 3600)
         _uiState.update {
-            it.copy(dynamics = it.dynamics.copy(autoMuteSec = safeMute, oledDimSec = safeDim))
+            it.copy(
+                dynamics = it.dynamics.copy(autoMuteSec = safeMute, oledDimSec = safeDim),
+                hasUnsavedChanges = true
+            )
         }
         if (_uiState.value.usbInfo.connected) {
             transport.sendPacket(PeqPacketCodec.buildSetPowerConfig(safeMute, safeDim))
@@ -743,6 +775,7 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
         _uiState.update {
             it.copy(
                 pendingOfflineDraft = false,
+                hasUnsavedChanges = false,
                 statusBanner = "Saved Slot ${it.activePresetSlot + 1} & Dynamics to DAC!"
             )
         }
@@ -755,9 +788,9 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
         val ch = state.selectedChannel
         _uiState.update {
             when {
-                it.linkedStereo -> it.copy(leftBands = fresh, rightBands = fresh, preampDb = 0.0f)
-                ch == PeqChannel.RIGHT -> it.copy(rightBands = fresh, preampDb = 0.0f)
-                else -> it.copy(leftBands = fresh, preampDb = 0.0f)
+                it.linkedStereo -> it.copy(leftBands = fresh, rightBands = fresh, preampDb = 0.0f, hasUnsavedChanges = true)
+                ch == PeqChannel.RIGHT -> it.copy(rightBands = fresh, preampDb = 0.0f, hasUnsavedChanges = true)
+                else -> it.copy(leftBands = fresh, preampDb = 0.0f, hasUnsavedChanges = true)
             }
         }
         fresh.forEachIndexed { idx, b -> transport.sendPacket(PeqPacketCodec.buildSetBandLive(idx, ch, b)) }

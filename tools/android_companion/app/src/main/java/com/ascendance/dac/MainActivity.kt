@@ -9,6 +9,8 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,8 +23,12 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.ArrowDropDown
+import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.CompareArrows
 import androidx.compose.material.icons.outlined.Equalizer
 import androidx.compose.material.icons.outlined.FolderOpen
@@ -30,9 +36,12 @@ import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Usb
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBar
 import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.Scaffold
@@ -47,29 +56,36 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.ascendance.dac.model.DspDefaults
 import com.ascendance.dac.ui.DacViewModel
 import com.ascendance.dac.ui.components.PeqCanvasCard
 import com.ascendance.dac.ui.screens.DeviceTab
 import com.ascendance.dac.ui.screens.EqTab
-import com.ascendance.dac.ui.screens.MatrixTab
 import com.ascendance.dac.ui.screens.PresetsTab
+import com.ascendance.dac.ui.screens.ToneTab
 import com.ascendance.dac.ui.theme.AscendanceColors
 import com.ascendance.dac.ui.theme.AscendanceTheme
 import java.util.Locale
 
 private enum class CompanionTab(val label: String, val icon: ImageVector) {
     EQ("EQ", Icons.Outlined.Equalizer),
-    MATRIX("Matrix", Icons.Outlined.Tune),
+    TONE("Tone", Icons.Outlined.Tune),
     PRESETS("Presets", Icons.Outlined.FolderOpen),
     DEVICE("Device", Icons.Outlined.Usb)
 }
@@ -84,7 +100,8 @@ class MainActivity : ComponentActivity() {
         viewModel.handleNewIntent(intent)
 
         setContent {
-            AscendanceTheme {
+            val state by viewModel.uiState.collectAsState()
+            AscendanceTheme(themeMode = state.themeMode) {
                 AscendanceCompanionApp(viewModel = viewModel)
             }
         }
@@ -101,8 +118,11 @@ class MainActivity : ComponentActivity() {
 @Composable
 private fun AscendanceCompanionApp(viewModel: DacViewModel) {
     val state by viewModel.uiState.collectAsState()
-    val context = androidx.compose.ui.platform.LocalContext.current
+    val context = LocalContext.current
+    val haptics = LocalHapticFeedback.current
+    val colors = MaterialTheme.colorScheme
     var selectedTabIdx by rememberSaveable { mutableIntStateOf(0) }
+    var showSlotMenu by remember { mutableStateOf(false) }
     val snackbarHostState = remember { SnackbarHostState() }
 
     val importLauncher = rememberLauncherForActivityResult(
@@ -157,65 +177,165 @@ private fun AscendanceCompanionApp(viewModel: DacViewModel) {
         }
     }
 
+    val currentTab = CompanionTab.entries[selectedTabIdx]
+    val activeSlotLabel = DspDefaults.formatSlotLabel(
+        state.activePresetSlot,
+        state.slotNames.getOrNull(state.activePresetSlot)
+    )
+
     Scaffold(
-        containerColor = AscendanceColors.BgDark,
+        containerColor = colors.background,
         snackbarHost = { SnackbarHost(snackbarHostState) },
         topBar = {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = AscendanceColors.BgDark,
-                    titleContentColor = AscendanceColors.TextPrimary
+                    containerColor = colors.background,
+                    titleContentColor = colors.onBackground
                 ),
                 title = {
-                    Column {
-                        Text("ASCENDANCE DAC", fontSize = 16.sp, fontWeight = FontWeight.Bold)
-                        val sub = if (state.usbInfo.connected) {
-                            String.format(Locale.US, "USB HID • %.1fk 24b", state.sampleRateHz / 1000.0f)
-                        } else {
-                            "Offline Demo Mode"
-                        }
+                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(
-                            text = sub,
-                            fontSize = 11.sp,
-                            fontFamily = FontFamily.Monospace,
-                            color = if (state.usbInfo.connected) AscendanceColors.AccentGreen else AscendanceColors.TextSecondary
+                            text = "ASCENDANCE DAC",
+                            fontSize = 15.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            val sub = if (state.usbInfo.connected) {
+                                String.format(Locale.US, "%.1fk 24b", state.sampleRateHz / 1000.0f)
+                            } else {
+                                "Offline"
+                            }
+                            Text(
+                                text = sub,
+                                fontSize = 11.sp,
+                                fontFamily = FontFamily.Monospace,
+                                color = if (state.usbInfo.connected) AscendanceColors.AccentGreen else colors.onSurfaceVariant,
+                                maxLines = 1
+                            )
+                            Box {
+                                Surface(
+                                    color = colors.surfaceVariant,
+                                    shape = RoundedCornerShape(6.dp),
+                                    border = BorderStroke(1.dp, colors.outline),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable { showSlotMenu = true }
+                                ) {
+                                    Row(
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Text(
+                                            text = activeSlotLabel,
+                                            fontSize = 10.sp,
+                                            fontFamily = FontFamily.Monospace,
+                                            color = colors.primary,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.widthIn(max = 96.dp)
+                                        )
+                                        Icon(
+                                            imageVector = Icons.Outlined.ArrowDropDown,
+                                            contentDescription = "Switch Preset Slot",
+                                            tint = colors.primary,
+                                            modifier = Modifier.size(14.dp)
+                                        )
+                                    }
+                                }
+                                DropdownMenu(
+                                    expanded = showSlotMenu,
+                                    onDismissRequest = { showSlotMenu = false }
+                                ) {
+                                    (0 until DspDefaults.USER_SLOT_COUNT).forEach { slot ->
+                                        val lbl = DspDefaults.formatSlotLabel(slot, state.slotNames.getOrNull(slot))
+                                        val isCurrent = slot == state.activePresetSlot
+                                        DropdownMenuItem(
+                                            text = {
+                                                Text(
+                                                    text = "Slot ${slot + 1} • $lbl",
+                                                    fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
+                                                    color = if (isCurrent) colors.primary else colors.onSurface
+                                                )
+                                            },
+                                            trailingIcon = if (isCurrent) {
+                                                {
+                                                    Icon(
+                                                        imageVector = Icons.Outlined.Check,
+                                                        contentDescription = null,
+                                                        tint = colors.primary,
+                                                        modifier = Modifier.size(16.dp)
+                                                    )
+                                                }
+                                            } else null,
+                                            onClick = {
+                                                showSlotMenu = false
+                                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                                viewModel.selectHardwarePreset(slot)
+                                            }
+                                        )
+                                    }
+                                }
+                            }
+                        }
                     }
                 },
                 actions = {
                     // Instant A/B Bypass chip
                     FilledTonalButton(
-                        onClick = { viewModel.toggleAbBypass() },
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            viewModel.toggleAbBypass()
+                        },
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                         colors = ButtonDefaults.filledTonalButtonColors(
-                            containerColor = if (state.abBypass) AscendanceColors.AccentAmber else AscendanceColors.SurfaceElevated,
-                            contentColor = if (state.abBypass) AscendanceColors.BgDark else AscendanceColors.TextPrimary
+                            containerColor = if (state.abBypass) AscendanceColors.AccentAmber else colors.surfaceVariant,
+                            contentColor = if (state.abBypass) colors.background else colors.onSurface
                         ),
                         modifier = Modifier.height(32.dp)
                     ) {
                         Icon(Icons.Outlined.CompareArrows, contentDescription = null, modifier = Modifier.size(14.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text(if (state.abBypass) "A/B: BYP" else "A/B", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        Text(if (state.abBypass) "BYP" else "A/B", fontSize = 11.sp, fontWeight = FontWeight.Bold)
                     }
                     Spacer(Modifier.width(6.dp))
-                    // Quick Connect or Save to DAC
+                    // Quick Connect or Save to DAC (with amber unsaved-changes badge)
                     if (state.usbInfo.connected) {
+                        val saveAccent = if (state.hasUnsavedChanges) AscendanceColors.AccentAmber else AscendanceColors.AccentGreen
                         FilledTonalButton(
-                            onClick = { viewModel.saveToHardwareNvs() },
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                viewModel.saveToHardwareNvs()
+                            },
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                             colors = ButtonDefaults.filledTonalButtonColors(
-                                containerColor = AscendanceColors.AccentGreen.copy(alpha = 0.22f),
-                                contentColor = AscendanceColors.AccentGreen
+                                containerColor = saveAccent.copy(alpha = 0.22f),
+                                contentColor = saveAccent
                             ),
                             modifier = Modifier.height(32.dp)
                         ) {
                             Icon(Icons.Outlined.Save, contentDescription = null, modifier = Modifier.size(14.dp))
                             Spacer(Modifier.width(4.dp))
                             Text("Save", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                            if (state.hasUnsavedChanges) {
+                                Spacer(Modifier.width(4.dp))
+                                Box(
+                                    modifier = Modifier
+                                        .size(6.dp)
+                                        .background(AscendanceColors.AccentAmber, CircleShape)
+                                )
+                            }
                         }
                     } else {
                         FilledTonalButton(
-                            onClick = { viewModel.connectUsb() },
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                viewModel.connectUsb()
+                            },
                             contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
                             colors = ButtonDefaults.filledTonalButtonColors(
                                 containerColor = AscendanceColors.AccentBlue.copy(alpha = 0.22f),
@@ -233,7 +353,7 @@ private fun AscendanceCompanionApp(viewModel: DacViewModel) {
             )
         },
         bottomBar = {
-            NavigationBar(containerColor = AscendanceColors.CardDark) {
+            NavigationBar(containerColor = colors.surface) {
                 CompanionTab.entries.forEachIndexed { idx, tab ->
                     NavigationBarItem(
                         selected = selectedTabIdx == idx,
@@ -252,25 +372,27 @@ private fun AscendanceCompanionApp(viewModel: DacViewModel) {
                 .padding(horizontal = 12.dp, vertical = 6.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp)
         ) {
-            // Sticky Frequency Response / Phase / Group Delay Canvas
-            PeqCanvasCard(
-                bands = state.activeBands,
-                selectedBandIdx = state.selectedBandIdx,
-                preampDb = state.preampDb,
-                abBypass = state.abBypass,
-                sampleRateHz = state.sampleRateHz,
-                showPhase = state.showPhase,
-                showGroupDelay = state.showGroupDelay,
-                onSelectBand = viewModel::selectBand,
-                onUpdateBand = { idx, band -> viewModel.updateBand(idx, band) },
-                onAddBandAt = { freq, gain -> viewModel.addBand(freq, gain) },
-                onTogglePhase = viewModel::togglePhase,
-                onToggleGroupDelay = viewModel::toggleGroupDelay
-            )
+            // Frequency Response / Phase / Group Delay Canvas (EQ tab only)
+            if (currentTab == CompanionTab.EQ) {
+                PeqCanvasCard(
+                    bands = state.activeBands,
+                    selectedBandIdx = state.selectedBandIdx,
+                    preampDb = state.preampDb,
+                    abBypass = state.abBypass,
+                    sampleRateHz = state.sampleRateHz,
+                    showPhase = state.showPhase,
+                    showGroupDelay = state.showGroupDelay,
+                    onSelectBand = viewModel::selectBand,
+                    onUpdateBand = { idx, band -> viewModel.updateBand(idx, band) },
+                    onAddBandAt = { freq, gain -> viewModel.addBand(freq, gain) },
+                    onTogglePhase = viewModel::togglePhase,
+                    onToggleGroupDelay = viewModel::toggleGroupDelay
+                )
+            }
 
             // Active Tab Content
             Box(modifier = Modifier.weight(1f)) {
-                when (CompanionTab.entries[selectedTabIdx]) {
+                when (currentTab) {
                     CompanionTab.EQ -> EqTab(
                         state = state,
                         onSelectChannel = viewModel::selectEditorChannel,
@@ -280,12 +402,14 @@ private fun AscendanceCompanionApp(viewModel: DacViewModel) {
                         onRemoveBand = viewModel::removeBand,
                         onUpdatePreamp = viewModel::updatePreamp
                     )
-                    CompanionTab.MATRIX -> MatrixTab(
+                    CompanionTab.TONE -> ToneTab(
                         mixer = state.mixer,
                         dynamics = state.dynamics,
+                        harmonics = state.harmonics,
                         sampleRateHz = state.sampleRateHz,
                         onUpdateMixer = viewModel::updateMixer,
                         onUpdateDynamics = viewModel::updateDynamics,
+                        onUpdateHarmonics = viewModel::updateHarmonics,
                         onUploadFirFile = { firLauncher.launch(arrayOf("text/plain", "text/csv", "audio/wav", "audio/x-wav", "*/*")) },
                         onClearFir = viewModel::clearFirImpulse
                     )
@@ -314,7 +438,8 @@ private fun AscendanceCompanionApp(viewModel: DacViewModel) {
                         onPushDraftAndSave = { viewModel.pushCurrentStateToHardware(commitToNvs = true) },
                         onToggleOfflineDemo = viewModel::setOfflineDemoMode,
                         onSetOledView = { v -> viewModel.updateDynamics(state.dynamics.copy(oledView = v)) },
-                        onSetPowerConfig = viewModel::updatePowerConfig
+                        onSetPowerConfig = viewModel::updatePowerConfig,
+                        onSelectThemeMode = viewModel::setThemeMode
                     )
                 }
             }

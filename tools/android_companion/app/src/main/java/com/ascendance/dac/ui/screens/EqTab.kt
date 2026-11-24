@@ -30,6 +30,7 @@ import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.SegmentedButton
@@ -48,6 +49,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -77,6 +80,8 @@ fun EqTab(
     onUpdatePreamp: (Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val colors = MaterialTheme.colorScheme
+    val haptics = LocalHapticFeedback.current
     val bands = state.activeBands
     val selIdx = state.selectedBandIdx.coerceIn(0, (bands.size - 1).coerceAtLeast(0))
     val selBand = bands.getOrNull(selIdx)
@@ -93,9 +98,9 @@ fun EqTab(
     ) {
         // Dual-Mono Channel Selector + Band Count
         Surface(
-            color = AscendanceColors.CardDark,
+            color = colors.surface,
             shape = RoundedCornerShape(12.dp),
-            border = BorderStroke(1.dp, AscendanceColors.BorderDark)
+            border = BorderStroke(1.dp, colors.outline)
         ) {
             Column(modifier = Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(
@@ -105,13 +110,13 @@ fun EqTab(
                 ) {
                     Text(
                         text = "Channel Mode",
-                        color = AscendanceColors.TextSecondary,
+                        color = colors.onSurfaceVariant,
                         fontSize = 12.sp,
                         fontWeight = FontWeight.Medium
                     )
                     Text(
                         text = "${bands.size} / ${DspDefaults.MAX_BANDS} Bands",
-                        color = AscendanceColors.AccentBlue,
+                        color = colors.primary,
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace
                     )
@@ -122,7 +127,10 @@ fun EqTab(
                         val isSelected = if (state.linkedStereo) ch == PeqChannel.LINKED else state.selectedChannel == ch
                         SegmentedButton(
                             selected = isSelected,
-                            onClick = { onSelectChannel(ch) },
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onSelectChannel(ch)
+                            },
                             shape = SegmentedButtonDefaults.itemShape(index = idx, count = PeqChannel.entries.size),
                             label = { Text(ch.label, fontSize = 12.sp) }
                         )
@@ -135,10 +143,10 @@ fun EqTab(
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Text("Preamp Headroom", color = AscendanceColors.TextSecondary, fontSize = 12.sp)
+                    Text("Preamp Headroom", color = colors.onSurfaceVariant, fontSize = 12.sp)
                     Text(
                         text = String.format(Locale.US, "%+.1f dB", state.preampDb),
-                        color = AscendanceColors.TextPrimary,
+                        color = colors.onSurface,
                         fontSize = 12.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.SemiBold
@@ -172,7 +180,10 @@ fun EqTab(
                 val isSel = idx == selIdx
                 FilterChip(
                     selected = isSel,
-                    onClick = { onSelectBand(idx) },
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onSelectBand(idx)
+                    },
                     label = {
                         Text(
                             text = "B${idx + 1} ${band.freq}Hz",
@@ -187,7 +198,7 @@ fun EqTab(
                     border = FilterChipDefaults.filterChipBorder(
                         enabled = true,
                         selected = isSel,
-                        borderColor = AscendanceColors.BorderDark,
+                        borderColor = colors.outline,
                         selectedBorderColor = bandColor
                     )
                 )
@@ -195,7 +206,10 @@ fun EqTab(
 
             if (bands.size < DspDefaults.MAX_BANDS) {
                 FilledTonalButton(
-                    onClick = onAddBand,
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onAddBand()
+                    },
                     contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
                     modifier = Modifier.height(32.dp)
                 ) {
@@ -210,7 +224,7 @@ fun EqTab(
         if (selBand != null) {
             val bandColor = Color(DspDefaults.BAND_COLORS_ARGB[selIdx % DspDefaults.BAND_COLORS_ARGB.size])
             Surface(
-                color = AscendanceColors.CardDark,
+                color = colors.surface,
                 shape = RoundedCornerShape(12.dp),
                 border = BorderStroke(1.dp, bandColor.copy(alpha = 0.45f))
             ) {
@@ -424,6 +438,7 @@ private fun ParameterRow(
     onDecrement: () -> Unit,
     onIncrement: () -> Unit
 ) {
+    val colors = MaterialTheme.colorScheme
     Row(
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -431,7 +446,7 @@ private fun ParameterRow(
     ) {
         Text(
             text = label,
-            color = if (enabled) AscendanceColors.TextSecondary else AscendanceColors.TextSecondary.copy(alpha = 0.45f),
+            color = if (enabled) colors.onSurfaceVariant else colors.onSurfaceVariant.copy(alpha = 0.45f),
             fontSize = 12.sp
         )
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -442,7 +457,7 @@ private fun ParameterRow(
                 onClick = onTapValue,
                 enabled = enabled,
                 contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                colors = ButtonDefaults.textButtonColors(contentColor = AscendanceColors.TextPrimary)
+                colors = ButtonDefaults.textButtonColors(contentColor = colors.onSurface)
             ) {
                 Text(valueText, fontFamily = FontFamily.Monospace, fontSize = 13.sp, fontWeight = FontWeight.SemiBold)
             }

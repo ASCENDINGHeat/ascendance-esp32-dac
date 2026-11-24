@@ -106,11 +106,13 @@ fun PeqCanvasCard(
 
     val textMeasurer = rememberTextMeasurer()
 
+    val colors = MaterialTheme.colorScheme
+
     Surface(
         modifier = modifier.fillMaxWidth(),
-        color = AscendanceColors.CardDark,
+        color = colors.surface,
         shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(1.dp, AscendanceColors.BorderDark)
+        border = BorderStroke(1.dp, colors.outline)
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
             Row(
@@ -135,7 +137,7 @@ fun PeqCanvasCard(
                     text = if (abBypass) "A/B BYPASS ACTIVE (PREAMP ${
                         String.format(Locale.US, "%+.1fdB", preampDb)
                     })" else readout,
-                    color = if (abBypass) AscendanceColors.AccentAmber else AscendanceColors.AccentBlue,
+                    color = if (abBypass) AscendanceColors.AccentAmber else colors.primary,
                     fontSize = 12.sp,
                     fontFamily = FontFamily.Monospace,
                     fontWeight = FontWeight.SemiBold
@@ -169,7 +171,7 @@ fun PeqCanvasCard(
                 modifier = Modifier
                     .fillMaxWidth()
                     .height(175.dp)
-                    .background(Color(0xFF0A0D12), RoundedCornerShape(10.dp))
+                    .background(colors.background, RoundedCornerShape(10.dp))
             ) {
                 Canvas(
                     modifier = Modifier

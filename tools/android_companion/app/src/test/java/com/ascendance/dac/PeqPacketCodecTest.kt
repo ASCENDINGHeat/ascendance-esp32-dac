@@ -11,6 +11,7 @@ import com.ascendance.dac.model.MixerMode
 import com.ascendance.dac.model.OledViewMode
 import com.ascendance.dac.model.PeqBand
 import com.ascendance.dac.model.PeqChannel
+import com.ascendance.dac.ui.theme.AppThemeMode
 import com.ascendance.dac.usb.HidIncomingMessage
 import com.ascendance.dac.usb.PeqPacketCodec
 import org.junit.Assert.assertArrayEquals
@@ -314,5 +315,14 @@ class PeqPacketCodecTest {
         assertEquals(ExciterMode.AIR.code, clampedMsg.harmonics.exciterMode)
         assertEquals(100, clampedMsg.harmonics.exciterAmountPct)
         assertEquals(8000, clampedMsg.harmonics.exciterFreqHz)
+    }
+
+    @Test
+    fun resolvesPersistedAppThemeModeKeys() {
+        assertEquals(AppThemeMode.DARK_STUDIO, AppThemeMode.fromKey("dark_studio"))
+        assertEquals(AppThemeMode.AMOLED_BLACK, AppThemeMode.fromKey("amoled_black"))
+        assertEquals(AppThemeMode.DYNAMIC_YOU, AppThemeMode.fromKey("dynamic_you"))
+        assertEquals(AppThemeMode.DARK_STUDIO, AppThemeMode.fromKey(null))
+        assertEquals(AppThemeMode.DARK_STUDIO, AppThemeMode.fromKey("unknown_key"))
     }
 }
