@@ -285,10 +285,13 @@ static float s_la_rel_coeff  = 0.0002f;
 static bool  s_limiter_rt_en = true;
 static int   s_rt_sr         = 48000;
 
-/* Core 1 Soft Wake Ramp & Silence Tracker */
-static float    s_wake_ramp_gain  = 1.0f;
-static float    s_wake_ramp_step  = 0.02f;
-static uint64_t s_silence_samples = 0;
+/* Core 1 Soft Wake Ramp, Per-Sample Volume Smoother, TPDF Dither & Silence Tracker */
+static float    s_wake_ramp_gain   = 1.0f;
+static float    s_wake_ramp_step   = 0.02f;
+static float    s_vol_smooth       = -1.0f;    // Negative sentinel snaps to initial volume on first block
+static float    s_vol_smooth_coeff = 0.00208f; // ~10 ms 1-pole time constant @ 48 kHz
+static uint32_t s_dither_rng       = 0x13579BDFUL;
+static uint64_t s_silence_samples  = 0;
 
 /* Telemetry VU & Silence snapshot (written on Core 1, read on Core 0 under s_peq_lock) */
 static float    s_vu_peak_lin_l   = 0.0f;
@@ -337,12 +340,36 @@ static inline float soft_clip_s24(float val, bool *clipped)
     return (val >= 0.0f) ? compressed : -compressed;
 }
 
+/* Fast Core 1 xorshift32 TPDF dither: triangular PDF in [-1.0, +1.0) LSB at bit 24 */
+static inline float tpdf_dither_lsb(void)
+{
+    uint32_t x = s_dither_rng;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    uint32_t r1 = x;
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    s_dither_rng = x;
+    return ((float)(int32_t)r1 - (float)(int32_t)x) * (1.0f / 4294967296.0f);
+}
+
 static inline int32_t clamp_s24_to_s32(float val)
 {
     if (!isfinite(val)) return 0;
     if (val > 8388607.0f) return 0x7FFFFF00L;
     if (val < -8388608.0f) return (int32_t)0x80000000UL;
     return (int32_t)((uint32_t)(int32_t)lrintf(val) << 8);
+}
+
+static inline int32_t clamp_s24_to_s32_dither(float val, bool apply_dither)
+{
+    if (!isfinite(val)) return 0;
+    if (apply_dither) {
+        val += tpdf_dither_lsb();
+    }
+    return clamp_s24_to_s32(val);
 }
 
 static inline void set_passthrough_coeffs(biquad_state_t *out_bq)
@@ -377,93 +404,100 @@ static void calculate_biquad(const peq_band_param_t *band, float sample_rate, bi
         return;
     }
 
-    float f0 = band->freq_hz;
-    if (f0 < 10.0f) f0 = 10.0f;
-    if (f0 >= sample_rate * 0.49f) f0 = sample_rate * 0.49f;
+    double f0 = (double)band->freq_hz;
+    double sr = (double)sample_rate;
+    if (f0 < 10.0) f0 = 10.0;
+    if (f0 >= sr * 0.49) f0 = sr * 0.49;
 
-    float q = band->q_factor;
-    if (q < 0.05f) q = 0.05f;
-    if (q > 10.0f) q = 10.0f;
+    double q = (double)band->q_factor;
+    if (q < 0.05) q = 0.05;
+    if (q > 10.0) q = 10.0;
 
-    float gain_db = band->gain_db;
-    if (gain_db < -24.0f) gain_db = -24.0f;
-    if (gain_db > 12.0f) gain_db = 12.0f;
+    double gain_db = (double)band->gain_db;
+    if (gain_db < -24.0) gain_db = -24.0;
+    if (gain_db > 12.0) gain_db = 12.0;
 
-    float omega = 2.0f * (float)M_PI * f0 / sample_rate;
-    float cos_w = cosf(omega);
-    float sin_w = sinf(omega);
-    float alpha = sin_w / (2.0f * q);
-    float A = powf(10.0f, gain_db / 40.0f);
+    double omega = 2.0 * M_PI * f0 / sr;
+    double cos_w = cos(omega);
+    double sin_w = sin(omega);
+    double alpha = sin_w / (2.0 * q);
+    double A = pow(10.0, gain_db / 40.0);
 
-    float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f;
-    float a0 = 1.0f, a1 = 0.0f, a2 = 0.0f;
+    double b0 = 1.0, b1 = 0.0, b2 = 0.0;
+    double a0 = 1.0, a1 = 0.0, a2 = 0.0;
 
     switch (band->type) {
     case PEQ_FILTER_PEAKING:
-        b0 = 1.0f + alpha * A;
-        b1 = -2.0f * cos_w;
-        b2 = 1.0f - alpha * A;
-        a0 = 1.0f + alpha / A;
-        a1 = -2.0f * cos_w;
-        a2 = 1.0f - alpha / A;
+        b0 = 1.0 + alpha * A;
+        b1 = -2.0 * cos_w;
+        b2 = 1.0 - alpha * A;
+        a0 = 1.0 + alpha / A;
+        a1 = -2.0 * cos_w;
+        a2 = 1.0 - alpha / A;
         break;
 
     case PEQ_FILTER_LOW_SHELF: {
-        float sqrt_A = sqrtf(A);
-        b0 = A * ((A + 1.0f) - (A - 1.0f) * cos_w + 2.0f * sqrt_A * alpha);
-        b1 = 2.0f * A * ((A - 1.0f) - (A + 1.0f) * cos_w);
-        b2 = A * ((A + 1.0f) - (A - 1.0f) * cos_w - 2.0f * sqrt_A * alpha);
-        a0 = (A + 1.0f) + (A - 1.0f) * cos_w + 2.0f * sqrt_A * alpha;
-        a1 = -2.0f * ((A - 1.0f) + (A + 1.0f) * cos_w);
-        a2 = (A + 1.0f) + (A - 1.0f) * cos_w - 2.0f * sqrt_A * alpha;
+        double sqrt_A = sqrt(A);
+        b0 = A * ((A + 1.0) - (A - 1.0) * cos_w + 2.0 * sqrt_A * alpha);
+        b1 = 2.0 * A * ((A - 1.0) - (A + 1.0) * cos_w);
+        b2 = A * ((A + 1.0) - (A - 1.0) * cos_w - 2.0 * sqrt_A * alpha);
+        a0 = (A + 1.0) + (A - 1.0) * cos_w + 2.0 * sqrt_A * alpha;
+        a1 = -2.0 * ((A - 1.0) + (A + 1.0) * cos_w);
+        a2 = (A + 1.0) + (A - 1.0) * cos_w - 2.0 * sqrt_A * alpha;
         break;
     }
 
     case PEQ_FILTER_HIGH_SHELF: {
-        float sqrt_A = sqrtf(A);
-        b0 = A * ((A + 1.0f) + (A - 1.0f) * cos_w + 2.0f * sqrt_A * alpha);
-        b1 = -2.0f * A * ((A - 1.0f) + (A + 1.0f) * cos_w);
-        b2 = A * ((A + 1.0f) + (A - 1.0f) * cos_w - 2.0f * sqrt_A * alpha);
-        a0 = (A + 1.0f) - (A - 1.0f) * cos_w + 2.0f * sqrt_A * alpha;
-        a1 = 2.0f * ((A - 1.0f) - (A + 1.0f) * cos_w);
-        a2 = (A + 1.0f) - (A - 1.0f) * cos_w - 2.0f * sqrt_A * alpha;
+        double sqrt_A = sqrt(A);
+        b0 = A * ((A + 1.0) + (A - 1.0) * cos_w + 2.0 * sqrt_A * alpha);
+        b1 = -2.0 * A * ((A - 1.0) + (A + 1.0) * cos_w);
+        b2 = A * ((A + 1.0) + (A - 1.0) * cos_w - 2.0 * sqrt_A * alpha);
+        a0 = (A + 1.0) - (A - 1.0) * cos_w + 2.0 * sqrt_A * alpha;
+        a1 = 2.0 * ((A - 1.0) - (A + 1.0) * cos_w);
+        a2 = (A + 1.0) - (A - 1.0) * cos_w - 2.0 * sqrt_A * alpha;
         break;
     }
 
-    case PEQ_FILTER_HIGH_PASS:
-        b0 = (1.0f + cos_w) * 0.5f;
-        b1 = -(1.0f + cos_w);
-        b2 = (1.0f + cos_w) * 0.5f;
-        a0 = 1.0f + alpha;
-        a1 = -2.0f * cos_w;
-        a2 = 1.0f - alpha;
+    case PEQ_FILTER_HIGH_PASS: {
+        double cos_half = cos(0.5 * omega);
+        double one_plus_cos = 2.0 * cos_half * cos_half;
+        b0 = 0.5 * one_plus_cos;
+        b1 = -one_plus_cos;
+        b2 = 0.5 * one_plus_cos;
+        a0 = 1.0 + alpha;
+        a1 = -2.0 * cos_w;
+        a2 = 1.0 - alpha;
         break;
+    }
 
-    case PEQ_FILTER_LOW_PASS:
-        b0 = (1.0f - cos_w) * 0.5f;
-        b1 = 1.0f - cos_w;
-        b2 = (1.0f - cos_w) * 0.5f;
-        a0 = 1.0f + alpha;
-        a1 = -2.0f * cos_w;
-        a2 = 1.0f - alpha;
+    case PEQ_FILTER_LOW_PASS: {
+        double sin_half = sin(0.5 * omega);
+        double one_minus_cos = 2.0 * sin_half * sin_half;
+        b0 = 0.5 * one_minus_cos;
+        b1 = one_minus_cos;
+        b2 = 0.5 * one_minus_cos;
+        a0 = 1.0 + alpha;
+        a1 = -2.0 * cos_w;
+        a2 = 1.0 - alpha;
         break;
+    }
 
     case PEQ_FILTER_NOTCH:
-        b0 = 1.0f;
-        b1 = -2.0f * cos_w;
-        b2 = 1.0f;
-        a0 = 1.0f + alpha;
-        a1 = -2.0f * cos_w;
-        a2 = 1.0f - alpha;
+        b0 = 1.0;
+        b1 = -2.0 * cos_w;
+        b2 = 1.0;
+        a0 = 1.0 + alpha;
+        a1 = -2.0 * cos_w;
+        a2 = 1.0 - alpha;
         break;
 
     case PEQ_FILTER_BAND_PASS:
         b0 = alpha;
-        b1 = 0.0f;
+        b1 = 0.0;
         b2 = -alpha;
-        a0 = 1.0f + alpha;
-        a1 = -2.0f * cos_w;
-        a2 = 1.0f - alpha;
+        a0 = 1.0 + alpha;
+        a1 = -2.0 * cos_w;
+        a2 = 1.0 - alpha;
         break;
 
     default:
@@ -471,16 +505,16 @@ static void calculate_biquad(const peq_band_param_t *band, float sample_rate, bi
         return;
     }
 
-    if (!isfinite(a0) || fabsf(a0) < 1e-12f) {
+    if (!isfinite(a0) || fabs(a0) < 1e-12) {
         set_passthrough_coeffs(out_bq);
         return;
     }
 
-    float nb0 = b0 / a0;
-    float nb1 = b1 / a0;
-    float nb2 = b2 / a0;
-    float na1 = a1 / a0;
-    float na2 = a2 / a0;
+    float nb0 = (float)(b0 / a0);
+    float nb1 = (float)(b1 / a0);
+    float nb2 = (float)(b2 / a0);
+    float na1 = (float)(a1 / a0);
+    float na2 = (float)(a2 / a0);
 
     if (!isfinite(nb0) || !isfinite(nb1) || !isfinite(nb2) || !isfinite(na1) || !isfinite(na2)) {
         set_passthrough_coeffs(out_bq);
@@ -641,6 +675,15 @@ static void compute_mixer_rt(const peq_mixer_config_t *cfg, float sample_rate, m
     int delay_n = (int)lroundf(0.00027f * sr);
     if (delay_n < 1) delay_n = 1;
     if (delay_n >= CROSSFEED_MAX_DELAY) delay_n = CROSSFEED_MAX_DELAY - 1;
+
+    if (cf_en && cf_gain > 0.0f) {
+        // Compensate coherent low-frequency crossfeed sum (~-1.8 to -2.0 dB) so toggling Crossfeed stays loudness-neutral
+        float cf_norm = 1.0f / (1.0f + 0.5f * cf_gain);
+        m_ll *= cf_norm;
+        m_rl *= cf_norm;
+        m_lr *= cf_norm;
+        m_rr *= cf_norm;
+    }
 
     out->m_ll = m_ll;
     out->m_rl = m_rl;
@@ -1336,6 +1379,7 @@ static void configure_limiter_rt_for_sr(int sample_rate)
 
     s_la_att_coeff = 1.0f - expf(-1.0f / (0.0004f * (float)sample_rate));
     s_la_rel_coeff = 1.0f - expf(-1.0f / (0.1000f * (float)sample_rate));
+    s_vol_smooth_coeff = 1.0f - expf(-1.0f / (0.0100f * (float)sample_rate)); // 10 ms zipper-free volume ramp
     s_wake_ramp_step = 1.0f / (0.001f * (float)sample_rate);
     if (s_wake_ramp_step <= 0.0f) s_wake_ramp_step = 0.02f;
 }
@@ -2797,17 +2841,25 @@ void peq_dsp_process_interleaved_s24_to_s32(const uint8_t *src_s24_packed, int32
             ch_r_ptr = s_fir_out_r;
         }
 
-        /* Stage 3: Harmonics -> Mixer / Crossfeed -> Volume -> Lookahead Limiter -> 24-bit I2S Pack */
+        /* Stage 3: Harmonics -> Mixer / Crossfeed -> Smooth Volume -> Lookahead Limiter -> TPDF Dither -> 24-bit I2S Pack */
+        if (s_vol_smooth < 0.0f) {
+            s_vol_smooth = volume_factor;
+        }
         for (size_t i = 0; i < chunk; i++) {
             float hm_l, hm_r, mx_l, mx_r, fin_l, fin_r;
+            s_vol_smooth += s_vol_smooth_coeff * (volume_factor - s_vol_smooth);
+            if (fabsf(volume_factor - s_vol_smooth) < 1e-6f) {
+                s_vol_smooth = volume_factor;
+            }
+            float vol_cur = s_vol_smooth;
             process_harmonics_sample(ch_l_ptr[i], ch_r_ptr[i], 1.0f / FULLSCALE_S24_F, FULLSCALE_S24_F, &hm_l, &hm_r);
             process_mixer_sample(hm_l, hm_r, &mx_l, &mx_r);
-            apply_limiter_and_ramp(mx_l * volume_factor, mx_r * volume_factor,
+            apply_limiter_and_ramp(mx_l * vol_cur, mx_r * vol_cur,
                                    &fin_l, &fin_r, &blk_lim, &blk_clip);
 
             /* Meter pre-volume (post-DSP/mixer) level unless muted so VU stays lively at any knob position */
-            float ml = (volume_factor > 0.0f) ? mx_l : 0.0f;
-            float mr = (volume_factor > 0.0f) ? mx_r : 0.0f;
+            float ml = (vol_cur > 0.0f) ? mx_l : 0.0f;
+            float mr = (vol_cur > 0.0f) ? mx_r : 0.0f;
             float al = fabsf(ml);
             float ar = fabsf(mr);
             if (al > blk_pk_l) blk_pk_l = al;
@@ -2815,8 +2867,9 @@ void peq_dsp_process_interleaved_s24_to_s32(const uint8_t *src_s24_packed, int32
             blk_sq_l += ml * ml;
             blk_sq_r += mr * mr;
 
-            dst_s32[(pos + i) * 2]     = clamp_s24_to_s32(fin_l);
-            dst_s32[(pos + i) * 2 + 1] = clamp_s24_to_s32(fin_r);
+            bool dither_en = (vol_cur > 0.0f && (al > 1.0f || ar > 1.0f));
+            dst_s32[(pos + i) * 2]     = clamp_s24_to_s32_dither(fin_l, dither_en);
+            dst_s32[(pos + i) * 2 + 1] = clamp_s24_to_s32_dither(fin_r, dither_en);
         }
 
         pos += chunk;
@@ -2867,15 +2920,23 @@ void peq_dsp_process_interleaved_s16_to_s32(const int16_t *src_s16, int32_t *dst
             ch_r_ptr = s_fir_out_r;
         }
 
+        if (s_vol_smooth < 0.0f) {
+            s_vol_smooth = volume_factor;
+        }
         for (size_t i = 0; i < chunk; i++) {
             float hm_l, hm_r, mx_l, mx_r, fin_l, fin_r;
+            s_vol_smooth += s_vol_smooth_coeff * (volume_factor - s_vol_smooth);
+            if (fabsf(volume_factor - s_vol_smooth) < 1e-6f) {
+                s_vol_smooth = volume_factor;
+            }
+            float vol_cur = s_vol_smooth;
             process_harmonics_sample(ch_l_ptr[i], ch_r_ptr[i], 1.0f / FULLSCALE_S24_F, FULLSCALE_S24_F, &hm_l, &hm_r);
             process_mixer_sample(hm_l, hm_r, &mx_l, &mx_r);
-            apply_limiter_and_ramp(mx_l * volume_factor, mx_r * volume_factor,
+            apply_limiter_and_ramp(mx_l * vol_cur, mx_r * vol_cur,
                                    &fin_l, &fin_r, &blk_lim, &blk_clip);
 
-            float ml = (volume_factor > 0.0f) ? mx_l : 0.0f;
-            float mr = (volume_factor > 0.0f) ? mx_r : 0.0f;
+            float ml = (vol_cur > 0.0f) ? mx_l : 0.0f;
+            float mr = (vol_cur > 0.0f) ? mx_r : 0.0f;
             float al = fabsf(ml);
             float ar = fabsf(mr);
             if (al > blk_pk_l) blk_pk_l = al;
@@ -2883,8 +2944,9 @@ void peq_dsp_process_interleaved_s16_to_s32(const int16_t *src_s16, int32_t *dst
             blk_sq_l += ml * ml;
             blk_sq_r += mr * mr;
 
-            dst_s32[(pos + i) * 2]     = clamp_s24_to_s32(fin_l);
-            dst_s32[(pos + i) * 2 + 1] = clamp_s24_to_s32(fin_r);
+            bool dither_en = (vol_cur > 0.0f && (al > 1.0f || ar > 1.0f));
+            dst_s32[(pos + i) * 2]     = clamp_s24_to_s32_dither(fin_l, dither_en);
+            dst_s32[(pos + i) * 2 + 1] = clamp_s24_to_s32_dither(fin_r, dither_en);
         }
 
         pos += chunk;

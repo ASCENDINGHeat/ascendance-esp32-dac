@@ -9,22 +9,23 @@ Invariants preserved: `44.1 / 48 kHz` 24-bit Async UAC 1.0 (`860 B <= 1,024 B` D
 ## Phase 1 — Audible Polish & Headroom Protection *(Low CPU, High Impact)*
 
 - [ ] **1. Per-Sample Volume Smoother & Logarithmic dB Taper (`main/peq_dsp.c`, `main/audio_pipeline.c`)**
-  - Replace per-block (`~5.3 ms`) `volume_factor` stepping in `peq_dsp_process_interleaved_s24_to_s32()` with a 1-pole per-sample smoother (`~10 ms` time constant) to eliminate zipper noise during knob turns or OS volume drags.
-  - Add selectable volume taper: **Quadratic (Default)** vs. **Logarithmic dB (`-60..0 dB`)** for fine low-volume IEM control.
+  - [x] Replace per-block (`~5.3 ms`) `volume_factor` stepping in `peq_dsp_process_interleaved_s24_to_s32()` & `s16_to_s32()` with a 1-pole per-sample smoother (`10 ms` time constant) to eliminate zipper noise during knob turns or OS volume drags.
+  - [ ] Add selectable volume taper: **Quadratic (Default)** vs. **Logarithmic dB (`-60..0 dB`)** for fine low-volume IEM control.
 - [ ] **2. Auto-Preamp Headroom Guard (`main/peq_dsp.c`)**
   - Reuse `peq_dsp_eval_curve_db()` peak positive gain + active Bass Enhancer / Exciter mix headroom to automatically compute negative preamp compensation (`15 ms` crossfade), preventing `0 dBFS` tracks from slamming into the limiter when boosting EQ or harmonics.
-- [ ] **3. 24-Bit TPDF Dithering (`main/peq_dsp.c`)**
-  - Apply fast `xorshift32` Triangular Probability Density Function (TPDF) dither ($\pm 1\text{ LSB}$ at bit 24) immediately before `clamp_s24_to_s32()` to decorrelate quantization noise at low digital volumes.
+- [x] **3. 24-Bit TPDF Dithering (`main/peq_dsp.c`)**
+  - Apply fast `xorshift32` Triangular Probability Density Function (TPDF) dither ($\pm 1\text{ LSB}$ at bit 24) immediately before `clamp_s24_to_s32()` when signal is non-silent (preserving bit-exact digital zero for auto-mute) to decorrelate quantization noise at low digital volumes.
 
 ---
 
 ## Phase 2 — Filter Precision & Tonal Neutrality *(Low–Medium CPU)*
 
 - [ ] **4. Double-Precision Sub-Bass Biquads + ESP-DSP SIMD (`main/peq_dsp.c`)**
-  - Use `double` state accumulators for low-frequency biquad bands (`f0 < 120 Hz`) to eliminate single-precision quantization noise on narrow-$Q$ sub-bass filters at `48 kHz`.
-  - Evaluate `espressif/esp-dsp` PIE-accelerated `dsps_biquad_f32` for mid/high bands to maintain Core 1 CPU headroom.
+  - [x] Upgraded RBJ `calculate_biquad()` coefficient synthesis to `double` precision (zero Core 1 CPU overhead, eliminates low-frequency coefficient quantization).
+  - [ ] Optionally use `double` state accumulators for `f0 < 120 Hz` bands and evaluate `espressif/esp-dsp` PIE-accelerated `dsps_biquad_f32` for mid/high bands.
 - [ ] **5. Tonal-Neutral BS2B Headphone Crossfeed (`main/peq_dsp.c`)**
-  - Upgrade Chu Moy crossfeed with complementary high-shelf / low-pass BS2B summing (`Off`, `Chu Moy 700 Hz / 4.5 dB`, `Jan Meier 700 Hz / 6.0 dB`, `J. Meier 650 Hz / 9.5 dB`) so toggling Crossfeed keeps overall bass/mid tonal balance flat (`0 dB` net sum).
+  - [x] Added coherent low-frequency crossfeed makeup headroom normalization (`1 / (1 + 0.5 * cf_gain)`) in `compute_mixer_rt()` so toggling Crossfeed levels 1 & 2 stays loudness-neutral without boosting bass into the limiter.
+  - [ ] Expand to 4-level BS2B presets (`Off`, `Chu Moy 700 Hz / 4.5 dB`, `Jan Meier 700 Hz / 6.0 dB`, `J. Meier 650 Hz / 9.5 dB`) with full UI parity.
 - [ ] **6. Global Switchable Subsonic / DC Blocker (`18 Hz`) (`main/peq_dsp.c`)**
   - Add an optional 1st-order `18 Hz` HPF before the lookahead limiter so infrasonic rumble and residual DC offset never trigger false limiter gain reduction or waste headphone excursion.
 
