@@ -332,7 +332,7 @@ Location: [`tools/webhid_tuner/`](../../tools/webhid_tuner/) (`src/`, `public/ma
   CFG_TUD_AUDIO_ENABLE_EP_IN=0
   CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP=1
   CFG_TUD_AUDIO_FUNC_1_EP_OUT_SZ_MAX=294
-  CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ=4096
+  CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ=4704
   CFG_TUD_AUDIO_FUNC_1_N_BYTES_PER_SAMPLE_RX=3
   CFG_TUD_AUDIO_FUNC_1_RESOLUTION_RX=24
   CFG_TUD_AUDIO_FUNC_1_N_CHANNELS_RX=2
@@ -343,4 +343,4 @@ Location: [`tools/webhid_tuner/`](../../tools/webhid_tuner/) (`src/`, `public/ma
   ```bash
   idf.py -p /dev/ttyACM0 flash monitor
   ```
-* **Verification Status:** Verified on `v0.4.0` across ESP-IDF v6.1 CI (`build.yml`), Android Companion CI (`android.yml`), local WebHID Vitest + `esbuild` single-file bundle, and physical ESP32-S3 + PCM5102A + SSD1306 hardware.
+* **Verification Status:** Verified on `v0.4.1` across ESP-IDF v6.1 CI (`build.yml`), Android Companion CI (`android.yml`), local WebHID Vitest + `esbuild` single-file bundle, and physical ESP32-S3 + PCM5102A + SSD1306 hardware.

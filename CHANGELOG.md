@@ -2,6 +2,12 @@
 
 All notable changes to **Project ASCENDANCE** are documented in this file.
 
+## [v0.4.1] — 2026-11-26
+
+### Fixed & Improved (ESP32-S3 Firmware)
+- **24-Bit Stereo PCM Byte-Shift Crackling (`SW_BUF_SZ` Alignment + Resync Guard):** Changed `CFG_TUD_AUDIO_FUNC_1_EP_OUT_SW_BUF_SZ` from `4096` (`4096 % 6 = 4`) to `4704` (`16 × 294 B` = `784 × 6 B`) in `CMakeLists.txt`, and added a `< 6`-byte remainder discard guard in `tud_audio_rx_done_isr()` (`main/webhid_peq.c`). Prevents partial FIFO overruns during live parameter changes from leaving orphaned bytes that permanently shift 24-bit frame alignment into persistent `> 0 dBFS` crackling.
+- **I2S-DMA-Coupled PI + EMA 10.14 Async Feedback:** Registered IRAM-safe I2S TX DMA `on_sent` / `on_send_q_ovf` telemetry callbacks (`audio_pipeline_get_dma_sync()`) in `main/audio_pipeline.c`, and upgraded `webhid_update_async_feedback()` in `main/webhid_peq.c` from P-only to a DMA-gated **Proportional-Integral (PI) + EMA low-pass filtered** 10.14 feedback controller (`alpha = 1/16`, anti-windup $\pm 0.25\text{ sample/ms}$, hard clamp $\pm 1.0\text{ sample/ms}$) to cancel static ESP32-S3 XTAL + I2S divider ppm drift without burst ripple.
+
 ## [v0.4.0] — 2026-11-26
 
 ### Added & Optimized (ESP32-S3 Firmware)
