@@ -2,7 +2,12 @@
 
 All notable changes to **Project ASCENDANCE** are documented in this file.
 
-## [v0.4.0] — Unreleased
+## [v0.4.0] — 2026-11-26
+
+### Added & Optimized (ESP32-S3 Firmware)
+- **Asynchronous UAC 1.0 Feedback (`EP 0x81 IN`, 10.14 Fixed-Point):** Switched `EP 0x01 OUT` from Adaptive to Asynchronous (`TUSB_ISO_EP_ATT_ASYNCHRONOUS | TUSB_ISO_EP_ATT_DATA`, `bSynchAddress = 0x81`) and added `TUD_AUDIO10_DESC_STD_AS_ISO_SYNC_EP(0x81, 0x03)` (`bRefresh = 3`, 8 ms cadence) with `CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP=1`. Keeps `wMaxPacketSize = 294 B` (`44.1 / 48 kHz` 24-bit) so total DWC2 FIFO stays at `860 B <= 1,024 B` (double-buffered RX + 3 TX FIFOs). Feedback is derived proportionally from SPSC ring buffer occupancy and hard-clamped to nominal $\pm 1.0\text{ sample/ms}$.
+- **Lock-Free C11 `_Atomic` SPSC Ring Buffer & Cross-Core Atomics:** Decoupled Core 1 (`audio_dsp_task`) from TinyUSB's `tu_fifo_t` by draining incoming ISO packets on Core 0 inside `tud_audio_rx_done_isr()` into a `DRAM_ATTR` `2,048`-frame (`12,288 B`) power-of-two SPSC ring buffer with `memory_order_acquire`/`memory_order_release` fences and generation-counter flush on stream stop/start/reclock. Converted shared cross-core USB and audio pipeline state flags in `main/webhid_peq.c` and `main/audio_pipeline.c` to C11 `_Atomic`.
+- **WebHID Bus Contention Fix:** Raised WebHID interrupt endpoint `bInterval` from `1` ms to `4` ms (`250 Hz`), eliminating unnecessary 1 kHz interrupt polling alongside the 1 ms isochronous audio stream while retaining 4× headroom over the 60 FPS WebHID UI.
 
 ### Changed (Android Companion App)
 - **4-Tab Navigation (`EQ` | `Tone` | `Presets` | `Device`):** Replaced the `Matrix` tab with a consolidated `Tone` tab (`ToneTab.kt`) grouping **Bass Enhancer & Harmonic Exciter**, **Dynamics & Equal Loudness**, **Channel Matrix & Crossfeed** (with collapsible `Custom 2×2 Matrix`), and a collapsible **FIR Impulse Filter** card.

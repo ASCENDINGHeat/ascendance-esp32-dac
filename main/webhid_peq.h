@@ -63,7 +63,7 @@ typedef struct __attribute__((packed)) {
 
 
 /**
- * @brief Initialize TinyUSB stack with Composite UAC 1.0 (24-bit 44.1/48/96 kHz) + WebHID.
+ * @brief Initialize TinyUSB stack with Composite Async UAC 1.0 (24-bit 44.1/48 kHz) + WebHID.
  *
  * Configures the Native USB OTG peripheral on GPIO 19 (D-) and GPIO 20 (D+).
  * Runs the TinyUSB event processing task pinned to Core 0.

@@ -7,6 +7,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <math.h>
+#include <stdatomic.h>
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
@@ -17,12 +18,12 @@
 #define TAG "AUDIO_PIPELINE"
 
 static i2s_chan_handle_t s_tx_chan = NULL;
-static int s_current_sample_rate = 48000;
-static int s_master_volume = 80;       // Default master volume: 80%
-static bool s_is_muted = false;
+static _Atomic int s_current_sample_rate = 48000;
+static _Atomic int s_master_volume = 80;       // Default master volume: 80%
+static _Atomic bool s_is_muted = false;
 
 // Pre-calculated quadratic perceptual volume multiplier (0.0f to 1.0f)
-static float s_volume_factor = 0.64f;
+static _Atomic float s_volume_factor = 0.64f;
 
 static inline int16_t clamp_s16(float v)
 {
@@ -33,7 +34,7 @@ static inline int16_t clamp_s16(float v)
 
 void audio_pipeline_set_mute(bool mute)
 {
-    s_is_muted = mute;
+    atomic_store_explicit(&s_is_muted, mute, memory_order_release);
     // Active-LOW soft mute on PCM5102A:
     // 0 = Mute asserted (analog outputs decay to 0V)
     // 1 = Normal playback enabled
@@ -42,12 +43,12 @@ void audio_pipeline_set_mute(bool mute)
              BOARD_DAC_MUTE_PIN, mute ? "MUTED (LOW)" : "UNMUTED (HIGH)");
 
     // Update onboard WS2812B aRGB LED (displays soft Red alert when muted)
-    led_indicator_set_volume(s_master_volume, s_is_muted);
+    led_indicator_set_volume(atomic_load_explicit(&s_master_volume, memory_order_relaxed), mute);
 }
 
 bool audio_pipeline_is_muted(void)
 {
-    return s_is_muted;
+    return atomic_load_explicit(&s_is_muted, memory_order_acquire);
 }
 
 esp_err_t audio_pipeline_init(int sample_rate)
@@ -123,8 +124,8 @@ esp_err_t audio_pipeline_init(int sample_rate)
         return ret;
     }
 
-    s_current_sample_rate = sample_rate;
-    audio_pipeline_set_volume(s_master_volume);
+    atomic_store_explicit(&s_current_sample_rate, sample_rate, memory_order_release);
+    audio_pipeline_set_volume(atomic_load_explicit(&s_master_volume, memory_order_relaxed));
 
     // Release mute with 15ms settling time
     vTaskDelay(pdMS_TO_TICKS(15));
@@ -135,11 +136,12 @@ esp_err_t audio_pipeline_init(int sample_rate)
 
 void audio_pipeline_set_sample_rate(int new_rate)
 {
-    if (new_rate == s_current_sample_rate || new_rate <= 0 || s_tx_chan == NULL) {
+    int cur_sr = atomic_load_explicit(&s_current_sample_rate, memory_order_acquire);
+    if (new_rate == cur_sr || new_rate <= 0 || s_tx_chan == NULL) {
         return;
     }
 
-    ESP_LOGI(TAG, "Reconfiguring I2S sample rate: %d Hz -> %d Hz", s_current_sample_rate, new_rate);
+    ESP_LOGI(TAG, "Reconfiguring I2S sample rate: %d Hz -> %d Hz", cur_sr, new_rate);
 
     // Invariant 6: Must disable channel before clock reconfig
     i2s_channel_disable(s_tx_chan);
@@ -149,48 +151,50 @@ void audio_pipeline_set_sample_rate(int new_rate)
         ESP_LOGE(TAG, "Failed to reconfigure I2S clock to %d Hz: %s", new_rate, esp_err_to_name(ret));
     }
     i2s_channel_enable(s_tx_chan);
-    s_current_sample_rate = new_rate;
+    atomic_store_explicit(&s_current_sample_rate, new_rate, memory_order_release);
 }
 
 int audio_pipeline_get_sample_rate(void)
 {
-    return s_current_sample_rate;
+    return atomic_load_explicit(&s_current_sample_rate, memory_order_acquire);
 }
 
 void audio_pipeline_set_volume(int volume_percent)
 {
     if (volume_percent < 0) volume_percent = 0;
     if (volume_percent > 100) volume_percent = 100;
-    s_master_volume = volume_percent;
+    atomic_store_explicit(&s_master_volume, volume_percent, memory_order_release);
 
     // Smooth quadratic perceptual taper (0.0f at 0%, 0.25f / -12 dB at 50%, 1.0f at 100%)
-    float norm = (float)s_master_volume / 100.0f;
-    s_volume_factor = norm * norm;
-    ESP_LOGI(TAG, "Master volume set to %d%% (factor: %.2f)", s_master_volume, s_volume_factor);
+    float norm = (float)volume_percent / 100.0f;
+    float factor = norm * norm;
+    atomic_store_explicit(&s_volume_factor, factor, memory_order_release);
+    ESP_LOGI(TAG, "Master volume set to %d%% (factor: %.2f)", volume_percent, factor);
 
     // Update onboard WS2812B aRGB LED brightness and color
-    led_indicator_set_volume(s_master_volume, s_is_muted);
-    peq_dsp_notify_volume_pct(s_master_volume);
+    led_indicator_set_volume(volume_percent, atomic_load_explicit(&s_is_muted, memory_order_acquire));
+    peq_dsp_notify_volume_pct(volume_percent);
 }
 
 int audio_pipeline_get_volume(void)
 {
-    return s_master_volume;
+    return atomic_load_explicit(&s_master_volume, memory_order_acquire);
 }
 
 int audio_pipeline_adjust_volume(int delta)
 {
-    int new_vol = s_master_volume + delta;
+    int new_vol = atomic_load_explicit(&s_master_volume, memory_order_acquire) + delta;
     audio_pipeline_set_volume(new_vol);
-    return s_master_volume;
+    return atomic_load_explicit(&s_master_volume, memory_order_acquire);
 }
 
 float audio_pipeline_get_volume_factor(void)
 {
-    if (s_is_muted || s_master_volume <= 0) {
+    if (atomic_load_explicit(&s_is_muted, memory_order_acquire) ||
+        atomic_load_explicit(&s_master_volume, memory_order_acquire) <= 0) {
         return 0.0f;
     }
-    return s_volume_factor;
+    return atomic_load_explicit(&s_volume_factor, memory_order_acquire);
 }
 
 void audio_pipeline_write_s32(const int32_t *data, size_t size_bytes)
@@ -199,7 +203,8 @@ void audio_pipeline_write_s32(const int32_t *data, size_t size_bytes)
         return;
     }
 
-    if (s_is_muted || s_master_volume == 0) {
+    if (atomic_load_explicit(&s_is_muted, memory_order_acquire) ||
+        atomic_load_explicit(&s_master_volume, memory_order_acquire) == 0) {
         static const int32_t silence[256 * 2] = {0};
         size_t bytes_to_clear = size_bytes;
         size_t written = 0;
@@ -281,17 +286,19 @@ void audio_pipeline_play_tone(float freq_hz, int duration_ms, int sample_rate)
 void audio_pipeline_play_startup_chime(void)
 {
     ESP_LOGI(TAG, "Playing startup verification chime to verify PCM5102A DAC output...");
+    int sr = atomic_load_explicit(&s_current_sample_rate, memory_order_acquire);
     audio_pipeline_set_mute(false);
     led_indicator_set_rgb(0, 10, 20);
-    audio_pipeline_play_tone(523.25f, 150, s_current_sample_rate); // C5
+    audio_pipeline_play_tone(523.25f, 150, sr); // C5
     led_indicator_set_rgb(0, 25, 35);
-    audio_pipeline_play_tone(659.25f, 150, s_current_sample_rate); // E5
+    audio_pipeline_play_tone(659.25f, 150, sr); // E5
     led_indicator_set_rgb(0, 40, 50);
-    audio_pipeline_play_tone(783.99f, 150, s_current_sample_rate); // G5
+    audio_pipeline_play_tone(783.99f, 150, sr); // G5
     led_indicator_set_rgb(15, 60, 60);
-    audio_pipeline_play_tone(1046.50f, 350, s_current_sample_rate); // C6
+    audio_pipeline_play_tone(1046.50f, 350, sr); // C6
     vTaskDelay(pdMS_TO_TICKS(100)); // Allow analog charge dissipation
-    led_indicator_set_volume(s_master_volume, s_is_muted);
+    led_indicator_set_volume(atomic_load_explicit(&s_master_volume, memory_order_acquire),
+                             atomic_load_explicit(&s_is_muted, memory_order_acquire));
 }
 
 esp_err_t audio_pipeline_deinit(void)
@@ -305,6 +312,6 @@ esp_err_t audio_pipeline_deinit(void)
     i2s_channel_disable(s_tx_chan);
     esp_err_t ret = i2s_del_channel(s_tx_chan);
     s_tx_chan = NULL;
-    s_current_sample_rate = 0;
+    atomic_store_explicit(&s_current_sample_rate, 0, memory_order_release);
     return ret;
 }

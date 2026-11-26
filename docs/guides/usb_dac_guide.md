@@ -432,14 +432,14 @@ Future AI agents tasked with maintaining or extending this USB DAC stack should 
 
 - [x] **Step 1:** Add `espressif/esp_tinyusb: "^2.3.0"` to `main/idf_component.yml`.
 - [x] **Step 2:** Configure root `CMakeLists.txt` & `sdkconfig.defaults`:
-  - Enable `CFG_TUD_AUDIO=1`, `CFG_TUD_AUDIO_FUNC_1_SAMPLE_RATE=48000`, `EP_OUT_SZ_MAX=294` (fits ESP32-S3's `1,024`-byte shared DWC2 hardware FIFO), `EP_OUT_SW_BUF_SZ=16384`, `N_BYTES_PER_SAMPLE_RX=3`, `RESOLUTION_RX=24`, `CONFIG_FREERTOS_HZ=1000`, and `CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192`.
+  - Enable `CFG_TUD_AUDIO=1`, `CFG_TUD_AUDIO_FUNC_1_SAMPLE_RATE=48000`, `CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP=1`, `EP_OUT_SZ_MAX=294` (fits ESP32-S3's `1,024`-byte shared DWC2 hardware FIFO at `860 B` total), `EP_OUT_SW_BUF_SZ=4096` (drained on Core 0 into a `12,288 B` `DRAM_ATTR` C11 SPSC ring buffer), `N_BYTES_PER_SAMPLE_RX=3`, `RESOLUTION_RX=24`, `CONFIG_FREERTOS_HZ=1000`, and `CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192`.
   - Set USB Device Vendor ID (`0x303A`), Product ID (`0x4002`), and Device Strings (`"Ascension Audio ESP32-S3 Hi-Fi DSP DAC"`).
 - [x] **Step 3:** Implement the Composite USB descriptor:
   - 1 AC (Audio Control) Interface (with Volume and Mute feature units).
-  - 1 AS (Audio Streaming) Interface (24-bit stereo, `44.1 / 48.0 kHz` Adaptive Isochronous OUT, `294` max bytes).
-  - 1 HID Interface (64-byte Generic IN/OUT raw report descriptor for WebHID).
+  - 1 AS (Audio Streaming) Interface (24-bit stereo, `44.1 / 48.0 kHz` Asynchronous Isochronous OUT `EP 0x01`, `294` max bytes + `EP 0x81 IN` 3-byte 10.14 feedback endpoint, `bRefresh = 3`).
+  - 1 HID Interface (64-byte Generic IN/OUT raw report descriptor for WebHID on `EP 0x02 OUT` / `EP 0x82 IN`, `bInterval = 4` ms).
 - [x] **Step 4:** Implement TinyUSB Audio & HID callbacks:
-  - Audio: `tud_audio_set_itf_cb`, `tud_audio_set_req_entity_cb`, `tud_audio_get_req_entity_cb`, `tud_audio_set_req_ep_cb`, `tud_audio_get_req_ep_cb`.
+  - Audio: `tud_audio_rx_done_isr`, `tud_audio_feedback_params_cb`, `tud_audio_set_itf_cb`, `tud_audio_set_itf_close_ep_cb`, `tud_audio_set_req_entity_cb`, `tud_audio_get_req_entity_cb`, `tud_audio_set_req_ep_cb`, `tud_audio_get_req_ep_cb`.
   - HID: `tud_hid_set_report_cb`, `tud_hid_get_report_cb`, `tud_hid_descriptor_report_cb`.
 - [x] **Step 5:** Create the audio pipeline routing on Core 1:
   - In `AUDIO_SOURCE_STANDALONE`, check `webhid_peq_consume_pending_sample_rate()` for zero-pop reclocking, then stream 24-bit PCM from `webhid_peq_audio_read()` through `peq_dsp_process_interleaved_s24_to_s32()` into `audio_pipeline_write_s32()` (32-bit I2S slots).

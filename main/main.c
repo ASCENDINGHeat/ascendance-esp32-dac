@@ -61,7 +61,7 @@ static int32_t s_dsp_s32_buf[256 * 2]; // 256 stereo 32-bit MSB-aligned frames (
 
 static void audio_dsp_task(void *pvParameters)
 {
-    ESP_LOGI(TAG, "Audio DSP Task started on Core 1 (24-bit / 44.1-96 kHz).");
+    ESP_LOGI(TAG, "Audio DSP Task started on Core 1 (24-bit / 44.1-48 kHz).");
     const int buffer_pairs = 256;
 
     float phase = 0.0f;
@@ -150,7 +150,7 @@ static void audio_dsp_task(void *pvParameters)
                 }
             }
 
-            // CONFIG_FREERTOS_HZ=1000 -> 1 ms sleep keeps 96 kHz / 24-bit FIFO responsive
+            // CONFIG_FREERTOS_HZ=1000 -> 1 ms sleep keeps 44.1/48 kHz / 24-bit SPSC ring buffer responsive
             vTaskDelay(pdMS_TO_TICKS(1));
             continue;
         }
