@@ -82,6 +82,8 @@ enum class ExciterMode(val code: Int, val label: String) {
 @Serializable
 data class DynamicsConfig(
     val limiterEnabled: Boolean = true,
+    val autoPreampEnabled: Boolean = false,
+    val autoPreampDb: Float = 0.0f,
     val loudnessMode: Int = LoudnessMode.OFF.code,
     val firEnabled: Boolean = false,
     val oledView: Int = OledViewMode.HUD.code,

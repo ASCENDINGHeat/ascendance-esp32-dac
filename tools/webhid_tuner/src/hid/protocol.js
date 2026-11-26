@@ -37,6 +37,8 @@ export const DEFAULT_MIXER = {
 
 export const DEFAULT_DYNAMICS = {
   limiterEnabled: true,
+  autoPreampEnabled: false,
+  autoPreampDb: 0.0,
   loudnessMode: 0,
   firEnabled: false,
   oledView: 0,
@@ -164,7 +166,10 @@ export function encodeDynamicsConfig(dynamics) {
   view.setUint8(2, CMD_SET_DYNAMICS);
   view.setUint8(3, clamp(dynamics.oledView, 0, 3));
   view.setUint8(4, clamp(dynamics.loudnessMode, 0, 2));
-  const flags = (dynamics.limiterEnabled ? 0x01 : 0x00) | (dynamics.firEnabled ? 0x02 : 0x00);
+  const flags =
+    (dynamics.limiterEnabled ? 0x01 : 0x00) |
+    (dynamics.firEnabled ? 0x02 : 0x00) |
+    (dynamics.autoPreampEnabled ? 0x04 : 0x00);
   view.setUint8(5, flags);
   return new Uint8Array(buffer);
 }
@@ -293,12 +298,17 @@ export function decodeInputReport(dataView) {
       };
     }
 
+    const autoPreampDb =
+      dataView.byteLength >= 40 ? -(clamp(dataView.getUint8(39), 0, 120) / 10.0) : 0.0;
+
     return {
       kind: 'extState',
       slotIdx,
       slotName,
       dynamics: {
         limiterEnabled: (dynFlags & 0x01) !== 0,
+        autoPreampEnabled: (dynFlags & 0x40) !== 0,
+        autoPreampDb,
         loudnessMode: (dynFlags >> 1) & 0x03,
         firEnabled: (dynFlags & 0x08) !== 0,
         oledView: (dynFlags >> 4) & 0x03,

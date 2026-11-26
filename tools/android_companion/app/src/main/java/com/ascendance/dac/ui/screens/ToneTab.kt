@@ -283,6 +283,42 @@ fun ToneTab(
                     )
                 }
 
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text("Auto-Preamp Headroom Guard", color = colors.onSurface, fontSize = 13.sp)
+                            if (dynamics.autoPreampEnabled) {
+                                Text(
+                                    text = String.format(Locale.US, "%.1f dB", dynamics.autoPreampDb),
+                                    color = AscendanceColors.AccentAmber,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontWeight = FontWeight.SemiBold,
+                                    fontSize = 11.sp
+                                )
+                            }
+                        }
+                        Text(
+                            "Auto-attenuates peak EQ & harmonics boost",
+                            color = colors.onSurfaceVariant,
+                            fontSize = 11.sp
+                        )
+                    }
+                    Switch(
+                        checked = dynamics.autoPreampEnabled,
+                        onCheckedChange = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onUpdateDynamics(dynamics.copy(autoPreampEnabled = it))
+                        }
+                    )
+                }
+
                 Text("Equal Loudness (ISO 226, Vol < 80%)", color = colors.onSurfaceVariant, fontSize = 12.sp)
                 SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                     LoudnessMode.entries.forEachIndexed { idx, mode ->

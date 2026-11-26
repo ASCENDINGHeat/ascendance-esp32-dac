@@ -52,8 +52,33 @@ export function DynamicsCard({
               True-Peak Limiter (-0.5 dBFS)
             </label>
           </div>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginBottom: '6px' }}>
             1.5 ms lookahead with -0.5 dBFS ceiling
+          </div>
+          <div className="control-label-row">
+            <label>
+              <input
+                type="checkbox"
+                id="chkAutoPreamp"
+                checked={!!dynamics.autoPreampEnabled}
+                onChange={(e) =>
+                  onChangeDynamics({ ...dynamics, autoPreampEnabled: e.target.checked })
+                }
+              />{' '}
+              Auto-Preamp Headroom Guard
+              {dynamics.autoPreampEnabled && (
+                <span
+                  style={{
+                    marginLeft: '6px',
+                    fontFamily: 'monospace',
+                    fontSize: '0.75rem',
+                    color: 'var(--green)',
+                  }}
+                >
+                  ({(dynamics.autoPreampDb || 0).toFixed(1)} dB)
+                </span>
+              )}
+            </label>
           </div>
         </div>
 

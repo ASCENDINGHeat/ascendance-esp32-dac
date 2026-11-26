@@ -108,6 +108,8 @@ typedef struct {
     bool                fir_enabled;
     uint16_t            fir_taps_l;
     uint16_t            fir_taps_r;
+    bool                auto_preamp_enabled;
+    float               auto_preamp_db;   // Computed auto attenuation (0.0 to -12.0 dB)
 } peq_dynamics_cfg_t;
 
 typedef enum {
@@ -199,6 +201,9 @@ esp_err_t peq_dsp_get_mixer(peq_mixer_config_t *out_cfg);
 
 void peq_dsp_set_limiter_enabled(bool enabled);
 bool peq_dsp_is_limiter_enabled(void);
+
+void peq_dsp_set_auto_preamp_enabled(bool enabled);
+bool peq_dsp_is_auto_preamp_enabled(void);
 
 void peq_dsp_set_loudness_mode(peq_loudness_mode_t mode);
 peq_loudness_mode_t peq_dsp_get_loudness_mode(void);

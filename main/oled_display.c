@@ -683,15 +683,18 @@ static void render_menu_screen(void)
         case MENU_ITEM_PREAMP_GAIN:
             snprintf(line_buf, sizeof(line_buf), "10. Preamp:%.1fdB", menu.preamp_gain_db);
             break;
+        case MENU_ITEM_AUTO_PREAMP:
+            snprintf(line_buf, sizeof(line_buf), "11. AutoPreamp:%s", menu.auto_preamp_enabled ? "On" : "Off");
+            break;
         case MENU_ITEM_AUDIO_SOURCE:
-            snprintf(line_buf, sizeof(line_buf), "11. Input:%.10s",
+            snprintf(line_buf, sizeof(line_buf), "12. Input:%.10s",
                      menu.current_source[0] ? menu.current_source : "USB DAC");
             break;
         case MENU_ITEM_SAVE_NVS:
-            snprintf(line_buf, sizeof(line_buf), "12. Save to DAC");
+            snprintf(line_buf, sizeof(line_buf), "13. Save to DAC");
             break;
         case MENU_ITEM_EXIT:
-            snprintf(line_buf, sizeof(line_buf), "13. Exit Menu");
+            snprintf(line_buf, sizeof(line_buf), "14. Exit Menu");
             break;
         default:
             snprintf(line_buf, sizeof(line_buf), " ");

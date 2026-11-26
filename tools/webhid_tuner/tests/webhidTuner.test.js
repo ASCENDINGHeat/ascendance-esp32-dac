@@ -11,6 +11,7 @@ import {
   CMD_SET_HARMONICS,
   WEBHID_MAGIC_16,
   decodeInputReport,
+  encodeDynamicsConfig,
   encodeFirChunkPackets,
   encodeRenameSlot,
   encodeSetBandLive,
@@ -135,14 +136,31 @@ describe('WebHID Tuner DSP, Protocol & Parsers', () => {
     expect(highDv.getUint16(10, true)).toBe(8000);
   });
 
-  it('decodes extended dynamics (0xFD) including harmonics reserved[20..27] and profile (0x01)', () => {
+  it('encodes CMD_SET_DYNAMICS (0x0B) with autoPreampEnabled bit 0x04', () => {
+    const pkt = encodeDynamicsConfig({
+      limiterEnabled: true,
+      firEnabled: true,
+      autoPreampEnabled: true,
+      loudnessMode: 2,
+      oledView: 3,
+    });
+    const dv = new DataView(pkt.buffer);
+    expect(pkt).toHaveLength(64);
+    expect(dv.getUint16(0, true)).toBe(WEBHID_MAGIC_16);
+    expect(dv.getUint8(2)).toBe(CMD_SET_DYNAMICS);
+    expect(dv.getUint8(3)).toBe(3);
+    expect(dv.getUint8(4)).toBe(2);
+    expect(dv.getUint8(5)).toBe(0x07);
+  });
+
+  it('decodes extended dynamics (0xFD) including harmonics reserved[20..26], autoPreamp byte 39, and profile (0x01)', () => {
     const buf = new ArrayBuffer(64);
     const dv = new DataView(buf);
     dv.setUint16(0, WEBHID_MAGIC_16, true);
     dv.setUint8(2, CMD_SET_DYNAMICS);
     dv.setUint8(3, 0xfd);
     dv.setUint8(4, 2);
-    dv.setUint8(5, 0x01 | (2 << 1) | 0x08 | (3 << 4));
+    dv.setUint8(5, 0x01 | (2 << 1) | 0x08 | (3 << 4) | 0x40);
     dv.setUint16(6, 30, true);
     dv.setUint16(8, 120, true);
     dv.setUint16(10, 256, true);
@@ -165,7 +183,7 @@ describe('WebHID Tuner DSP, Protocol & Parsers', () => {
     dv.setUint8(34, harmView.getUint8(5));
     dv.setUint16(35, harmView.getUint16(6, true), true);
     dv.setUint16(37, harmView.getUint16(10, true), true);
-    dv.setUint8(39, 0);
+    dv.setUint8(39, 42);
 
     const ext = decodeInputReport(dv);
     expect(ext.kind).toBe('extState');
@@ -173,6 +191,8 @@ describe('WebHID Tuner DSP, Protocol & Parsers', () => {
     expect(ext.slotName).toBe('Planar Eq');
     expect(ext.dynamics.loudnessMode).toBe(2);
     expect(ext.dynamics.oledView).toBe(3);
+    expect(ext.dynamics.autoPreampEnabled).toBe(true);
+    expect(ext.dynamics.autoPreampDb).toBeCloseTo(-4.2, 2);
     expect(ext.dynamics.firTapsL).toBe(256);
     expect(ext.harmonics).toEqual({
       bassEnabled: true,

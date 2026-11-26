@@ -151,7 +151,8 @@ object PeqPacketCodec {
         bb.put(3, config.oledView.coerceIn(0, OledViewMode.entries.lastIndex).toByte())
         bb.put(4, config.loudnessMode.coerceIn(0, LoudnessMode.entries.lastIndex).toByte())
         val flags = (if (config.limiterEnabled) 0x01 else 0x00) or
-                    (if (config.firEnabled) 0x02 else 0x00)
+                    (if (config.firEnabled) 0x02 else 0x00) or
+                    (if (config.autoPreampEnabled) 0x04 else 0x00)
         bb.put(5, flags.toByte())
         return bb.array()
     }
@@ -258,11 +259,14 @@ object PeqPacketCodec {
                 if (nulIdx >= 0) nulIdx else nameBytes.size,
                 Charsets.UTF_8
             ).ifBlank { "Slot ${activeSlot + 1}" }
+            val autoAttX10 = if (raw.size >= 40) (bb.get(39).toInt() and 0xFF).coerceIn(0, 120) else 0
             val cfg = DynamicsConfig(
                 limiterEnabled = (dynFlags and 0x01) != 0,
                 loudnessMode = (dynFlags shr 1) and 0x03,
                 firEnabled = (dynFlags and 0x08) != 0,
                 oledView = (dynFlags shr 4) and 0x03,
+                autoPreampEnabled = (dynFlags and 0x40) != 0,
+                autoPreampDb = -autoAttX10 / 10.0f,
                 autoMuteSec = autoMuteSec,
                 oledDimSec = oledDimSec,
                 firTapsL = firTapsL,

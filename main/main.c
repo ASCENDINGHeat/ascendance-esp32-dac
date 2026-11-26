@@ -287,6 +287,7 @@ static void update_menu_ui(void)
     ms.bass_enabled = harm.bass_enabled;
     ms.exciter_enabled = harm.exciter_enabled;
     ms.exciter_mode = (uint8_t)harm.exciter_mode;
+    ms.auto_preamp_enabled = peq_dsp_is_auto_preamp_enabled();
     oled_display_update_menu_ex(&ms);
 }
 
@@ -572,6 +573,12 @@ static void handle_menu_event(const control_event_t *evt)
             update_menu_ui();
             break;
         }
+        case MENU_ITEM_AUTO_PREAMP:
+            peq_dsp_set_auto_preamp_enabled(!peq_dsp_is_auto_preamp_enabled());
+            oled_display_invalidate_curve();
+            update_menu_ui();
+            webhid_peq_notify_state_changed();
+            break;
         case MENU_ITEM_AUDIO_SOURCE:
             audio_source_arbiter_cycle();
             update_menu_ui();

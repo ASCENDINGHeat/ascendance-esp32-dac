@@ -636,7 +636,8 @@ static bool webhid_build_band_packet(uint8_t band_idx, peq_channel_t ch, webhid_
         uint8_t flags = (dyn.limiter_enabled ? 0x01 : 0x00) |
                         (((uint8_t)dyn.loudness_mode & 0x03) << 1) |
                         (dyn.fir_enabled ? 0x08 : 0x00) |
-                        (((uint8_t)dyn.oled_view & 0x03) << 4);
+                        (((uint8_t)dyn.oled_view & 0x03) << 4) |
+                        (dyn.auto_preamp_enabled ? 0x40 : 0x00);
 
         memset(pkt, 0, sizeof(*pkt));
         pkt->magic = WEBHID_MAGIC_16;
@@ -663,7 +664,10 @@ static bool webhid_build_band_packet(uint8_t band_idx, peq_channel_t ch, webhid_
         pkt->reserved[22] = harm.exciter_amount_pct;
         memcpy(&pkt->reserved[23], &bass_hz, sizeof(uint16_t));
         memcpy(&pkt->reserved[25], &exc_hz, sizeof(uint16_t));
-        pkt->reserved[27] = 0;
+        int auto_att_x10 = (int)roundf(fabsf(dyn.auto_preamp_db) * 10.0f);
+        if (auto_att_x10 < 0) auto_att_x10 = 0;
+        if (auto_att_x10 > 120) auto_att_x10 = 120;
+        pkt->reserved[27] = (uint8_t)auto_att_x10;
         return true;
     }
 
@@ -860,16 +864,19 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
         case WEBHID_CMD_SET_DYNAMICS: {
             bool lim_en = (pkt->enabled & 0x01) != 0;
             bool fir_en = (pkt->enabled & 0x02) != 0;
+            bool auto_preamp_en = (pkt->enabled & 0x04) != 0;
             uint8_t loud = (pkt->filter_type < PEQ_LOUDNESS_COUNT) ? pkt->filter_type : 0;
             uint8_t view = (uint8_t)(pkt->band_idx & 0x03);
 
             peq_dsp_set_limiter_enabled(lim_en);
+            peq_dsp_set_auto_preamp_enabled(auto_preamp_en);
             peq_dsp_set_loudness_mode((peq_loudness_mode_t)loud);
             peq_dsp_set_fir_enabled(fir_en);
             peq_dsp_set_oled_view(view);
             oled_display_set_playback_view((oled_playback_view_t)view);
             oled_display_invalidate_curve();
             oled_display_show_eq_overlay("Dynamics Updated");
+            webhid_peq_send_band_report(WEBHID_REPORT_SUB_EXT_STATE);
             break;
         }
 

@@ -122,13 +122,14 @@ class PeqPacketCodecTest {
                 limiterEnabled = true,
                 loudnessMode = LoudnessMode.FULL.code,
                 firEnabled = true,
-                oledView = OledViewMode.SPLIT.code
+                oledView = OledViewMode.SPLIT.code,
+                autoPreampEnabled = true
             )
         )
         assertEquals(PeqPacketCodec.CMD_SET_DYNAMICS, dynPkt[2].toInt() and 0xFF)
         assertEquals(OledViewMode.SPLIT.code, dynPkt[3].toInt() and 0xFF)
         assertEquals(LoudnessMode.FULL.code, dynPkt[4].toInt() and 0xFF)
-        assertEquals(0x03, dynPkt[5].toInt() and 0xFF)
+        assertEquals(0x07, dynPkt[5].toInt() and 0xFF)
 
         val pwrPkt = ByteBuffer.wrap(PeqPacketCodec.buildSetPowerConfig(30, 120)).order(ByteOrder.LITTLE_ENDIAN)
         assertEquals(30, pwrPkt.getShort(6).toInt() and 0xFFFF)
@@ -147,13 +148,14 @@ class PeqPacketCodecTest {
             put(2, PeqPacketCodec.CMD_SET_DYNAMICS.toByte())
             put(3, PeqPacketCodec.BAND_IDX_EXT_STATE_QUERY.toByte())
             put(4, 5)
-            put(5, (0x01 or (2 shl 1) or 0x08 or (3 shl 4)).toByte())
+            put(5, (0x01 or (2 shl 1) or 0x08 or (3 shl 4) or 0x40).toByte())
             putShort(6, 15)
             putShort(8, 90)
             putShort(10, 256)
             "HD600 Harman".toByteArray(Charsets.UTF_8).forEachIndexed { idx, b -> put(12 + idx, b) }
             putShort(28, 128)
             putShort(30, 256)
+            put(39, 42)
         }.array()
 
         val extMsg = PeqPacketCodec.parseReport(extRaw) as? HidIncomingMessage.ExtendedStateReport
@@ -164,6 +166,8 @@ class PeqPacketCodecTest {
         assertEquals(2, extMsg.dynamics.loudnessMode)
         assertTrue(extMsg.dynamics.firEnabled)
         assertEquals(3, extMsg.dynamics.oledView)
+        assertTrue(extMsg.dynamics.autoPreampEnabled)
+        assertEquals(-4.2f, extMsg.dynamics.autoPreampDb, 0.01f)
         assertEquals(15, extMsg.dynamics.autoMuteSec)
         assertEquals(90, extMsg.dynamics.oledDimSec)
         assertEquals(256, extMsg.dynamics.firTapsL)

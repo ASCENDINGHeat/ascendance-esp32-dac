@@ -173,7 +173,9 @@ static int                 s_volume_pct      = 50;
 static uint8_t             s_oled_view       = 0;
 static uint16_t            s_auto_mute_sec   = 10;
 static uint16_t            s_oled_dim_sec    = 60;
-static bool                s_fir_enabled     = false;
+static bool                s_fir_enabled         = false;
+static bool                s_auto_preamp_enabled = false;
+static float               s_auto_preamp_db      = 0.0f;
 
 /* Psychoacoustic Bass Enhancer & Harmonic Exciter Configuration & PSRAM LUTs */
 static peq_harmonics_cfg_t s_harm_cfg;
@@ -991,6 +993,7 @@ static esp_err_t save_meta_nvs_internal(void)
     meta.loudness_mode = (uint8_t)s_loudness_mode;
     meta.oled_view = s_oled_view;
     meta.fir_enabled = s_fir_enabled ? 1 : 0;
+    meta.reserved = s_auto_preamp_enabled ? 0x01 : 0x00;
     meta.auto_mute_sec = s_auto_mute_sec;
     meta.oled_dim_sec = s_oled_dim_sec;
     meta.mixer = s_mixer;
@@ -1133,6 +1136,7 @@ static void load_user_profile_nvs(void)
                           ? (peq_loudness_mode_t)meta.loudness_mode : PEQ_LOUDNESS_OFF;
         s_oled_view = (meta.oled_view < 4) ? meta.oled_view : 0;
         s_fir_enabled = (meta.fir_enabled != 0);
+        s_auto_preamp_enabled = ((meta.reserved & 0x01) != 0);
         s_auto_mute_sec = meta.auto_mute_sec;
         s_oled_dim_sec = meta.oled_dim_sec;
 
@@ -1244,6 +1248,92 @@ static void load_user_profile_nvs(void)
     nvs_close(nvs_h);
 }
 
+static float compute_auto_preamp_db(const biquad_state_t *bq_l, int nb_l,
+                                    const biquad_state_t *bq_r, int nb_r,
+                                    const biquad_state_t *loud_bq, bool loud_en,
+                                    const peq_harmonics_cfg_t *harm, bool ab_bypass,
+                                    float sample_rate)
+{
+    if (ab_bypass || sample_rate <= 0.0f) {
+        return 0.0f;
+    }
+
+    const int num_pts = 48;
+    float log_min = logf(20.0f);
+    float max_f = sample_rate * 0.48f;
+    if (max_f > 20000.0f) max_f = 20000.0f;
+    float log_max = logf(max_f);
+    double max_mag_sq = 1.0;
+
+    for (int i = 0; i < num_pts; i++) {
+        float t = (float)i / (float)(num_pts - 1);
+        float f = expf(log_min + t * (log_max - log_min));
+        float w = 2.0f * (float)M_PI * f / sample_rate;
+        double cw = (double)cosf(w), sw = (double)sinf(w);
+        double c2w = (double)cosf(2.0f * w), s2w = (double)sinf(2.0f * w);
+
+        double mag_l = 1.0;
+        for (int b = 0; b < nb_l; b++) {
+            if (biquad_is_passthrough(&bq_l[b])) continue;
+            double nr = (double)bq_l[b].b0 + (double)bq_l[b].b1 * cw + (double)bq_l[b].b2 * c2w;
+            double ni = -((double)bq_l[b].b1 * sw + (double)bq_l[b].b2 * s2w);
+            double dr = 1.0 + (double)bq_l[b].a1 * cw + (double)bq_l[b].a2 * c2w;
+            double di = -((double)bq_l[b].a1 * sw + (double)bq_l[b].a2 * s2w);
+            double denom = dr * dr + di * di;
+            if (denom > 1e-18) mag_l *= (nr * nr + ni * ni) / denom;
+        }
+
+        double mag_r = 1.0;
+        for (int b = 0; b < nb_r; b++) {
+            if (biquad_is_passthrough(&bq_r[b])) continue;
+            double nr = (double)bq_r[b].b0 + (double)bq_r[b].b1 * cw + (double)bq_r[b].b2 * c2w;
+            double ni = -((double)bq_r[b].b1 * sw + (double)bq_r[b].b2 * s2w);
+            double dr = 1.0 + (double)bq_r[b].a1 * cw + (double)bq_r[b].a2 * c2w;
+            double di = -((double)bq_r[b].a1 * sw + (double)bq_r[b].a2 * s2w);
+            double denom = dr * dr + di * di;
+            if (denom > 1e-18) mag_r *= (nr * nr + ni * ni) / denom;
+        }
+
+        double mag_loud = 1.0;
+        if (loud_en && loud_bq) {
+            for (int l = 0; l < 2; l++) {
+                if (biquad_is_passthrough(&loud_bq[l])) continue;
+                double nr = (double)loud_bq[l].b0 + (double)loud_bq[l].b1 * cw + (double)loud_bq[l].b2 * c2w;
+                double ni = -((double)loud_bq[l].b1 * sw + (double)loud_bq[l].b2 * s2w);
+                double dr = 1.0 + (double)loud_bq[l].a1 * cw + (double)loud_bq[l].a2 * c2w;
+                double di = -((double)loud_bq[l].a1 * sw + (double)loud_bq[l].a2 * s2w);
+                double denom = dr * dr + di * di;
+                if (denom > 1e-18) mag_loud *= (nr * nr + ni * ni) / denom;
+            }
+        }
+
+        double peak_lr = (mag_l > mag_r) ? mag_l : mag_r;
+        double total = peak_lr * mag_loud;
+        if (total > max_mag_sq) {
+            max_mag_sq = total;
+        }
+    }
+
+    float peak_boost_db = (max_mag_sq > 1.0) ? (10.0f * log10f((float)max_mag_sq)) : 0.0f;
+
+    /* Account for additive harmonic energy when Bass Enhancer / Exciter are active */
+    if (harm) {
+        if (harm->bass_enabled && harm->bass_amount_pct > 0U) {
+            peak_boost_db += 2.5f * ((float)harm->bass_amount_pct / 100.0f);
+        }
+        if (harm->exciter_enabled && harm->exciter_amount_pct > 0U) {
+            peak_boost_db += 1.5f * ((float)harm->exciter_amount_pct / 100.0f);
+        }
+    }
+
+    if (peak_boost_db <= 0.05f) {
+        return 0.0f;
+    }
+    float auto_db = -peak_boost_db;
+    if (auto_db < -12.0f) auto_db = -12.0f;
+    return auto_db;
+}
+
 static void stage_pending_from_active_ex(bool reset_states, bool stage_mixer, bool stage_fir, bool stage_harm)
 {
     for (;;) {
@@ -1259,6 +1349,7 @@ static void stage_pending_from_active_ex(bool reset_states, bool stage_mixer, bo
         peq_loudness_mode_t loud_mode = s_loudness_mode;
         int vol_pct = s_volume_pct;
         bool lim_en = s_limiter_enabled;
+        bool auto_preamp_en = s_auto_preamp_enabled;
         peq_harmonics_cfg_t harm_snap = s_harm_cfg;
         taskEXIT_CRITICAL(&s_peq_lock);
 
@@ -1283,6 +1374,19 @@ static void stage_pending_from_active_ex(bool reset_states, bool stage_mixer, bo
         compute_loudness_biquads(loud_mode, vol_pct, (float)sr, ab_bypass,
                                  local_loud, &local_loud_en);
 
+        float computed_auto_db = 0.0f;
+        if (auto_preamp_en) {
+            computed_auto_db = compute_auto_preamp_db(local_bq_l, local_nb_l, local_bq_r, local_nb_r,
+                                                      local_loud, local_loud_en, &harm_snap, ab_bypass, (float)sr);
+            float auto_lin = powf(10.0f, computed_auto_db / 20.0f);
+            if (isfinite(auto_lin) && auto_lin < local_preamp_l) {
+                local_preamp_l = auto_lin;
+                if (computed_auto_db < -1e-4f) {
+                    local_flat_l = false;
+                }
+            }
+        }
+
         mixer_rt_t local_mixer;
         if (stage_mixer) {
             compute_mixer_rt(&mixer_snap, (float)sr, &local_mixer);
@@ -1295,6 +1399,7 @@ static void stage_pending_from_active_ex(bool reset_states, bool stage_mixer, bo
 
         taskENTER_CRITICAL(&s_peq_lock);
         if (s_state_gen == gen) {
+            s_auto_preamp_db = computed_auto_db;
             s_pending_crossfade_step = step;
             memcpy(s_pending_biquads_l, local_bq_l, sizeof(s_pending_biquads_l));
             memcpy(s_pending_biquads_r, local_bq_r, sizeof(s_pending_biquads_r));
@@ -1854,6 +1959,27 @@ bool peq_dsp_is_limiter_enabled(void)
     return en;
 }
 
+void peq_dsp_set_auto_preamp_enabled(bool enabled)
+{
+    taskENTER_CRITICAL(&s_peq_lock);
+    if (s_auto_preamp_enabled == enabled) {
+        taskEXIT_CRITICAL(&s_peq_lock);
+        return;
+    }
+    s_auto_preamp_enabled = enabled;
+    s_state_gen++;
+    taskEXIT_CRITICAL(&s_peq_lock);
+    stage_pending_from_active(false, false, false);
+}
+
+bool peq_dsp_is_auto_preamp_enabled(void)
+{
+    taskENTER_CRITICAL(&s_peq_lock);
+    bool en = s_auto_preamp_enabled;
+    taskEXIT_CRITICAL(&s_peq_lock);
+    return en;
+}
+
 void peq_dsp_set_loudness_mode(peq_loudness_mode_t mode)
 {
     if ((unsigned int)mode >= PEQ_LOUDNESS_COUNT) return;
@@ -1957,6 +2083,8 @@ void peq_dsp_get_dynamics_cfg(peq_dynamics_cfg_t *out_cfg)
     out_cfg->fir_enabled = s_fir_enabled;
     out_cfg->fir_taps_l = s_fir_taps_l;
     out_cfg->fir_taps_r = s_fir_taps_r;
+    out_cfg->auto_preamp_enabled = s_auto_preamp_enabled;
+    out_cfg->auto_preamp_db = s_auto_preamp_db;
     taskEXIT_CRITICAL(&s_peq_lock);
 }
 
@@ -1966,6 +2094,7 @@ void peq_dsp_set_harmonics_cfg(const peq_harmonics_cfg_t *cfg)
     peq_harmonics_cfg_t clamped = *cfg;
     clamp_harmonics_cfg(&clamped);
 
+    bool need_auto_preamp = false;
     taskENTER_CRITICAL(&s_peq_lock);
     bool changed = (s_harm_cfg.bass_enabled != clamped.bass_enabled ||
                     s_harm_cfg.bass_amount_pct != clamped.bass_amount_pct ||
@@ -1979,10 +2108,15 @@ void peq_dsp_set_harmonics_cfg(const peq_harmonics_cfg_t *cfg)
         return;
     }
     s_harm_cfg = clamped;
+    need_auto_preamp = s_auto_preamp_enabled;
     s_state_gen++;
     taskEXIT_CRITICAL(&s_peq_lock);
 
-    stage_pending_harmonics(false);
+    if (need_auto_preamp) {
+        stage_pending_from_active_ex(false, false, false, true);
+    } else {
+        stage_pending_harmonics(false);
+    }
 }
 
 void peq_dsp_get_harmonics_cfg(peq_harmonics_cfg_t *out_cfg)
