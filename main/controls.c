@@ -76,6 +76,10 @@ static esp_err_t init_pcnt_encoder(gpio_num_t pin_a, gpio_num_t pin_b)
     pcnt_channel_set_edge_action(pcnt_chan_b, PCNT_CHANNEL_EDGE_ACTION_INCREASE, PCNT_CHANNEL_EDGE_ACTION_DECREASE);
     pcnt_channel_set_level_action(pcnt_chan_b, PCNT_CHANNEL_LEVEL_ACTION_KEEP, PCNT_CHANNEL_LEVEL_ACTION_INVERSE);
 
+    // Enable internal pull-ups as fail-safe backup alongside external 10 kOhm pull-ups
+    gpio_set_pull_mode(pin_a, GPIO_PULLUP_ONLY);
+    gpio_set_pull_mode(pin_b, GPIO_PULLUP_ONLY);
+
     ret = pcnt_unit_enable(s_pcnt_unit);
     if (ret != ESP_OK) return ret;
 
