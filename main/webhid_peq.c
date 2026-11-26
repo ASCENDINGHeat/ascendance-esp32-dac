@@ -45,7 +45,7 @@ static bool s_pm_lock_acquired = false;
 static portMUX_TYPE s_uac_rate_lock = portMUX_INITIALIZER_UNLOCKED;
 static uint8_t s_audio_mute[3] = {0, 0, 0};        // [0]=master, [1]=L, [2]=R
 static int16_t s_audio_volume[3] = {0, 0, 0};      // 1/256 dB units (0 = 0 dB)
-static uint32_t s_audio_sample_rate = 48000;
+static DRAM_ATTR _Atomic uint32_t s_audio_sample_rate = 48000;
 static uint32_t s_pending_sample_rate = 48000;
 static bool s_sample_rate_pending = false;
 
@@ -59,7 +59,7 @@ static bool s_sample_rate_pending = false;
 
 typedef struct {
     uint8_t data[AUDIO_SPSC_FRAME_CAP * AUDIO_BYTES_PER_FRAME];
-    _Atomic uint32_t wr_frames; // Written only by Core 0 (TinyUSB task)
+    _Atomic uint32_t wr_frames; // Written only by Core 0 (TinyUSB ISR)
     _Atomic uint32_t rd_frames; // Written only by Core 1 (audio_dsp_task)
     _Atomic uint32_t flush_gen; // Incremented by Core 0 on stream stop/start/reclock
     uint32_t cons_gen;          // Owned exclusively by Core 1
@@ -67,7 +67,7 @@ typedef struct {
 
 static DRAM_ATTR audio_spsc_t s_audio_spsc;
 
-static inline uint32_t audio_spsc_level_frames(void)
+static inline uint32_t IRAM_ATTR audio_spsc_level_frames(void)
 {
     uint32_t wr = atomic_load_explicit(&s_audio_spsc.wr_frames, memory_order_acquire);
     uint32_t rd = atomic_load_explicit(&s_audio_spsc.rd_frames, memory_order_acquire);
@@ -79,8 +79,8 @@ static inline void audio_spsc_request_flush(void)
     atomic_fetch_add_explicit(&s_audio_spsc.flush_gen, 1U, memory_order_release);
 }
 
-// Producer: Core 0 only (TinyUSB RX callback)
-static uint32_t audio_spsc_push_frames(const uint8_t *src, uint32_t num_frames)
+// Producer: Core 0 only (TinyUSB RX ISR)
+static uint32_t IRAM_ATTR audio_spsc_push_frames(const uint8_t *src, uint32_t num_frames)
 {
     uint32_t wr = atomic_load_explicit(&s_audio_spsc.wr_frames, memory_order_relaxed);
     uint32_t rd = atomic_load_explicit(&s_audio_spsc.rd_frames, memory_order_acquire);
@@ -113,16 +113,18 @@ static uint32_t audio_spsc_push_frames(const uint8_t *src, uint32_t num_frames)
     return num_frames;
 }
 
-// Compute and push I2S-DMA-coupled PI + EMA-filtered 10.14 async feedback to EP 0x81 IN (Core 0)
-static void webhid_update_async_feedback(bool nominal_only)
+// Compute and push I2S-DMA-coupled PI + EMA-filtered 10.14 async feedback to EP 0x81 IN.
+// CRITICAL: Called from TinyUSB hardware ISR (tud_audio_rx_done_isr) -> MUST use pure integer math
+// (NO float/FPU, NO taskENTER_CRITICAL, NO ESP_LOG) to avoid Xtensa CoprocessorException!
+static void IRAM_ATTR webhid_update_async_feedback(bool nominal_only)
 {
 #if CFG_TUD_AUDIO_ENABLE_EP_OUT && CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP
-    static float s_err_ema = 0.0f;         // Low-pass filtered SPSC fill error (suppresses 256-frame DMA burst ripple)
-    static float s_integrator = 0.0f;      // Integral term in 10.14 LSBs (cancels static XTAL + I2S divider ppm drift)
-    static uint32_t s_prev_dma_frames = 0; // Last observed I2S DMA cumulative frame count
-    static uint8_t s_dma_idle_ms = 20;     // Counts 1 ms RX ticks since last I2S DMA completion
+    static DRAM_ATTR int32_t s_err_ema_q8 = 0;       // Q24.8 EMA-filtered SPSC error (frames * 256)
+    static DRAM_ATTR int32_t s_integrator_q8 = 0;    // Q24.8 integral term (10.14 LSBs * 256)
+    static DRAM_ATTR uint32_t s_prev_dma_frames = 0; // Last observed I2S DMA cumulative frame count
+    static DRAM_ATTR uint8_t s_dma_idle_ms = 20;     // Counts 1 ms RX ticks since last I2S DMA completion
 
-    uint32_t sr = webhid_peq_get_sample_rate();
+    uint32_t sr = atomic_load_explicit(&s_audio_sample_rate, memory_order_relaxed);
     // Exact Full-Speed UAC 1.0 nominal 10.14 rate: (sr * 2^14) / 1000
     // 48000 Hz -> 786432 (48.000 * 16384), 44100 Hz -> 722534 (44.100 * 16384)
     int32_t nom_10_14 = (int32_t)(((uint64_t)sr << 14) / 1000ULL);
@@ -132,17 +134,18 @@ static void webhid_update_async_feedback(bool nominal_only)
     audio_pipeline_get_dma_sync(&dma_frames, NULL, NULL);
 
     if (nominal_only) {
-        s_err_ema = 0.0f;
-        s_integrator = 0.0f;
+        s_err_ema_q8 = 0;
+        s_integrator_q8 = 0;
         s_prev_dma_frames = dma_frames;
         s_dma_idle_ms = 20;
     } else {
-        const float target_frames = (float)(AUDIO_SPSC_FRAME_CAP / 2U);
-        const float cur_frames = (float)audio_spsc_level_frames();
-        const float raw_err = target_frames - cur_frames; // >0 => host sends slightly faster
+        const int32_t target_frames = (int32_t)(AUDIO_SPSC_FRAME_CAP / 2U); // 1024 frames
+        const int32_t cur_frames = (int32_t)audio_spsc_level_frames();
+        const int32_t raw_err_q8 = (target_frames - cur_frames) << 8; // >0 => host sends slightly faster
 
-        // EMA low-pass filter (alpha = 1/16, tau ~16 ms) removes Core 1's 256-frame (~5.3 ms) burst sawtooth
-        s_err_ema += (raw_err - s_err_ema) * 0.0625f;
+        // Pure-integer EMA low-pass filter (alpha = 1/16, tau ~16 ms) removes 256-frame DMA burst ripple
+        s_err_ema_q8 += (raw_err_q8 - s_err_ema_q8) >> 4;
+        int32_t err_frames = s_err_ema_q8 >> 8;
 
         // Track I2S DMA liveness (256-frame descriptors complete every ~5.3 ms @ 48 kHz)
         if (dma_frames != s_prev_dma_frames) {
@@ -153,17 +156,18 @@ static void webhid_update_async_feedback(bool nominal_only)
         }
 
         // Only integrate while I2S DMA is actively shifting frames (prevents windup on mute/reclock/stall)
-        if (s_dma_idle_ms < 20 && fabsf(s_err_ema) < (target_frames * 0.9f)) {
-            // Ki = 0.015 LSB_10.14 / (frame * ms) -> smooth ~1 s lock with anti-windup clamp (+/- 0.25 sample/ms)
-            s_integrator += s_err_ema * 0.015f;
-            const float int_limit = (float)(1 << 12); // +/- 4096 LSB in 10.14 (+/- 0.25 sample/ms ~= +/- 5200 ppm)
-            if (s_integrator > int_limit)  s_integrator = int_limit;
-            if (s_integrator < -int_limit) s_integrator = -int_limit;
+        int32_t abs_err = (err_frames < 0) ? -err_frames : err_frames;
+        if (s_dma_idle_ms < 20 && abs_err < (target_frames - (target_frames >> 3))) {
+            // Ki = 4/256 = 0.015625 LSB_10.14 / (frame * ms), anti-windup clamp +/- 4096 LSB (+/- 0.25 sample/ms)
+            s_integrator_q8 += err_frames * 4;
+            const int32_t int_limit_q8 = (1 << 12) << 8; // +/- 4096 * 256
+            if (s_integrator_q8 > int_limit_q8)  s_integrator_q8 = int_limit_q8;
+            if (s_integrator_q8 < -int_limit_q8) s_integrator_q8 = -int_limit_q8;
         }
 
-        // Proportional + Integral control (Kp = 4.0 LSB_10.14 / frame)
-        float adj = (s_err_ema * 4.0f) + s_integrator;
-        fb_10_14 = nom_10_14 + (int32_t)lroundf(adj);
+        // Proportional (Kp = 4 LSB_10.14 / frame) + Integral control
+        int32_t adj = (err_frames * 4) + (s_integrator_q8 >> 8);
+        fb_10_14 = nom_10_14 + adj;
 
         // Hard clamp to nominal +/- 1.0 sample/ms to prevent host starvation or feedback jitter blowout
         int32_t min_10_14 = nom_10_14 - (1 << 14);
@@ -333,6 +337,7 @@ static void tinyusb_event_callback(tinyusb_event_t *event, void *arg)
     case TINYUSB_EVENT_ATTACHED:
         atomic_store_explicit(&s_is_mounted, true, memory_order_release);
         atomic_store_explicit(&s_is_suspended, false, memory_order_release);
+        webhid_update_async_feedback(true);
         ESP_LOGI(TAG, "USB Host attached and configured (Async UAC 1.0 DAC + WebHID).");
         oled_display_show_eq_overlay("USB Connected");
         break;
@@ -393,11 +398,12 @@ void tud_audio_feedback_params_cb(uint8_t func_id, uint8_t alt_itf, audio_feedba
     (void)alt_itf;
     // Manual feedback computed from our C11 SPSC ring buffer occupancy via tud_audio_fb_set()
     feedback_param->method = AUDIO_FEEDBACK_METHOD_DISABLED;
+    feedback_param->sample_freq = webhid_peq_get_sample_rate();
 }
 #endif
 
-bool tud_audio_rx_done_isr(uint8_t rhport, uint16_t n_bytes_received, uint8_t func_id,
-                           uint8_t ep_out, uint8_t cur_alt_setting)
+bool IRAM_ATTR tud_audio_rx_done_isr(uint8_t rhport, uint16_t n_bytes_received, uint8_t func_id,
+                                     uint8_t ep_out, uint8_t cur_alt_setting)
 {
     (void)rhport;
     (void)n_bytes_received;
@@ -405,8 +411,8 @@ bool tud_audio_rx_done_isr(uint8_t rhport, uint16_t n_bytes_received, uint8_t fu
     (void)ep_out;
     (void)cur_alt_setting;
 
-    // Drain TinyUSB software RX FIFO strictly on Core 0 into our lock-free C11 SPSC ring buffer
-    static uint8_t s_rx_tmp[294];
+    // Drain TinyUSB software RX FIFO strictly on Core 0 ISR into our lock-free C11 SPSC ring buffer
+    static DRAM_ATTR uint8_t s_rx_tmp[294];
     uint16_t avail = tud_audio_available();
     while (avail >= AUDIO_BYTES_PER_FRAME) {
         uint16_t chunk = (avail > sizeof(s_rx_tmp)) ? (uint16_t)sizeof(s_rx_tmp) : avail;
@@ -555,10 +561,11 @@ bool tud_audio_get_req_ep_cb(uint8_t rhport, tusb_control_request_t const *p_req
     uint8_t ctrlSel = TU_U16_HIGH(p_request->wValue);
     if (ctrlSel == AUDIO10_EP_CTRL_SAMPLING_FREQ) {
         if (p_request->bRequest == AUDIO10_CS_REQ_GET_CUR) {
+            uint32_t sr = atomic_load_explicit(&s_audio_sample_rate, memory_order_acquire);
             uint8_t freq[3];
-            freq[0] = (uint8_t)(s_audio_sample_rate & 0xFF);
-            freq[1] = (uint8_t)((s_audio_sample_rate >> 8) & 0xFF);
-            freq[2] = (uint8_t)((s_audio_sample_rate >> 16) & 0xFF);
+            freq[0] = (uint8_t)(sr & 0xFF);
+            freq[1] = (uint8_t)((sr >> 8) & 0xFF);
+            freq[2] = (uint8_t)((sr >> 16) & 0xFF);
             return tud_audio_buffer_and_schedule_control_xfer(rhport, p_request, freq, sizeof(freq));
         }
     }
@@ -578,8 +585,8 @@ bool tud_audio_set_req_ep_cb(uint8_t rhport, tusb_control_request_t const *p_req
             }
             bool changed = false;
             taskENTER_CRITICAL(&s_uac_rate_lock);
-            if (req_rate != s_audio_sample_rate) {
-                s_audio_sample_rate = req_rate;
+            if (req_rate != atomic_load_explicit(&s_audio_sample_rate, memory_order_relaxed)) {
+                atomic_store_explicit(&s_audio_sample_rate, req_rate, memory_order_release);
                 s_pending_sample_rate = req_rate;
                 s_sample_rate_pending = true;
                 changed = true;
@@ -587,8 +594,9 @@ bool tud_audio_set_req_ep_cb(uint8_t rhport, tusb_control_request_t const *p_req
             taskEXIT_CRITICAL(&s_uac_rate_lock);
             if (changed) {
                 audio_spsc_request_flush();
-                webhid_update_async_feedback(true);
             }
+            // Always prime nominal 10.14 feedback even if rate unchanged (hosts often send SET_CUR right before Alt 1)
+            webhid_update_async_feedback(true);
             ESP_LOGI(TAG, "UAC1 Host Set Sample Rate: %lu Hz (24-bit Async)", (unsigned long)req_rate);
             return true;
         }
@@ -1111,10 +1119,7 @@ bool webhid_peq_consume_pending_sample_rate(uint32_t *out_sample_rate)
 
 uint32_t webhid_peq_get_sample_rate(void)
 {
-    taskENTER_CRITICAL(&s_uac_rate_lock);
-    uint32_t sr = s_audio_sample_rate;
-    taskEXIT_CRITICAL(&s_uac_rate_lock);
-    return sr;
+    return atomic_load_explicit(&s_audio_sample_rate, memory_order_acquire);
 }
 
 static inline void audio_spsc_sync_flush_consumer(void)

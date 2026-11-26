@@ -2,6 +2,8 @@
 #include "board_pins.h"
 
 #include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "esp_log.h"
 #include "driver/rmt_tx.h"
 #include "driver/rmt_encoder.h"
@@ -11,6 +13,7 @@
 // RMT Channel & Encoder handles for WS2812B
 static rmt_channel_handle_t s_led_chan = NULL;
 static rmt_encoder_handle_t s_bytes_encoder = NULL;
+static SemaphoreHandle_t s_led_mutex = NULL;
 static bool s_initialized = false;
 
 // Optical Safety Maximum Brightness:
@@ -23,6 +26,13 @@ esp_err_t led_indicator_init(void)
 {
     if (s_initialized) {
         return ESP_OK;
+    }
+
+    if (!s_led_mutex) {
+        s_led_mutex = xSemaphoreCreateMutex();
+        if (!s_led_mutex) {
+            return ESP_ERR_NO_MEM;
+        }
     }
 
     ESP_LOGI(TAG, "Initializing onboard WS2812B LED indicator on GPIO %d via RMT...", BOARD_RGB_LED_PIN);
@@ -93,7 +103,11 @@ esp_err_t led_indicator_init(void)
 
 void led_indicator_set_rgb(uint8_t red, uint8_t green, uint8_t blue)
 {
-    if (!s_initialized || s_led_chan == NULL || s_bytes_encoder == NULL) {
+    if (!s_initialized || s_led_chan == NULL || s_bytes_encoder == NULL || s_led_mutex == NULL) {
+        return;
+    }
+
+    if (xSemaphoreTake(s_led_mutex, pdMS_TO_TICKS(10)) != pdTRUE) {
         return;
     }
 
@@ -110,8 +124,10 @@ void led_indicator_set_rgb(uint8_t red, uint8_t green, uint8_t blue)
     esp_err_t ret = rmt_transmit(s_led_chan, s_bytes_encoder, grb, sizeof(grb), &tx_config);
     if (ret == ESP_OK) {
         // Wait for 3-byte transmission to finish (takes ~30 us)
-        rmt_tx_wait_all_done(s_led_chan, 50);
+        rmt_tx_wait_all_done(s_led_chan, 10);
     }
+
+    xSemaphoreGive(s_led_mutex);
 }
 
 void led_indicator_set_volume(int volume_percent, bool is_muted)

@@ -66,4 +66,14 @@ menu "ESP32-S3 Audio DSP/DAC Configuration"
                 GPIO connected to mode button. Default is GPIO 18.
     endmenu
 
+    menu "Diagnostics & Debug Options"
+        config ASCENDANCE_STARTUP_CHIME
+            bool "Play diagnostic startup chime on boot (C5-E5-G5-C6)"
+            default n
+            help
+                Plays a 4-note verification arpeggio through the PCM5102A DAC at boot.
+                Disabled by default in production builds for faster USB enumeration
+                and to protect sensitive IEMs; enable for hardware bench testing.
+    endmenu
+
 endmenu

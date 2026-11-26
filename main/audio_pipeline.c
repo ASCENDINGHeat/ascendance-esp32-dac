@@ -205,7 +205,7 @@ int audio_pipeline_get_sample_rate(void)
     return atomic_load_explicit(&s_current_sample_rate, memory_order_acquire);
 }
 
-void audio_pipeline_get_dma_sync(uint32_t *out_frames_sent, int64_t *out_last_us, uint32_t *out_underruns)
+void IRAM_ATTR audio_pipeline_get_dma_sync(uint32_t *out_frames_sent, int64_t *out_last_us, uint32_t *out_underruns)
 {
     int64_t last_us = atomic_load_explicit(&s_dma_last_us, memory_order_acquire);
     uint32_t frames = atomic_load_explicit(&s_dma_frames_sent, memory_order_relaxed);

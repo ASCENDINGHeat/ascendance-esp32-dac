@@ -860,8 +860,10 @@ void app_main(void)
     // Initialize Audio Source Arbiter (Default: Standalone DSP DAC mode)
     ESP_ERROR_CHECK(audio_source_arbiter_init(AUDIO_SOURCE_STANDALONE));
 
-    // Play verification chime on startup (C5 - E5 - G5 - C6)
+#ifdef CONFIG_ASCENDANCE_STARTUP_CHIME
+    // Play verification chime on startup (C5 - E5 - G5 - C6) in diagnostic/debug builds
     audio_pipeline_play_startup_chime();
+#endif
 
     // Initialize SSD1306 128x64 OLED Display (auto-probing 0x3C/0x3D) and sync state
     ESP_ERROR_CHECK(oled_display_init());

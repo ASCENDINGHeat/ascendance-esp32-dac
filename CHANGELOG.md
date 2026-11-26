@@ -2,6 +2,17 @@
 
 All notable changes to **Project ASCENDANCE** are documented in this file.
 
+## [v0.4.2] — 2026-11-26
+
+### Fixed (ESP32-S3 Firmware)
+- **Playback-Start Reboot (`CoprocessorException` in USB ISR):** Rewrote `webhid_update_async_feedback()` (`main/webhid_peq.c`) in pure 32-bit/64-bit Q8 fixed-point integer math (zero FPU instructions) and converted `s_audio_sample_rate` to a lock-free `DRAM_ATTR _Atomic uint32_t`. TinyUSB `0.20+` invokes `tud_audio_rx_done_isr()` directly from the hardware USB ISR where Xtensa's FPU is disabled.
+- **IRAM Safety for USB Audio ISR:** Marked `tud_audio_rx_done_isr`, `audio_spsc_level_frames`, `audio_spsc_push_frames`, `webhid_update_async_feedback`, and `audio_pipeline_get_dma_sync` with `IRAM_ATTR` (and placed `s_rx_tmp` in `DRAM_ATTR`) so USB ISO RX packets remain safe during SPI flash cache disables (`nvs_commit()`).
+- **First Feedback Packet Priming:** Primed nominal 10.14 feedback on `TINYUSB_EVENT_ATTACHED` and on every valid `SET_CUR` sample-rate request (even if unchanged) so `EP 0x81 IN` does not transmit `0x000000` on initial `Alt 1` activation.
+- **Cross-Core RMT & I2S Concurrency Fixes:** Added a 10 ms timeout FreeRTOS mutex around WS2812B RMT transmits in `main/led_indicator.c`, converted `s_current_source` in `main/audio_source_arbiter.c` to `_Atomic`, removed Core 0 direct I2S writes and the 1 KB stack `silence[]` buffer so Core 1 exclusively owns `s_tx_chan`, and restored `"ASCENDANCE Hi-Fi"` OLED title branding.
+
+### Changed
+- **Debug-Gated Startup Chime:** Added `CONFIG_ASCENDANCE_STARTUP_CHIME` (`default n`) in `main/Kconfig.projbuild` so production builds boot silently (~900 ms faster USB enumeration, safer for sensitive IEMs) while hardware bench/debug builds can still enable the verification chime.
+
 ## [v0.4.1] — 2026-11-26
 
 ### Fixed & Improved (ESP32-S3 Firmware)
