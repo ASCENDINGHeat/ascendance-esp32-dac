@@ -113,25 +113,59 @@ static uint32_t audio_spsc_push_frames(const uint8_t *src, uint32_t num_frames)
     return num_frames;
 }
 
-// Compute and push clamped 10.14 asynchronous feedback to EP 0x81 IN (Core 0)
+// Compute and push I2S-DMA-coupled PI + EMA-filtered 10.14 async feedback to EP 0x81 IN (Core 0)
 static void webhid_update_async_feedback(bool nominal_only)
 {
 #if CFG_TUD_AUDIO_ENABLE_EP_OUT && CFG_TUD_AUDIO_ENABLE_FEEDBACK_EP
+    static float s_err_ema = 0.0f;         // Low-pass filtered SPSC fill error (suppresses 256-frame DMA burst ripple)
+    static float s_integrator = 0.0f;      // Integral term in 10.14 LSBs (cancels static XTAL + I2S divider ppm drift)
+    static uint32_t s_prev_dma_frames = 0; // Last observed I2S DMA cumulative frame count
+    static uint8_t s_dma_idle_ms = 20;     // Counts 1 ms RX ticks since last I2S DMA completion
+
     uint32_t sr = webhid_peq_get_sample_rate();
     // Exact Full-Speed UAC 1.0 nominal 10.14 rate: (sr * 2^14) / 1000
     // 48000 Hz -> 786432 (48.000 * 16384), 44100 Hz -> 722534 (44.100 * 16384)
     int32_t nom_10_14 = (int32_t)(((uint64_t)sr << 14) / 1000ULL);
     int32_t fb_10_14 = nom_10_14;
 
-    if (!nominal_only) {
-        const int32_t target_frames = (int32_t)(AUDIO_SPSC_FRAME_CAP / 2U);
-        const int32_t cur_frames = (int32_t)audio_spsc_level_frames();
-        const int32_t err_frames = target_frames - cur_frames; // >0 => host sends slightly faster
+    uint32_t dma_frames = 0;
+    audio_pipeline_get_dma_sync(&dma_frames, NULL, NULL);
 
-        // Gentle proportional gain: 1 frame error -> 8 LSBs in 10.14 (~0.00049 samples/ms)
-        fb_10_14 = nom_10_14 + (err_frames * 8);
+    if (nominal_only) {
+        s_err_ema = 0.0f;
+        s_integrator = 0.0f;
+        s_prev_dma_frames = dma_frames;
+        s_dma_idle_ms = 20;
+    } else {
+        const float target_frames = (float)(AUDIO_SPSC_FRAME_CAP / 2U);
+        const float cur_frames = (float)audio_spsc_level_frames();
+        const float raw_err = target_frames - cur_frames; // >0 => host sends slightly faster
 
-        // Hard clamp to nominal +/- 1.0 sample/ms to prevent host starvation or jitter blowout
+        // EMA low-pass filter (alpha = 1/16, tau ~16 ms) removes Core 1's 256-frame (~5.3 ms) burst sawtooth
+        s_err_ema += (raw_err - s_err_ema) * 0.0625f;
+
+        // Track I2S DMA liveness (256-frame descriptors complete every ~5.3 ms @ 48 kHz)
+        if (dma_frames != s_prev_dma_frames) {
+            s_prev_dma_frames = dma_frames;
+            s_dma_idle_ms = 0;
+        } else if (s_dma_idle_ms < 20) {
+            s_dma_idle_ms++;
+        }
+
+        // Only integrate while I2S DMA is actively shifting frames (prevents windup on mute/reclock/stall)
+        if (s_dma_idle_ms < 20 && fabsf(s_err_ema) < (target_frames * 0.9f)) {
+            // Ki = 0.015 LSB_10.14 / (frame * ms) -> smooth ~1 s lock with anti-windup clamp (+/- 0.25 sample/ms)
+            s_integrator += s_err_ema * 0.015f;
+            const float int_limit = (float)(1 << 12); // +/- 4096 LSB in 10.14 (+/- 0.25 sample/ms ~= +/- 5200 ppm)
+            if (s_integrator > int_limit)  s_integrator = int_limit;
+            if (s_integrator < -int_limit) s_integrator = -int_limit;
+        }
+
+        // Proportional + Integral control (Kp = 4.0 LSB_10.14 / frame)
+        float adj = (s_err_ema * 4.0f) + s_integrator;
+        fb_10_14 = nom_10_14 + (int32_t)lroundf(adj);
+
+        // Hard clamp to nominal +/- 1.0 sample/ms to prevent host starvation or feedback jitter blowout
         int32_t min_10_14 = nom_10_14 - (1 << 14);
         int32_t max_10_14 = nom_10_14 + (1 << 14);
         if (fb_10_14 < min_10_14) fb_10_14 = min_10_14;
@@ -384,6 +418,13 @@ bool tud_audio_rx_done_isr(uint8_t rhport, uint16_t n_bytes_received, uint8_t fu
             break;
         }
         avail = tud_audio_available();
+    }
+
+    // Resync guard: if a partial FIFO overrun ever left 1..5 orphaned bytes, discard them
+    // immediately so the 24-bit stereo byte phase (L0 L1 L2 R0 R1 R2) can never shift.
+    if (avail > 0 && avail < AUDIO_BYTES_PER_FRAME) {
+        uint8_t trash[AUDIO_BYTES_PER_FRAME];
+        (void)tud_audio_read(trash, avail);
     }
 
     webhid_update_async_feedback(false);

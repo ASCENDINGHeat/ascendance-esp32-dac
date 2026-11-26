@@ -59,6 +59,15 @@ void audio_pipeline_set_sample_rate(int new_rate);
 int audio_pipeline_get_sample_rate(void);
 
 /**
+ * @brief Read lock-free I2S TX DMA completion telemetry for UAC1 async clock feedback.
+ *
+ * @param out_frames_sent Optional pointer receiving cumulative stereo frames shifted out by I2S DMA.
+ * @param out_last_us     Optional pointer receiving esp_timer_get_time() at last DMA EOF ISR.
+ * @param out_underruns   Optional pointer receiving cumulative I2S TX queue underrun count.
+ */
+void audio_pipeline_get_dma_sync(uint32_t *out_frames_sent, int64_t *out_last_us, uint32_t *out_underruns);
+
+/**
  * @brief Set software master volume with saturation protection.
  *
  * @param volume_percent Volume level from 0 to 100.

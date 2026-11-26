@@ -11,7 +11,9 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "esp_attr.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "driver/i2s_std.h"
 #include "driver/gpio.h"
 
@@ -24,6 +26,33 @@ static _Atomic bool s_is_muted = false;
 
 // Pre-calculated quadratic perceptual volume multiplier (0.0f to 1.0f)
 static _Atomic float s_volume_factor = 0.64f;
+
+// Lock-free I2S DMA completion telemetry (updated in IRAM ISR, read on Core 0 for UAC1 10.14 feedback)
+static DRAM_ATTR _Atomic uint32_t s_dma_frames_sent = 0;
+static DRAM_ATTR _Atomic int64_t  s_dma_last_us     = 0;
+static DRAM_ATTR _Atomic uint32_t s_dma_underruns   = 0;
+
+static bool IRAM_ATTR i2s_tx_on_sent_cb(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
+{
+    (void)handle;
+    (void)user_ctx;
+    if (event && event->size > 0) {
+        // 32-bit stereo I2S slots = 8 bytes per stereo frame
+        uint32_t frames = (uint32_t)(event->size >> 3);
+        atomic_fetch_add_explicit(&s_dma_frames_sent, frames, memory_order_relaxed);
+        atomic_store_explicit(&s_dma_last_us, esp_timer_get_time(), memory_order_release);
+    }
+    return false;
+}
+
+static bool IRAM_ATTR i2s_tx_on_send_q_ovf_cb(i2s_chan_handle_t handle, i2s_event_data_t *event, void *user_ctx)
+{
+    (void)handle;
+    (void)event;
+    (void)user_ctx;
+    atomic_fetch_add_explicit(&s_dma_underruns, 1U, memory_order_relaxed);
+    return false;
+}
 
 static inline int16_t clamp_s16(float v)
 {
@@ -116,6 +145,21 @@ esp_err_t audio_pipeline_init(int sample_rate)
         return ret;
     }
 
+    // Register IRAM-safe DMA completion telemetry BEFORE enabling the channel
+    atomic_store_explicit(&s_dma_frames_sent, 0U, memory_order_relaxed);
+    atomic_store_explicit(&s_dma_last_us, 0, memory_order_relaxed);
+    atomic_store_explicit(&s_dma_underruns, 0U, memory_order_relaxed);
+    i2s_event_callbacks_t cbs = {
+        .on_recv       = NULL,
+        .on_recv_q_ovf = NULL,
+        .on_sent       = i2s_tx_on_sent_cb,
+        .on_send_q_ovf = i2s_tx_on_send_q_ovf_cb,
+    };
+    esp_err_t cb_ret = i2s_channel_register_event_callback(s_tx_chan, &cbs, NULL);
+    if (cb_ret != ESP_OK) {
+        ESP_LOGW(TAG, "I2S DMA telemetry callback registration warning: %s", esp_err_to_name(cb_ret));
+    }
+
     ret = i2s_channel_enable(s_tx_chan);
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to enable I2S channel: %s", esp_err_to_name(ret));
@@ -150,6 +194,8 @@ void audio_pipeline_set_sample_rate(int new_rate)
     if (ret != ESP_OK) {
         ESP_LOGE(TAG, "Failed to reconfigure I2S clock to %d Hz: %s", new_rate, esp_err_to_name(ret));
     }
+    atomic_store_explicit(&s_dma_frames_sent, 0U, memory_order_relaxed);
+    atomic_store_explicit(&s_dma_last_us, 0, memory_order_release);
     i2s_channel_enable(s_tx_chan);
     atomic_store_explicit(&s_current_sample_rate, new_rate, memory_order_release);
 }
@@ -157,6 +203,16 @@ void audio_pipeline_set_sample_rate(int new_rate)
 int audio_pipeline_get_sample_rate(void)
 {
     return atomic_load_explicit(&s_current_sample_rate, memory_order_acquire);
+}
+
+void audio_pipeline_get_dma_sync(uint32_t *out_frames_sent, int64_t *out_last_us, uint32_t *out_underruns)
+{
+    int64_t last_us = atomic_load_explicit(&s_dma_last_us, memory_order_acquire);
+    uint32_t frames = atomic_load_explicit(&s_dma_frames_sent, memory_order_relaxed);
+    uint32_t underruns = atomic_load_explicit(&s_dma_underruns, memory_order_relaxed);
+    if (out_frames_sent) *out_frames_sent = frames;
+    if (out_last_us) *out_last_us = last_us;
+    if (out_underruns) *out_underruns = underruns;
 }
 
 void audio_pipeline_set_volume(int volume_percent)
