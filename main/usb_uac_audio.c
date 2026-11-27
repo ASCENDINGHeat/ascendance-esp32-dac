@@ -602,6 +602,7 @@ bool tud_audio_set_req_ep_cb(uint8_t rhport, tusb_control_request_t const *p_req
         }
     }
     return false;
+}
 
 // Invoked when received GET HID REPORT DESCRIPTOR
 uint8_t const * tud_hid_descriptor_report_cb(uint8_t instance)

@@ -22,8 +22,6 @@
 
 #define TAG "WEBHID_PEQ"
 
-}
-
 static bool webhid_build_band_packet(uint8_t band_idx, peq_channel_t ch, webhid_peq_packet_t *pkt)
 {
     if (!pkt) return false;
