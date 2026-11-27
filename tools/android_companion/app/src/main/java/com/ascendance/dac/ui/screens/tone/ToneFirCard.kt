@@ -50,6 +50,7 @@ internal fun ToneFirCard(
     var firExpanded by rememberSaveable {
         mutableStateOf(dynamics.firEnabled || dynamics.firTapsL > 0 || dynamics.firTapsR > 0)
     }
+    val maxCap = if (sampleRateHz > 48000) 128 else 256
 
     Surface(
         color = colors.surface,
