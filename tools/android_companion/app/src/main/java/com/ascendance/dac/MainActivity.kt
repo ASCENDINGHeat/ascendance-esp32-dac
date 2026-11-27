@@ -438,6 +438,9 @@ private fun AscendanceCompanionApp(viewModel: DacViewModel) {
                         onPushDraftAndSave = { viewModel.pushCurrentStateToHardware(commitToNvs = true) },
                         onToggleOfflineDemo = viewModel::setOfflineDemoMode,
                         onSetOledView = { v -> viewModel.updateDynamics(state.dynamics.copy(oledView = v)) },
+                        onSetLogVolumeTaper = { log ->
+                            viewModel.updateDspPro(state.dspPro.copy(volTaperLogEnabled = log))
+                        },
                         onSetPowerConfig = viewModel::updatePowerConfig,
                         onSelectThemeMode = viewModel::setThemeMode
                     )

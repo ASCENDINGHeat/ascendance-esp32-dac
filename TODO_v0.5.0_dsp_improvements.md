@@ -8,9 +8,9 @@ Invariants preserved: `44.1 / 48 kHz` 24-bit Async UAC 1.0 (`860 B <= 1,024 B` D
 
 ## Phase 1 — Audible Polish & Headroom Protection *(Low CPU, High Impact)*
 
-- [ ] **1. Per-Sample Volume Smoother & Logarithmic dB Taper (`main/peq_dsp.c`, `main/audio_pipeline.c`)**
+- [x] **1. Per-Sample Volume Smoother & Logarithmic dB Taper (`main/dsp/peq_dsp.c`, `main/audio_pipeline.c`)**
   - [x] Replace per-block (`~5.3 ms`) `volume_factor` stepping in `peq_dsp_process_interleaved_s24_to_s32()` & `s16_to_s32()` with a 1-pole per-sample smoother (`10 ms` time constant) to eliminate zipper noise during knob turns or OS volume drags.
-  - [ ] Add selectable volume taper: **Quadratic (Default)** vs. **Logarithmic dB (`-60..0 dB`)** for fine low-volume IEM control.
+  - [x] Add selectable volume taper: **Quadratic (Default)** vs. **Logarithmic dB (`-60..0 dB`)** for fine low-volume IEM control. (Full parity: firmware + OLED menu + WebHID + Android Companion + `dsp_pro_v1` NVS.)
 - [x] **2. Auto-Preamp Headroom Guard (`main/peq_dsp.c`)**
   - Reuse `peq_dsp_eval_curve_db()` peak positive gain + active Bass Enhancer / Exciter mix headroom to automatically compute negative preamp compensation (`15 ms` crossfade), preventing `0 dBFS` tracks from slamming into the limiter when boosting EQ or harmonics. (Full parity: firmware + OLED menu + WebHID + Android Companion + NVS v3.)
 - [x] **3. 24-Bit TPDF Dithering (`main/peq_dsp.c`)**

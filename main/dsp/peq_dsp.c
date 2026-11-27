@@ -1,4 +1,5 @@
 #include "peq_dsp_internal.h"
+#include "audio_pipeline.h"
 #include <stdatomic.h>
 
 portMUX_TYPE s_peq_lock = portMUX_INITIALIZER_UNLOCKED;
@@ -379,6 +380,7 @@ esp_err_t peq_dsp_init(int sample_rate)
     setup_default_dsp_pro(&s_dsp_pro_cfg);
     load_user_profile_nvs();
     atomic_store_explicit(&s_tpdf_dither_rt_en, s_dsp_pro_cfg.tpdf_dither_enabled, memory_order_release);
+    audio_pipeline_set_log_volume_taper(s_dsp_pro_cfg.vol_taper_log_enabled);
     init_harmonics_luts_once();
 
     float crossfade_step = 1.0f / (0.015f * (float)sample_rate);
@@ -926,6 +928,7 @@ void peq_dsp_set_pro_cfg(const peq_dsp_pro_cfg_t *cfg)
     s_dsp_pro_cfg = clamped;
     taskEXIT_CRITICAL(&s_peq_lock);
     atomic_store_explicit(&s_tpdf_dither_rt_en, clamped.tpdf_dither_enabled, memory_order_release);
+    audio_pipeline_set_log_volume_taper(clamped.vol_taper_log_enabled);
 }
 
 void peq_dsp_get_pro_cfg(peq_dsp_pro_cfg_t *out_cfg)

@@ -1,13 +1,15 @@
 import React, { useRef } from 'react';
 import { clamp } from '../dsp/biquad.js';
-import { DEFAULT_HARMONICS, EXCITER_MODES } from '../hid/protocol.js';
+import { DEFAULT_DSP_PRO, DEFAULT_HARMONICS, EXCITER_MODES } from '../hid/protocol.js';
 
 export function DynamicsCard({
   dynamics,
   harmonics = DEFAULT_HARMONICS,
+  dspPro = DEFAULT_DSP_PRO,
   sampleRateHz,
   onChangeDynamics,
   onChangeHarmonics,
+  onChangeDspPro,
   onChangePower,
   onUploadFirFile,
   onClearFir,
@@ -15,8 +17,12 @@ export function DynamicsCard({
   const firInputRef = useRef(null);
   const maxCap = sampleRateHz > 48000 ? 128 : 256;
   const harm = harmonics || DEFAULT_HARMONICS;
+  const pro = dspPro || DEFAULT_DSP_PRO;
   const emitHarmonics = (patch) => {
     if (onChangeHarmonics) onChangeHarmonics({ ...harm, ...patch });
+  };
+  const emitDspPro = (patch) => {
+    if (onChangeDspPro) onChangeDspPro({ ...pro, ...patch });
   };
 
   return (
@@ -120,6 +126,22 @@ export function DynamicsCard({
             <option value={1}>EQ Curve</option>
             <option value={2}>VU Meters</option>
             <option value={3}>Split</option>
+          </select>
+        </div>
+
+        <div>
+          <div className="control-label-row">
+            <span>Volume Taper:</span>
+          </div>
+          <select
+            id="volTaperSelect"
+            value={pro.volTaperLogEnabled ? 1 : 0}
+            onChange={(e) =>
+              emitDspPro({ volTaperLogEnabled: parseInt(e.target.value, 10) === 1 })
+            }
+          >
+            <option value={0}>Standard (Quadratic)</option>
+            <option value={1}>Logarithmic dB (IEM)</option>
           </select>
         </div>
 

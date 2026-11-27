@@ -215,21 +215,50 @@ void IRAM_ATTR audio_pipeline_get_dma_sync(uint32_t *out_frames_sent, int64_t *o
     if (out_underruns) *out_underruns = underruns;
 }
 
+static _Atomic bool s_log_vol_taper = false;
+
+static inline float calc_volume_factor(int volume_percent, bool log_taper)
+{
+    if (volume_percent <= 0) return 0.0f;
+    if (volume_percent >= 100) return 1.0f;
+    if (log_taper) {
+        // Logarithmic dB taper: -60.0 dB at 0% -> 0.0 dB at 100% (0.6 dB per 1% step)
+        float db = -60.0f + 0.6f * (float)volume_percent;
+        return powf(10.0f, db / 20.0f);
+    }
+    // Standard quadratic perceptual taper (0.25f / -12 dB at 50%)
+    float norm = (float)volume_percent / 100.0f;
+    return norm * norm;
+}
+
 void audio_pipeline_set_volume(int volume_percent)
 {
     if (volume_percent < 0) volume_percent = 0;
     if (volume_percent > 100) volume_percent = 100;
     atomic_store_explicit(&s_master_volume, volume_percent, memory_order_release);
 
-    // Smooth quadratic perceptual taper (0.0f at 0%, 0.25f / -12 dB at 50%, 1.0f at 100%)
-    float norm = (float)volume_percent / 100.0f;
-    float factor = norm * norm;
+    bool log_taper = atomic_load_explicit(&s_log_vol_taper, memory_order_acquire);
+    float factor = calc_volume_factor(volume_percent, log_taper);
     atomic_store_explicit(&s_volume_factor, factor, memory_order_release);
-    ESP_LOGI(TAG, "Master volume set to %d%% (factor: %.2f)", volume_percent, factor);
+    ESP_LOGI(TAG, "Master volume set to %d%% (%s, factor: %.4f)",
+             volume_percent, log_taper ? "Log dB" : "Std", factor);
 
     // Update onboard WS2812B aRGB LED brightness and color
     led_indicator_set_volume(volume_percent, atomic_load_explicit(&s_is_muted, memory_order_acquire));
     peq_dsp_notify_volume_pct(volume_percent);
+}
+
+void audio_pipeline_set_log_volume_taper(bool enabled)
+{
+    atomic_store_explicit(&s_log_vol_taper, enabled, memory_order_release);
+    int vol = atomic_load_explicit(&s_master_volume, memory_order_acquire);
+    float factor = calc_volume_factor(vol, enabled);
+    atomic_store_explicit(&s_volume_factor, factor, memory_order_release);
+}
+
+bool audio_pipeline_is_log_volume_taper(void)
+{
+    return atomic_load_explicit(&s_log_vol_taper, memory_order_acquire);
 }
 
 int audio_pipeline_get_volume(void)

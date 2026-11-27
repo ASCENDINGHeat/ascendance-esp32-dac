@@ -9,6 +9,7 @@ import com.ascendance.dac.data.LocalPresetRepository
 import com.ascendance.dac.dsp.EqualizerApoCodec
 import com.ascendance.dac.dsp.WebHidSnapshotJson
 import com.ascendance.dac.model.DspDefaults
+import com.ascendance.dac.model.DspProConfig
 import com.ascendance.dac.model.DynamicsConfig
 import com.ascendance.dac.model.FilterType
 import com.ascendance.dac.model.HarmonicsConfig
@@ -53,6 +54,7 @@ data class DacUiState(
     val mixer: MixerConfig = MixerConfig(),
     val dynamics: DynamicsConfig = DynamicsConfig(),
     val harmonics: HarmonicsConfig = HarmonicsConfig(),
+    val dspPro: DspProConfig = DspProConfig(),
     val localPresets: List<LocalPreset> = emptyList(),
     val logs: List<String> = emptyList(),
     val statusBanner: String? = null,
@@ -236,7 +238,8 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
                         activePresetSlot = msg.activeSlot,
                         slotNames = updatedNames,
                         dynamics = msg.dynamics,
-                        harmonics = msg.harmonics
+                        harmonics = msg.harmonics,
+                        dspPro = msg.dspPro
                     )
                 }
             }
@@ -638,6 +641,22 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
             delay(16)
             if (_uiState.value.usbInfo.connected) {
                 transport.sendPacket(PeqPacketCodec.buildSetHarmonics(safe))
+            }
+        }
+    }
+
+    fun updateDspPro(config: DspProConfig) {
+        val safe = config.clamped()
+        _uiState.update {
+            it.copy(
+                dspPro = safe,
+                pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft,
+                hasUnsavedChanges = true
+            )
+        }
+        viewModelScope.launch {
+            if (_uiState.value.usbInfo.connected) {
+                transport.sendPacket(PeqPacketCodec.buildSetDspPro(safe))
             }
         }
     }

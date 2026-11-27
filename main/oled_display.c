@@ -347,6 +347,9 @@ static void format_menu_item_label(int item_idx, const ui_menu_state_t *m, char 
     case MENU_ITEM_AUTO_PREAMP:
         snprintf(buf, sz, "%d. AutoPreamp:%s", num, m->auto_preamp_enabled ? "On" : "Off");
         break;
+    case MENU_ITEM_VOL_TAPER:
+        snprintf(buf, sz, "%d. VolTaper:%s", num, m->vol_taper_log ? "Log" : "Std");
+        break;
     case MENU_ITEM_AUDIO_SOURCE:
         snprintf(buf, sz, "%d. Input:%.10s", num,
                  m->current_source[0] ? m->current_source : "USB DAC");

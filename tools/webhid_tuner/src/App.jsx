@@ -11,6 +11,7 @@ import {
   CH_LEFT,
   CH_LINKED,
   CH_RIGHT,
+  DEFAULT_DSP_PRO,
   DEFAULT_DYNAMICS,
   DEFAULT_HARMONICS,
   DEFAULT_MIXER,
@@ -32,6 +33,7 @@ import {
   encodeSelectProfile,
   encodeSetBandCount,
   encodeSetBandLive,
+  encodeSetDspPro,
   encodeSetHarmonics,
 } from './hid/protocol.js';
 import {
@@ -62,6 +64,7 @@ export default function App() {
   const [mixer, setMixer] = useState(() => ({ ...DEFAULT_MIXER }));
   const [dynamics, setDynamics] = useState(() => ({ ...DEFAULT_DYNAMICS }));
   const [harmonics, setHarmonics] = useState(() => ({ ...DEFAULT_HARMONICS }));
+  const [dspPro, setDspPro] = useState(() => ({ ...DEFAULT_DSP_PRO }));
   const [showPhase, setShowPhase] = useState(false);
   const [showGroupDelay, setShowGroupDelay] = useState(false);
   const [hoveredBandIdx, setHoveredBandIdx] = useState(-1);
@@ -123,6 +126,7 @@ export default function App() {
       setDynamics(decoded.dynamics);
       if (decoded.harmonics) {
         setHarmonics(decoded.harmonics);
+        if (decoded.dspPro) setDspPro(decoded.dspPro);
       }
       return;
     }
@@ -500,6 +504,14 @@ export default function App() {
     [sendReport]
   );
 
+  const handleChangeDspPro = useCallback(
+    (nextPro) => {
+      setDspPro(nextPro);
+      sendReport(encodeSetDspPro(nextPro));
+    },
+    [sendReport]
+  );
+
   const handleChangePower = useCallback(
     (autoMuteSec, oledDimSec) => {
       setDynamics((prev) => ({ ...prev, autoMuteSec, oledDimSec }));
@@ -642,9 +654,11 @@ export default function App() {
       <DynamicsCard
         dynamics={dynamics}
         harmonics={harmonics}
+        dspPro={dspPro}
         sampleRateHz={sampleRateHz}
         onChangeDynamics={handleChangeDynamics}
         onChangeHarmonics={handleChangeHarmonics}
+        onChangeDspPro={handleChangeDspPro}
         onChangePower={handleChangePower}
         onUploadFirFile={handleUploadFirFile}
         onClearFir={handleClearFir}

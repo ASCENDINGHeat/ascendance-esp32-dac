@@ -57,6 +57,7 @@ fun DeviceTab(
     onPushDraftAndSave: () -> Unit,
     onToggleOfflineDemo: (Boolean) -> Unit,
     onSetOledView: (Int) -> Unit,
+    onSetLogVolumeTaper: (Boolean) -> Unit,
     onSetPowerConfig: (Int, Int) -> Unit,
     onSelectThemeMode: (AppThemeMode) -> Unit,
     modifier: Modifier = Modifier
@@ -208,6 +209,21 @@ fun DeviceTab(
                             },
                             shape = SegmentedButtonDefaults.itemShape(index = idx, count = OledViewMode.entries.size),
                             label = { Text(view.label, fontSize = 10.sp) }
+                        )
+                    }
+                }
+
+                Text("Volume Taper", color = colors.onSurfaceVariant, fontSize = 11.sp)
+                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                    listOf(false to "Standard", true to "Log dB (IEM)").forEachIndexed { idx, (isLog, lbl) ->
+                        SegmentedButton(
+                            selected = state.dspPro.volTaperLogEnabled == isLog,
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                                onSetLogVolumeTaper(isLog)
+                            },
+                            shape = SegmentedButtonDefaults.itemShape(index = idx, count = 2),
+                            label = { Text(lbl, fontSize = 11.sp) }
                         )
                     }
                 }

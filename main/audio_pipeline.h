@@ -99,6 +99,12 @@ int audio_pipeline_adjust_volume(int delta);
 float audio_pipeline_get_volume_factor(void);
 
 /**
+ * @brief Select Standard Quadratic (false) or Logarithmic dB -60..0 dB (true) volume taper.
+ */
+void audio_pipeline_set_log_volume_taper(bool enabled);
+bool audio_pipeline_is_log_volume_taper(void);
+
+/**
  * @brief Push stereo 16-bit PCM audio samples to 32-bit I2S DMA.
  *
  * Applies current software volume scaling and up-shifts to 32-bit MSB-aligned slots.
