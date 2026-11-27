@@ -300,6 +300,69 @@ static void render_playback_screen(void)
     oled_flush();
 }
 
+static void format_menu_item_label(int item_idx, const ui_menu_state_t *m, char *buf, size_t sz)
+{
+    static const char *const k_xf_names[3]   = { "Off", "Low", "High" };
+    static const char *const k_loud_names[3] = { "Off", "Mild", "Full" };
+    static const char *const k_view_names[4] = { "Classic", "Curve", "VU", "Split" };
+    static const char *const k_exc_names[PEQ_EXCITER_MODE_COUNT] = { "Tube", "Tape", "Air" };
+
+    int num = item_idx + 1;
+    switch (item_idx) {
+    case MENU_ITEM_EQ_ADJUST:
+        snprintf(buf, sz, "%d. Live EQ Adjust", num);
+        break;
+    case MENU_ITEM_EQ_PRESET:
+        snprintf(buf, sz, "%d. Slot:%.12s", num,
+                 m->current_preset[0] ? m->current_preset : "Slot 1");
+        break;
+    case MENU_ITEM_AB_BYPASS:
+        snprintf(buf, sz, "%d. A/B:%s", num, m->ab_bypass ? "Bypass" : "Active");
+        break;
+    case MENU_ITEM_CROSSFEED:
+        snprintf(buf, sz, "%d. Crossfeed:%s", num,
+                 k_xf_names[(m->crossfeed_level < 3) ? m->crossfeed_level : 0]);
+        break;
+    case MENU_ITEM_LOUDNESS:
+        snprintf(buf, sz, "%d. Loudness:%s", num,
+                 k_loud_names[(m->loudness_mode < 3) ? m->loudness_mode : 0]);
+        break;
+    case MENU_ITEM_LIMITER:
+        snprintf(buf, sz, "%d. Limiter:%s", num, m->limiter_enabled ? "On" : "Off");
+        break;
+    case MENU_ITEM_OLED_VIEW:
+        snprintf(buf, sz, "%d. View:%s", num,
+                 k_view_names[(m->oled_view < 4) ? m->oled_view : 0]);
+        break;
+    case MENU_ITEM_BASS_ENH:
+        snprintf(buf, sz, "%d. Bass Enh:%s", num, m->bass_enabled ? "On" : "Off");
+        break;
+    case MENU_ITEM_EXCITER:
+        snprintf(buf, sz, "%d. Exciter:%s", num,
+                 m->exciter_enabled ? k_exc_names[(m->exciter_mode < PEQ_EXCITER_MODE_COUNT) ? m->exciter_mode : 0] : "Off");
+        break;
+    case MENU_ITEM_PREAMP_GAIN:
+        snprintf(buf, sz, "%d. Preamp:%.1fdB", num, m->preamp_gain_db);
+        break;
+    case MENU_ITEM_AUTO_PREAMP:
+        snprintf(buf, sz, "%d. AutoPreamp:%s", num, m->auto_preamp_enabled ? "On" : "Off");
+        break;
+    case MENU_ITEM_AUDIO_SOURCE:
+        snprintf(buf, sz, "%d. Input:%.10s", num,
+                 m->current_source[0] ? m->current_source : "USB DAC");
+        break;
+    case MENU_ITEM_SAVE_NVS:
+        snprintf(buf, sz, "%d. Save to DAC", num);
+        break;
+    case MENU_ITEM_EXIT:
+        snprintf(buf, sz, "%d. Exit Menu", num);
+        break;
+    default:
+        snprintf(buf, sz, " ");
+        break;
+    }
+}
+
 static void render_menu_screen(void)
 {
     xSemaphoreTake(s_ui_mutex, portMAX_DELAY);
@@ -321,74 +384,12 @@ static void render_menu_screen(void)
         }
     }
 
-    const char *xf_names[3]   = { "Off", "Low", "High" };
-    const char *loud_names[3] = { "Off", "Mild", "Full" };
-    const char *view_names[4] = { "Classic", "Curve", "VU", "Split" };
-    const char *exc_names[PEQ_EXCITER_MODE_COUNT] = { "Tube", "Tape", "Air" };
-
-    char line_buf[64];
+    char line_buf[32];
     for (int i = 0; i < 4; i++) {
         int item_idx = top_idx + i;
         if (item_idx >= MENU_ITEM_COUNT) break;
 
-        switch (item_idx) {
-        case MENU_ITEM_EQ_ADJUST:
-            snprintf(line_buf, sizeof(line_buf), "1. Live EQ Adjust");
-            break;
-        case MENU_ITEM_EQ_PRESET:
-            snprintf(line_buf, sizeof(line_buf), "2. Slot:%.12s",
-                     menu.current_preset[0] ? menu.current_preset : "Slot 1");
-            break;
-        case MENU_ITEM_AB_BYPASS:
-            snprintf(line_buf, sizeof(line_buf), "3. A/B:%s", menu.ab_bypass ? "Bypass" : "Active");
-            break;
-        case MENU_ITEM_CROSSFEED: {
-            uint8_t xf = (menu.crossfeed_level < 3) ? menu.crossfeed_level : 0;
-            snprintf(line_buf, sizeof(line_buf), "4. Crossfeed:%s", xf_names[xf]);
-            break;
-        }
-        case MENU_ITEM_LOUDNESS: {
-            uint8_t ld = (menu.loudness_mode < 3) ? menu.loudness_mode : 0;
-            snprintf(line_buf, sizeof(line_buf), "5. Loudness:%s", loud_names[ld]);
-            break;
-        }
-        case MENU_ITEM_LIMITER:
-            snprintf(line_buf, sizeof(line_buf), "6. Limiter:%s", menu.limiter_enabled ? "On" : "Off");
-            break;
-        case MENU_ITEM_OLED_VIEW: {
-            uint8_t vw = (menu.oled_view < 4) ? menu.oled_view : 0;
-            snprintf(line_buf, sizeof(line_buf), "7. View:%s", view_names[vw]);
-            break;
-        }
-        case MENU_ITEM_BASS_ENH:
-            snprintf(line_buf, sizeof(line_buf), "8. Bass Enh:%s", menu.bass_enabled ? "On" : "Off");
-            break;
-        case MENU_ITEM_EXCITER: {
-            uint8_t em = (menu.exciter_mode < PEQ_EXCITER_MODE_COUNT) ? menu.exciter_mode : 0;
-            snprintf(line_buf, sizeof(line_buf), "9. Exciter:%s",
-                     menu.exciter_enabled ? exc_names[em] : "Off");
-            break;
-        }
-        case MENU_ITEM_PREAMP_GAIN:
-            snprintf(line_buf, sizeof(line_buf), "10. Preamp:%.1fdB", menu.preamp_gain_db);
-            break;
-        case MENU_ITEM_AUTO_PREAMP:
-            snprintf(line_buf, sizeof(line_buf), "11. AutoPreamp:%s", menu.auto_preamp_enabled ? "On" : "Off");
-            break;
-        case MENU_ITEM_AUDIO_SOURCE:
-            snprintf(line_buf, sizeof(line_buf), "12. Input:%.10s",
-                     menu.current_source[0] ? menu.current_source : "USB DAC");
-            break;
-        case MENU_ITEM_SAVE_NVS:
-            snprintf(line_buf, sizeof(line_buf), "13. Save to DAC");
-            break;
-        case MENU_ITEM_EXIT:
-            snprintf(line_buf, sizeof(line_buf), "14. Exit Menu");
-            break;
-        default:
-            snprintf(line_buf, sizeof(line_buf), " ");
-            break;
-        }
+        format_menu_item_label(item_idx, &menu, line_buf, sizeof(line_buf));
 
         bool is_selected = (item_idx == menu.selected_idx);
         int y_pos = 13 + (i * 9);
