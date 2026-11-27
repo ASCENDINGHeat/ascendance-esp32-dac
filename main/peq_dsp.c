@@ -2929,6 +2929,63 @@ static void publish_block_metrics(float pk_l, float pk_r, float sq_sum_l, float 
     taskEXIT_CRITICAL(&s_peq_lock);
 }
 
+static inline void process_dsp_chunk_f32_to_s32(size_t chunk, int32_t *dst_s32, float volume_factor,
+                                                float *blk_pk_l, float *blk_pk_r,
+                                                float *blk_sq_l, float *blk_sq_r,
+                                                bool *blk_lim, bool *blk_clip)
+{
+    /* Stage 2: Optional ESP-DSP SIMD FIR Convolution (Core 1 PIE accelerated) */
+    const float *ch_l_ptr = s_fir_in_l;
+    const float *ch_r_ptr = s_fir_in_r;
+    if (s_fir_rt_en && s_fir_rt_active_l) {
+        dsps_fir_f32(&s_fir_rt_l, s_fir_in_l, s_fir_out_l, (int)chunk);
+        ch_l_ptr = s_fir_out_l;
+    }
+    if (s_fir_rt_en && s_fir_rt_active_r) {
+        dsps_fir_f32(&s_fir_rt_r, s_fir_in_r, s_fir_out_r, (int)chunk);
+        ch_r_ptr = s_fir_out_r;
+    }
+
+    /* Stage 3: Harmonics -> Mixer / Crossfeed -> Smooth Volume -> Lookahead Limiter -> TPDF Dither -> 24-bit I2S Pack */
+    if (s_vol_smooth < 0.0f) {
+        s_vol_smooth = volume_factor;
+    }
+    float pk_l = *blk_pk_l;
+    float pk_r = *blk_pk_r;
+    float sq_l = *blk_sq_l;
+    float sq_r = *blk_sq_r;
+    for (size_t i = 0; i < chunk; i++) {
+        float hm_l, hm_r, mx_l, mx_r, fin_l, fin_r;
+        s_vol_smooth += s_vol_smooth_coeff * (volume_factor - s_vol_smooth);
+        if (fabsf(volume_factor - s_vol_smooth) < 1e-6f) {
+            s_vol_smooth = volume_factor;
+        }
+        float vol_cur = s_vol_smooth;
+        process_harmonics_sample(ch_l_ptr[i], ch_r_ptr[i], 1.0f / FULLSCALE_S24_F, FULLSCALE_S24_F, &hm_l, &hm_r);
+        process_mixer_sample(hm_l, hm_r, &mx_l, &mx_r);
+        apply_limiter_and_ramp(mx_l * vol_cur, mx_r * vol_cur,
+                               &fin_l, &fin_r, blk_lim, blk_clip);
+
+        /* Meter pre-volume (post-DSP/mixer) level unless muted so VU stays lively at any knob position */
+        float ml = (vol_cur > 0.0f) ? mx_l : 0.0f;
+        float mr = (vol_cur > 0.0f) ? mx_r : 0.0f;
+        float al = fabsf(ml);
+        float ar = fabsf(mr);
+        if (al > pk_l) pk_l = al;
+        if (ar > pk_r) pk_r = ar;
+        sq_l += ml * ml;
+        sq_r += mr * mr;
+
+        bool dither_en = (vol_cur > 0.0f && (al > 1.0f || ar > 1.0f));
+        dst_s32[i * 2]     = clamp_s24_to_s32_dither(fin_l, dither_en);
+        dst_s32[i * 2 + 1] = clamp_s24_to_s32_dither(fin_r, dither_en);
+    }
+    *blk_pk_l = pk_l;
+    *blk_pk_r = pk_r;
+    *blk_sq_l = sq_l;
+    *blk_sq_r = sq_r;
+}
+
 void peq_dsp_process_interleaved_s24_to_s32(const uint8_t *src_s24_packed, int32_t *dst_s32,
                                             size_t num_frames, float volume_factor)
 {
@@ -2963,49 +3020,9 @@ void peq_dsp_process_interleaved_s24_to_s32(const uint8_t *src_s24_packed, int32
             s_fir_in_r[i] = eq_r;
         }
 
-        /* Stage 2: Optional ESP-DSP SIMD FIR Convolution (Core 1 PIE accelerated) */
-        const float *ch_l_ptr = s_fir_in_l;
-        const float *ch_r_ptr = s_fir_in_r;
-        if (s_fir_rt_en && s_fir_rt_active_l) {
-            dsps_fir_f32(&s_fir_rt_l, s_fir_in_l, s_fir_out_l, (int)chunk);
-            ch_l_ptr = s_fir_out_l;
-        }
-        if (s_fir_rt_en && s_fir_rt_active_r) {
-            dsps_fir_f32(&s_fir_rt_r, s_fir_in_r, s_fir_out_r, (int)chunk);
-            ch_r_ptr = s_fir_out_r;
-        }
-
-        /* Stage 3: Harmonics -> Mixer / Crossfeed -> Smooth Volume -> Lookahead Limiter -> TPDF Dither -> 24-bit I2S Pack */
-        if (s_vol_smooth < 0.0f) {
-            s_vol_smooth = volume_factor;
-        }
-        for (size_t i = 0; i < chunk; i++) {
-            float hm_l, hm_r, mx_l, mx_r, fin_l, fin_r;
-            s_vol_smooth += s_vol_smooth_coeff * (volume_factor - s_vol_smooth);
-            if (fabsf(volume_factor - s_vol_smooth) < 1e-6f) {
-                s_vol_smooth = volume_factor;
-            }
-            float vol_cur = s_vol_smooth;
-            process_harmonics_sample(ch_l_ptr[i], ch_r_ptr[i], 1.0f / FULLSCALE_S24_F, FULLSCALE_S24_F, &hm_l, &hm_r);
-            process_mixer_sample(hm_l, hm_r, &mx_l, &mx_r);
-            apply_limiter_and_ramp(mx_l * vol_cur, mx_r * vol_cur,
-                                   &fin_l, &fin_r, &blk_lim, &blk_clip);
-
-            /* Meter pre-volume (post-DSP/mixer) level unless muted so VU stays lively at any knob position */
-            float ml = (vol_cur > 0.0f) ? mx_l : 0.0f;
-            float mr = (vol_cur > 0.0f) ? mx_r : 0.0f;
-            float al = fabsf(ml);
-            float ar = fabsf(mr);
-            if (al > blk_pk_l) blk_pk_l = al;
-            if (ar > blk_pk_r) blk_pk_r = ar;
-            blk_sq_l += ml * ml;
-            blk_sq_r += mr * mr;
-
-            bool dither_en = (vol_cur > 0.0f && (al > 1.0f || ar > 1.0f));
-            dst_s32[(pos + i) * 2]     = clamp_s24_to_s32_dither(fin_l, dither_en);
-            dst_s32[(pos + i) * 2 + 1] = clamp_s24_to_s32_dither(fin_r, dither_en);
-        }
-
+        process_dsp_chunk_f32_to_s32(chunk, &dst_s32[pos * 2], volume_factor,
+                                     &blk_pk_l, &blk_pk_r, &blk_sq_l, &blk_sq_r,
+                                     &blk_lim, &blk_clip);
         pos += chunk;
     }
 
@@ -3043,46 +3060,9 @@ void peq_dsp_process_interleaved_s16_to_s32(const int16_t *src_s16, int32_t *dst
             s_fir_in_r[i] = eq_r;
         }
 
-        const float *ch_l_ptr = s_fir_in_l;
-        const float *ch_r_ptr = s_fir_in_r;
-        if (s_fir_rt_en && s_fir_rt_active_l) {
-            dsps_fir_f32(&s_fir_rt_l, s_fir_in_l, s_fir_out_l, (int)chunk);
-            ch_l_ptr = s_fir_out_l;
-        }
-        if (s_fir_rt_en && s_fir_rt_active_r) {
-            dsps_fir_f32(&s_fir_rt_r, s_fir_in_r, s_fir_out_r, (int)chunk);
-            ch_r_ptr = s_fir_out_r;
-        }
-
-        if (s_vol_smooth < 0.0f) {
-            s_vol_smooth = volume_factor;
-        }
-        for (size_t i = 0; i < chunk; i++) {
-            float hm_l, hm_r, mx_l, mx_r, fin_l, fin_r;
-            s_vol_smooth += s_vol_smooth_coeff * (volume_factor - s_vol_smooth);
-            if (fabsf(volume_factor - s_vol_smooth) < 1e-6f) {
-                s_vol_smooth = volume_factor;
-            }
-            float vol_cur = s_vol_smooth;
-            process_harmonics_sample(ch_l_ptr[i], ch_r_ptr[i], 1.0f / FULLSCALE_S24_F, FULLSCALE_S24_F, &hm_l, &hm_r);
-            process_mixer_sample(hm_l, hm_r, &mx_l, &mx_r);
-            apply_limiter_and_ramp(mx_l * vol_cur, mx_r * vol_cur,
-                                   &fin_l, &fin_r, &blk_lim, &blk_clip);
-
-            float ml = (vol_cur > 0.0f) ? mx_l : 0.0f;
-            float mr = (vol_cur > 0.0f) ? mx_r : 0.0f;
-            float al = fabsf(ml);
-            float ar = fabsf(mr);
-            if (al > blk_pk_l) blk_pk_l = al;
-            if (ar > blk_pk_r) blk_pk_r = ar;
-            blk_sq_l += ml * ml;
-            blk_sq_r += mr * mr;
-
-            bool dither_en = (vol_cur > 0.0f && (al > 1.0f || ar > 1.0f));
-            dst_s32[(pos + i) * 2]     = clamp_s24_to_s32_dither(fin_l, dither_en);
-            dst_s32[(pos + i) * 2 + 1] = clamp_s24_to_s32_dither(fin_r, dither_en);
-        }
-
+        process_dsp_chunk_f32_to_s32(chunk, &dst_s32[pos * 2], volume_factor,
+                                     &blk_pk_l, &blk_pk_r, &blk_sq_l, &blk_sq_r,
+                                     &blk_lim, &blk_clip);
         pos += chunk;
     }
 
