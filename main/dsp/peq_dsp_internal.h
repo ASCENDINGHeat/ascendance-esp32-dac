@@ -216,15 +216,18 @@ static inline void set_passthrough_coeffs(biquad_state_t *out_bq)
 /* Internal cross-module helpers */
 void calculate_biquad(const peq_band_param_t *band, float sample_rate, biquad_state_t *out_bq);
 bool biquad_is_passthrough(const biquad_state_t *bq);
-void compute_loudness_biquads(peq_loudness_mode_t mode, int vol_pct, float sample_rate, biquad_state_t out_bq[2]);
+void compute_loudness_biquads(peq_loudness_mode_t mode, int vol_pct, float sample_rate,
+                              bool ab_bypass, biquad_state_t out_loud[2], bool *out_active);
 void apply_profile_to_biquads(const peq_profile_t *prof, float sample_rate, bool ab_bypass,
-                              biquad_state_t *out_bq, int *out_num_bands, bool *out_is_flat);
+                              biquad_state_t *target, float *preamp_lin,
+                              int *out_num_bands, bool *out_is_flat);
 void calc_butterworth_lpf(double fc, double sr, biquad_state_t *out);
 void calc_butterworth_hpf(double fc, double sr, biquad_state_t *out);
 float compute_auto_preamp_db(const biquad_state_t *bq_l, int nb_l,
                              const biquad_state_t *bq_r, int nb_r,
-                             bool loud_en, const biquad_state_t loud_bq[2],
-                             float sample_rate, const peq_harmonics_cfg_t *harm);
+                             const biquad_state_t *loud_bq, bool loud_en,
+                             const peq_harmonics_cfg_t *harm, bool ab_bypass,
+                             float sample_rate);
 
 void compute_mixer_rt(const peq_mixer_config_t *cfg, float sample_rate, mixer_rt_t *out);
 void setup_default_mixer(peq_mixer_config_t *cfg);
