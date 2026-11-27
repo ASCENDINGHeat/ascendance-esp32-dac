@@ -142,13 +142,18 @@ static uint32_t s_dither_rng       = 0x13579BDFUL;
 static uint64_t s_silence_samples  = 0;
 
 /* Telemetry VU & Silence snapshot (written on Core 1, read on Core 0 under s_peq_lock) */
-static float    s_vu_peak_lin_l   = 0.0f;
-static float    s_vu_peak_lin_r   = 0.0f;
-static float    s_vu_rms_lin_l    = 0.0f;
-static float    s_vu_rms_lin_r    = 0.0f;
-static bool     s_vu_lim_active   = false;
-static bool     s_vu_clip_latched = false;
-static uint32_t s_vu_silence_ms   = 0;
+/* Lock-free VU & Auto-Mute telemetry (written on Core 1 without spinlocks, read on Core 0) */
+static _Atomic uint32_t s_vu_peak_u32_l   = 0U;
+static _Atomic uint32_t s_vu_peak_u32_r   = 0U;
+static _Atomic uint32_t s_vu_rms_u32_l    = 0U;
+static _Atomic uint32_t s_vu_rms_u32_r    = 0U;
+static _Atomic bool     s_vu_lim_active   = false;
+static _Atomic bool     s_vu_clip_latched = false;
+static _Atomic uint32_t s_vu_silence_ms   = 0U;
+static _Atomic uint32_t s_vu_clear_gen    = 0U;
+static uint32_t         s_vu_clear_seen   = 0U;
+static float            s_vu_rms_rt_l     = 0.0f;
+static float            s_vu_rms_rt_r     = 0.0f;
 
 
 static inline int16_t clamp_s16(float val)
@@ -935,22 +940,16 @@ void peq_dsp_get_pro_cfg(peq_dsp_pro_cfg_t *out_cfg)
 void peq_dsp_get_vu_metrics(peq_vu_metrics_t *out_vu, bool clear_clip)
 {
     if (!out_vu) return;
-    taskENTER_CRITICAL(&s_peq_lock);
-    float pk_l = s_vu_peak_lin_l / FULLSCALE_S24_F;
-    float pk_r = s_vu_peak_lin_r / FULLSCALE_S24_F;
-    float rm_l = s_vu_rms_lin_l  / FULLSCALE_S24_F;
-    float rm_r = s_vu_rms_lin_r  / FULLSCALE_S24_F;
-    out_vu->limiter_active = s_vu_lim_active;
-    out_vu->clip_latched   = s_vu_clip_latched;
-    out_vu->silence_ms     = s_vu_silence_ms;
-    /* Reset inter-frame peak/limiter accumulators so each 100 ms UI frame captures true max */
-    s_vu_peak_lin_l = 0.0f;
-    s_vu_peak_lin_r = 0.0f;
-    s_vu_lim_active = false;
-    if (clear_clip) {
-        s_vu_clip_latched = false;
-    }
-    taskEXIT_CRITICAL(&s_peq_lock);
+    /* Atomic read-and-reset of inter-frame peak/limiter accumulators without blocking Core 1 */
+    float pk_l = (float)atomic_exchange_explicit(&s_vu_peak_u32_l, 0U, memory_order_acq_rel) / FULLSCALE_S24_F;
+    float pk_r = (float)atomic_exchange_explicit(&s_vu_peak_u32_r, 0U, memory_order_acq_rel) / FULLSCALE_S24_F;
+    float rm_l = (float)atomic_load_explicit(&s_vu_rms_u32_l, memory_order_acquire) / FULLSCALE_S24_F;
+    float rm_r = (float)atomic_load_explicit(&s_vu_rms_u32_r, memory_order_acquire) / FULLSCALE_S24_F;
+    out_vu->limiter_active = atomic_exchange_explicit(&s_vu_lim_active, false, memory_order_acq_rel);
+    out_vu->clip_latched   = clear_clip
+                             ? atomic_exchange_explicit(&s_vu_clip_latched, false, memory_order_acq_rel)
+                             : atomic_load_explicit(&s_vu_clip_latched, memory_order_acquire);
+    out_vu->silence_ms     = atomic_load_explicit(&s_vu_silence_ms, memory_order_acquire);
 
     out_vu->peak_db_l = (pk_l > 1e-5f) ? (20.0f * log10f(pk_l)) : -96.0f;
     out_vu->peak_db_r = (pk_r > 1e-5f) ? (20.0f * log10f(pk_r)) : -96.0f;
@@ -960,13 +959,12 @@ void peq_dsp_get_vu_metrics(peq_vu_metrics_t *out_vu, bool clear_clip)
 
 void peq_dsp_clear_vu_metrics(void)
 {
-    taskENTER_CRITICAL(&s_peq_lock);
-    s_vu_peak_lin_l = 0.0f;
-    s_vu_peak_lin_r = 0.0f;
-    s_vu_rms_lin_l  = 0.0f;
-    s_vu_rms_lin_r  = 0.0f;
-    s_vu_lim_active = false;
-    taskEXIT_CRITICAL(&s_peq_lock);
+    atomic_store_explicit(&s_vu_peak_u32_l, 0U, memory_order_relaxed);
+    atomic_store_explicit(&s_vu_peak_u32_r, 0U, memory_order_relaxed);
+    atomic_store_explicit(&s_vu_rms_u32_l, 0U, memory_order_relaxed);
+    atomic_store_explicit(&s_vu_rms_u32_r, 0U, memory_order_relaxed);
+    atomic_store_explicit(&s_vu_lim_active, false, memory_order_relaxed);
+    atomic_fetch_add_explicit(&s_vu_clear_gen, 1U, memory_order_release);
 }
 
 void peq_dsp_trigger_wake_ramp(void)
@@ -980,8 +978,8 @@ bool peq_dsp_is_signal_silent(void)
 {
     taskENTER_CRITICAL(&s_peq_lock);
     uint16_t sec = s_auto_mute_sec;
-    uint32_t sil_ms = s_vu_silence_ms;
     taskEXIT_CRITICAL(&s_peq_lock);
+    uint32_t sil_ms = atomic_load_explicit(&s_vu_silence_ms, memory_order_acquire);
     return (sec > 0 && sil_ms >= (uint32_t)sec * 1000UL);
 }
 
@@ -1539,28 +1537,46 @@ void peq_dsp_process_interleaved_s16(int16_t *samples, size_t num_frames)
     }
 }
 
+static inline void atomic_max_u32(_Atomic uint32_t *dst, uint32_t val)
+{
+    uint32_t cur = atomic_load_explicit(dst, memory_order_relaxed);
+    while (val > cur && !atomic_compare_exchange_weak_explicit(
+               dst, &cur, val, memory_order_release, memory_order_relaxed)) {
+    }
+}
+
 static void publish_block_metrics(float pk_l, float pk_r, float sq_sum_l, float sq_sum_r,
                                   size_t total_frames, bool lim_active, bool clipped)
 {
     float rms_l = sqrtf(sq_sum_l / (float)total_frames);
     float rms_r = sqrtf(sq_sum_r / (float)total_frames);
-    uint32_t sil_ms = (s_rt_sr > 0) ? (uint32_t)((s_silence_samples * 1000ULL) / (uint64_t)s_rt_sr) : 0;
+    uint32_t sil_ms = (s_rt_sr > 0) ? (uint32_t)((s_silence_samples * 1000ULL) / (uint64_t)s_rt_sr) : 0U;
 
-    taskENTER_CRITICAL(&s_peq_lock);
-    if (pk_l > s_vu_peak_lin_l) s_vu_peak_lin_l = pk_l;
-    if (pk_r > s_vu_peak_lin_r) s_vu_peak_lin_r = pk_r;
-    s_vu_rms_lin_l = (rms_l > s_vu_rms_lin_l)
-                     ? (0.50f * rms_l + 0.50f * s_vu_rms_lin_l)
-                     : (0.15f * rms_l + 0.85f * s_vu_rms_lin_l);
-    s_vu_rms_lin_r = (rms_r > s_vu_rms_lin_r)
-                     ? (0.50f * rms_r + 0.50f * s_vu_rms_lin_r)
-                     : (0.15f * rms_r + 0.85f * s_vu_rms_lin_r);
-    if (s_vu_rms_lin_l < 1.0f) s_vu_rms_lin_l = 0.0f;
-    if (s_vu_rms_lin_r < 1.0f) s_vu_rms_lin_r = 0.0f;
-    if (lim_active) s_vu_lim_active = true;
-    if (clipped) s_vu_clip_latched = true;
-    s_vu_silence_ms = sil_ms;
-    taskEXIT_CRITICAL(&s_peq_lock);
+    uint32_t clr_gen = atomic_load_explicit(&s_vu_clear_gen, memory_order_acquire);
+    if (clr_gen != s_vu_clear_seen) {
+        s_vu_rms_rt_l = 0.0f;
+        s_vu_rms_rt_r = 0.0f;
+        s_vu_clear_seen = clr_gen;
+    }
+
+    s_vu_rms_rt_l = (rms_l > s_vu_rms_rt_l)
+                    ? (0.50f * rms_l + 0.50f * s_vu_rms_rt_l)
+                    : (0.15f * rms_l + 0.85f * s_vu_rms_rt_l);
+    s_vu_rms_rt_r = (rms_r > s_vu_rms_rt_r)
+                    ? (0.50f * rms_r + 0.50f * s_vu_rms_rt_r)
+                    : (0.15f * rms_r + 0.85f * s_vu_rms_rt_r);
+    if (s_vu_rms_rt_l < 1.0f) s_vu_rms_rt_l = 0.0f;
+    if (s_vu_rms_rt_r < 1.0f) s_vu_rms_rt_r = 0.0f;
+
+    uint32_t pk_l_u = (pk_l > 0.0f) ? (uint32_t)pk_l : 0U;
+    uint32_t pk_r_u = (pk_r > 0.0f) ? (uint32_t)pk_r : 0U;
+    atomic_max_u32(&s_vu_peak_u32_l, pk_l_u);
+    atomic_max_u32(&s_vu_peak_u32_r, pk_r_u);
+    atomic_store_explicit(&s_vu_rms_u32_l, (uint32_t)s_vu_rms_rt_l, memory_order_release);
+    atomic_store_explicit(&s_vu_rms_u32_r, (uint32_t)s_vu_rms_rt_r, memory_order_release);
+    if (lim_active) atomic_store_explicit(&s_vu_lim_active, true, memory_order_release);
+    if (clipped)    atomic_store_explicit(&s_vu_clip_latched, true, memory_order_release);
+    atomic_store_explicit(&s_vu_silence_ms, sil_ms, memory_order_release);
 }
 
 static inline void process_dsp_chunk_f32_to_s32(size_t chunk, int32_t *dst_s32, float volume_factor,
