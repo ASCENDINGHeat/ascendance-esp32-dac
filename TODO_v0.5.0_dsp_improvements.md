@@ -54,38 +54,40 @@ Invariants preserved: `44.1 / 48 kHz` 24-bit Async UAC 1.0 (`860 B <= 1,024 B` D
 - [x] **NVS Persistence:** Added `dsp_pro_v1` blob (`peq_storage_nvs.c`) with CRC32 + `memcmp` delta verification, committed only on explicit Save.
 
 ### B. React WebHID Tuner (`tools/webhid_tuner/src/`)
-- [ ] **EQ / Preamp Card:** Add **Auto-Preamp** toggle pill next to the Preamp slider (displays computed attenuation badge e.g. `-4.2 dB Auto`, grays out manual slider when enabled).
+- [x] **Dynamics / Preamp Card:** Added **Auto-Preamp Headroom Guard** toggle + live `(-X.X dB)` attenuation badge and **Volume Taper** (`Standard (Quadratic)` / `Logarithmic dB (IEM)`).
 - [ ] **Tone / Dynamics Card:**
   - Add **Dynamic Bass** toggle + Amount slider (`0–100%`) inside the Bass Enhancer / Tone section.
-  - Add **Subsonic Filter (18 Hz)** and **24-Bit TPDF Dither** toggles under **Dynamics & Output Purity**.
+  - Add **Subsonic Filter (18 Hz)** and **24-Bit TPDF Dither** toggles under **Dynamics & Output Purity** (`0x0F` bits 0 & 1 already wired in firmware/NVS).
   - Update **Headphone Crossfeed** selector to 4 presets (`Off`, `Chu Moy`, `Jan Meier`, `J. Meier`).
 - [ ] **Device Settings Card:**
   - Add **Spectrum (FFT)** as the 5th option in **OLED Screen View**.
-  - Add **Volume Taper** selector (`Standard` / `Logarithmic dB (IEM)`).
-- [ ] **Protocol & Tests:** Update `src/protocol/` packet encoders/decoders and add Vitest golden-vector unit tests for all new fields; verify `npm test`, `npm run build`, and `node --check` on `dist/index.html`.
+- [ ] **AutoEQ Quick-Import:** Paste/drop AutoEQ `ParametricEQ.txt` (or raw URL) with 1-click Auto-Preamp headroom calculation + automatic DAC Slot Name suggestion from filename/model.
+- [x] **Protocol & Tests:** Updated `src/hid/protocol.js` (`0x0F`, `0xFD[40..43]`) with Vitest golden-vector tests (`10/10` passing) and verified `npm run build`.
 
 ### C. Android Companion App (`tools/android_companion/`)
-- [ ] **Models & Codec (`DspModels.kt`, `PeqPacketCodec.kt`, `PeqPacketCodecTest.kt`):**
-  - Add `autoPreampEnabled`, `tpdfDitherEnabled`, `subsonicFilterEnabled`, `logVolumeTaper`, `dynamicBassEnabled`, `dynamicBassAmountPct`, `OledViewMode.SPECTRUM`, and 4-level BS2B `CrossfeedLevel`.
-  - Add unit tests in `PeqPacketCodecTest.kt` verifying round-trip encoding/decoding and `0xFD` backward compatibility.
-- [ ] **`EQ` Tab (`EqTab.kt`):**
-  - Add compact **Auto-Preamp** toggle chip in the Preamp row (triggers `hasUnsavedChanges` amber Save badge + subtle haptic).
-- [ ] **`Tone` Tab (`ToneTab.kt`):**
-  - Add **Dynamic Bass** toggle + slider inside the **Bass Enhancer & Harmonic Exciter** card.
-  - Add **Subsonic Filter (18 Hz)** and **24-Bit TPDF Dither** switches inside the **Dynamics & Equal Loudness** card.
-  - Expand **Crossfeed** segmented control to `Off` | `Chu Moy` | `Meier` | `J. Meier`.
+- [x] **Models & Codec (`DspModels.kt`, `PeqPacketCodec.kt`, `PeqPacketCodecTest.kt`):**
+  - Added `DspProConfig`, `CMD_SET_DSP_PRO` (`0x0F`), `0xFD[40..43]` decoding, and unit tests.
+  - [ ] Add `OledViewMode.SPECTRUM` and 4-level BS2B `CrossfeedLevel`.
+- [ ] **`Tone` Tab (`ToneDynamicsCard.kt`, `ToneHarmonicsCard.kt`, `ToneMatrixCrossfeedCard.kt`):**
+  - [x] Added **Auto-Preamp Headroom Guard** switch + live attenuation readout in `ToneDynamicsCard.kt`.
+  - [ ] Add **Dynamic Bass** toggle + slider inside `ToneHarmonicsCard.kt`.
+  - [ ] Add **Subsonic Filter (18 Hz)** and **24-Bit TPDF Dither** switches inside `ToneDynamicsCard.kt`.
+  - [ ] Expand **Crossfeed** segmented control to `Off` | `Chu Moy` | `Meier` | `J. Meier` in `ToneMatrixCrossfeedCard.kt`.
+- [ ] **`Presets` Tab (`PresetsTab.kt`):**
+  - [ ] Add **AutoEQ Quick-Import** (paste/import AutoEQ `ParametricEQ.txt` with 1-click Auto-Preamp + Slot Name auto-fill from filename).
 - [ ] **`Device` Tab (`DeviceTab.kt`):**
-  - Add **Spectrum** chip to **OLED Screen View** (`Classic` | `Curve` | `VU` | `Split` | `Spectrum`).
-  - Add **Volume Taper** segmented toggle (`Standard` | `Log dB`).
+  - [x] Added **Volume Taper** segmented toggle (`Standard` | `Log dB (IEM)`).
+  - [ ] Add **Spectrum** chip to **OLED Screen View** (`Classic` | `Curve` | `VU` | `Split` | `Spectrum`).
 
 ### D. On-Device SSD1306 128×64 OLED UI (`main/oled_display.c`, `main/main.c`)
 - [ ] **5th Playback View (`OLED_VIEW_SPECTRUM`):** 16-bar logarithmic FFT visualizer with peak-hold dots, selectable via `BTN2` double-click, Menu, WebHID, or Android Companion.
 - [ ] **OLED Main Menu Additions (strictly $\le 20$ chars at `x = 2`):**
-  - `AutoPreamp: ON/OFF`
-  - `Dyn Bass: ON/OFF`
-  - `Subsonic: ON/OFF`
-  - `View: Spectrum` (in existing `OLED View` cycler)
-  - `Crossfeed: Off/CM/JM/JM+`
+  - [x] `AutoPreamp:On/Off`
+  - [x] `VolTaper:Std/Log`
+  - [ ] `Subsonic:On/Off`
+  - [ ] `Dyn Bass:On/Off`
+  - [ ] `View: Spectrum` (in existing `OLED View` cycler)
+  - [ ] `Crossfeed: Off/CM/JM/JM+`
 
 ---
 

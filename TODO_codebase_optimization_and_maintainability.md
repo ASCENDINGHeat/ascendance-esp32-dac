@@ -70,8 +70,12 @@ main/
 - `main/oled_ui.c`: Playback views (HUD, EQ Curve, VU, Split, upcoming FFT Spectrum) and table-driven Menu renderer.
 - **Table-driven OLED Menu:** Replace the 14-case `switch` statements duplicated across `oled_display.c` and `main.c` with a declarative menu descriptor array (`{ label_fn, on_click_fn, on_rotate_fn }`). Adding a menu item becomes **1 array entry** instead of editing 4 files and manually renumbering items `11..14`.
 
-### M4. Isolate `minimp3.h`
-- Move [`main/minimp3.h`](main/minimp3.h) into `main/third_party/minimp3.h` (or remove if SD/MP3 is permanently retired) to keep `main/` clean.
+### M4. Isolate `minimp3.h` *(Done — removed unused `minimp3.h` in `13c5028`)*
+- Move `main/minimp3.h` into `main/third_party/minimp3.h` (or remove if SD/MP3 is permanently retired) to keep `main/` clean.
+
+### M5. Refactor & Standardize C Source/Header Filenames (`main/`)
+- [ ] Audit and standardize C module filenames & folder grouping across `main/` so naming is consistent by subsystem (e.g., `dsp/`, `usb/`, `ui/`, `hal/` or uniform prefixes like `usb_uac.c` + `usb_hid.c`, `ui_oled.c` + `ui_ssd1306.c`, `hal_i2s.c` + `hal_controls.c` + `hal_led.c`, `dsp_core.c` + `dsp_biquad.c` + `dsp_harmonics.c` + `dsp_mixer_fir.c` + `dsp_nvs.c`).
+- [ ] Update `#include` directives, `main/CMakeLists.txt`, `AGENTS.md`, and `docs/` references atomically in one dedicated refactor commit.
 
 ---
 
