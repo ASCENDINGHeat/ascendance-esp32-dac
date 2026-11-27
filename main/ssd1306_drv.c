@@ -307,8 +307,8 @@ esp_err_t ssd1306_probe_and_init(void)
             ESP_LOGI(TAG, "SSD1306 OLED online at I2C addr 0x%02X.", found_addr);
         }
         s_oled_online = true;
-        s_is_dimmed = false;
-        s_is_blanked = false;
+        s_shift_x = 0;
+        s_shift_y = 0;
     } else {
         s_oled_online = false;
     }

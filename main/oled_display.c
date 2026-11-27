@@ -547,7 +547,10 @@ static void oled_ui_task(void *pvParameters)
             s_probe_tick_cnt++;
             if (s_probe_tick_cnt >= 20) { // Non-blocking 2 s hot-plug probe
                 s_probe_tick_cnt = 0;
-                ssd1306_probe_and_init();
+                if (ssd1306_probe_and_init() == ESP_OK) {
+                    s_is_dimmed = false;
+                    s_is_blanked = false;
+                }
             }
             vTaskDelay(pdMS_TO_TICKS(100));
             continue;
