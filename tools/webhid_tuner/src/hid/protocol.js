@@ -15,6 +15,7 @@ export const CMD_SET_DYNAMICS = 0x0b;
 export const CMD_SET_POWER_CFG = 0x0c;
 export const CMD_FACTORY_RESET_SLOT = 0x0d;
 export const CMD_SET_HARMONICS = 0x0e;
+export const CMD_SET_DSP_PRO = 0x0f;
 export const CMD_SET_MIXER = 0x13;
 export const CMD_UPLOAD_FIR_CHUNK = 0x14;
 
@@ -57,6 +58,15 @@ export const DEFAULT_HARMONICS = {
   exciterMode: 0,
   exciterAmount: 30,
   exciterFreq: 4500,
+};
+
+export const DEFAULT_DSP_PRO = {
+  tpdfDitherEnabled: true,
+  subsonicFilterEnabled: false,
+  volTaperLogEnabled: false,
+  dynamicBassEnabled: false,
+  dynamicBassAmount: 40,
+  autoPreampEnabled: false,
 };
 
 export function defaultSlotNames() {
@@ -255,6 +265,23 @@ export function encodeSetHarmonics(cfg) {
   return new Uint8Array(buffer);
 }
 
+export function encodeSetDspPro(cfg = {}, oledViewOverride = 0xff) {
+  const merged = { ...DEFAULT_DSP_PRO, ...(cfg || {}) };
+  const { buffer, view } = makeReport();
+  view.setUint8(2, CMD_SET_DSP_PRO);
+  const flags =
+    (merged.tpdfDitherEnabled ? 0x01 : 0x00) |
+    (merged.subsonicFilterEnabled ? 0x02 : 0x00) |
+    (merged.volTaperLogEnabled ? 0x04 : 0x00) |
+    (merged.dynamicBassEnabled ? 0x08 : 0x00) |
+    (merged.autoPreampEnabled ? 0x10 : 0x00);
+  view.setUint8(3, flags);
+  view.setUint8(4, Math.round(clamp(Number(merged.dynamicBassAmount) || 0, 0, 100)));
+  const viewByte = oledViewOverride === 0xff ? 0xff : clamp(Number(oledViewOverride) || 0, 0, 4);
+  view.setUint8(5, viewByte);
+  return new Uint8Array(buffer);
+}
+
 export function decodeInputReport(dataView) {
   if (!dataView || dataView.byteLength < 26) return null;
   if (dataView.getUint16(0, true) !== WEBHID_MAGIC_16) return null;
@@ -301,6 +328,21 @@ export function decodeInputReport(dataView) {
     const autoPreampDb =
       dataView.byteLength >= 40 ? -(clamp(dataView.getUint8(39), 0, 120) / 10.0) : 0.0;
 
+    let oledView = (dynFlags >> 4) & 0x03;
+    let dspPro = { ...DEFAULT_DSP_PRO, autoPreampEnabled: (dynFlags & 0x40) !== 0 };
+    if (dataView.byteLength >= 44 && dataView.getUint8(40) >= 1) {
+      const proFlags = dataView.getUint8(41);
+      dspPro = {
+        tpdfDitherEnabled: (proFlags & 0x01) !== 0,
+        subsonicFilterEnabled: (proFlags & 0x02) !== 0,
+        volTaperLogEnabled: (proFlags & 0x04) !== 0,
+        dynamicBassEnabled: (proFlags & 0x08) !== 0,
+        dynamicBassAmount: clamp(dataView.getUint8(42), 0, 100),
+        autoPreampEnabled: (proFlags & 0x10) !== 0,
+      };
+      oledView = clamp(dataView.getUint8(43), 0, 4);
+    }
+
     return {
       kind: 'extState',
       slotIdx,
@@ -311,7 +353,7 @@ export function decodeInputReport(dataView) {
         autoPreampDb,
         loudnessMode: (dynFlags >> 1) & 0x03,
         firEnabled: (dynFlags & 0x08) !== 0,
-        oledView: (dynFlags >> 4) & 0x03,
+        oledView,
         autoMuteSec: dataView.getUint16(6, true),
         oledDimSec: dataView.getUint16(8, true),
         firTapsL: dataView.getUint16(10, true),
@@ -319,6 +361,7 @@ export function decodeInputReport(dataView) {
         firMaxTaps: dataView.getUint16(30, true),
       },
       harmonics,
+      dspPro,
     };
   }
 

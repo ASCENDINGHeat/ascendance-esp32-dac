@@ -225,6 +225,19 @@ void peq_dsp_get_dynamics_cfg(peq_dynamics_cfg_t *out_cfg);
 void peq_dsp_set_harmonics_cfg(const peq_harmonics_cfg_t *cfg);
 void peq_dsp_get_harmonics_cfg(peq_harmonics_cfg_t *out_cfg);
 
+/* ---- v0.5.0 DSP Pro Configuration (0x0F / 0xFD[40..47]) ---- */
+
+typedef struct {
+    bool    tpdf_dither_enabled;
+    bool    subsonic_filter_enabled;
+    bool    vol_taper_log_enabled;
+    bool    dynamic_bass_enabled;
+    uint8_t dynamic_bass_amount_pct; // 0..100
+} peq_dsp_pro_cfg_t;
+
+void peq_dsp_set_pro_cfg(const peq_dsp_pro_cfg_t *cfg);
+void peq_dsp_get_pro_cfg(peq_dsp_pro_cfg_t *out_cfg);
+
 esp_err_t peq_dsp_set_fir_enabled(bool enabled);
 bool peq_dsp_is_fir_enabled(void);
 esp_err_t peq_dsp_upload_fir_chunk(peq_channel_t ch, uint16_t total_taps, uint16_t offset,

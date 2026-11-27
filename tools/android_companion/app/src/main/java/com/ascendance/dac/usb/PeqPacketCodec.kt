@@ -1,6 +1,7 @@
 package com.ascendance.dac.usb
 
 import com.ascendance.dac.model.DspDefaults
+import com.ascendance.dac.model.DspProConfig
 import com.ascendance.dac.model.DynamicsConfig
 import com.ascendance.dac.model.HarmonicsConfig
 import com.ascendance.dac.model.LoudnessMode
@@ -37,7 +38,8 @@ sealed interface HidIncomingMessage {
         val activeSlot: Int,
         val slotName: String,
         val dynamics: DynamicsConfig,
-        val harmonics: HarmonicsConfig = HarmonicsConfig()
+        val harmonics: HarmonicsConfig = HarmonicsConfig(),
+        val dspPro: DspProConfig = DspProConfig()
     ) : HidIncomingMessage
 }
 
@@ -62,6 +64,7 @@ object PeqPacketCodec {
     const val CMD_SET_POWER_CFG = 0x0C
     const val CMD_FACTORY_RESET_SLOT = 0x0D
     const val CMD_SET_HARMONICS = 0x0E
+    const val CMD_SET_DSP_PRO = 0x0F
     const val CMD_SET_MIXER = 0x13
     const val CMD_UPLOAD_FIR_CHUNK = 0x14
 
@@ -222,6 +225,21 @@ object PeqPacketCodec {
         return bb.array()
     }
 
+    fun buildSetDspPro(config: DspProConfig, oledViewOverride: Int = 0xFF): ByteArray {
+        val safe = config.clamped()
+        val bb = newPacket(CMD_SET_DSP_PRO)
+        val flags = (if (safe.tpdfDitherEnabled) 0x01 else 0x00) or
+            (if (safe.subsonicFilterEnabled) 0x02 else 0x00) or
+            (if (safe.volTaperLogEnabled) 0x04 else 0x00) or
+            (if (safe.dynamicBassEnabled) 0x08 else 0x00) or
+            (if (safe.autoPreampEnabled) 0x10 else 0x00)
+        bb.put(3, flags.toByte())
+        bb.put(4, safe.dynamicBassAmountPct.toByte())
+        val viewByte = if (oledViewOverride == 0xFF) 0xFF else oledViewOverride.coerceIn(0, 4)
+        bb.put(5, viewByte.toByte())
+        return bb.array()
+    }
+
     fun parseReport(raw: ByteArray): HidIncomingMessage? {
         if (raw.size < 28) return null
         val bb = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN)
@@ -260,11 +278,30 @@ object PeqPacketCodec {
                 Charsets.UTF_8
             ).ifBlank { "Slot ${activeSlot + 1}" }
             val autoAttX10 = if (raw.size >= 40) (bb.get(39).toInt() and 0xFF).coerceIn(0, 120) else 0
+            val hasDspPro = raw.size >= 44 && (bb.get(40).toInt() and 0xFF) >= 1
+            val dspPro = if (hasDspPro) {
+                val proFlags = bb.get(41).toInt() and 0xFF
+                DspProConfig(
+                    tpdfDitherEnabled = (proFlags and 0x01) != 0,
+                    subsonicFilterEnabled = (proFlags and 0x02) != 0,
+                    volTaperLogEnabled = (proFlags and 0x04) != 0,
+                    dynamicBassEnabled = (proFlags and 0x08) != 0,
+                    dynamicBassAmountPct = (bb.get(42).toInt() and 0xFF).coerceIn(0, 100),
+                    autoPreampEnabled = (proFlags and 0x10) != 0
+                ).clamped()
+            } else {
+                DspProConfig(autoPreampEnabled = (dynFlags and 0x40) != 0)
+            }
+            val oledView = if (hasDspPro) {
+                (bb.get(43).toInt() and 0xFF).coerceIn(0, 4)
+            } else {
+                (dynFlags shr 4) and 0x03
+            }
             val cfg = DynamicsConfig(
                 limiterEnabled = (dynFlags and 0x01) != 0,
                 loudnessMode = (dynFlags shr 1) and 0x03,
                 firEnabled = (dynFlags and 0x08) != 0,
-                oledView = (dynFlags shr 4) and 0x03,
+                oledView = oledView,
                 autoPreampEnabled = (dynFlags and 0x40) != 0,
                 autoPreampDb = -autoAttX10 / 10.0f,
                 autoMuteSec = autoMuteSec,
@@ -293,7 +330,8 @@ object PeqPacketCodec {
                 activeSlot = activeSlot,
                 slotName = slotName,
                 dynamics = cfg,
-                harmonics = harmonics
+                harmonics = harmonics,
+                dspPro = dspPro
             )
         }
 

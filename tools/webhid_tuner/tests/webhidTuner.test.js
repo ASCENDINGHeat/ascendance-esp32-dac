@@ -9,12 +9,14 @@ import {
   CMD_SET_BAND_LIVE,
   CMD_SET_DYNAMICS,
   CMD_SET_HARMONICS,
+  CMD_SET_DSP_PRO,
   WEBHID_MAGIC_16,
   decodeInputReport,
   encodeDynamicsConfig,
   encodeFirChunkPackets,
   encodeRenameSlot,
   encodeSetBandLive,
+  encodeSetDspPro,
   encodeSetHarmonics,
   formatSlotOptionLabel,
 } from '../src/hid/protocol.js';
@@ -243,5 +245,45 @@ describe('WebHID Tuner DSP, Protocol & Parsers', () => {
     const wavTaps = parseFirFileBuffer('impulse.wav', wavBuf);
     expect(wavTaps[0]).toBeCloseTo(0.5, 4);
     expect(wavTaps[1]).toBeCloseTo(-0.5, 4);
+  });
+
+  it('encodes CMD_SET_DSP_PRO (0x0F) and decodes 0xFD[40..43] with v0.4.x backward compat', () => {
+    const pkt = encodeSetDspPro(
+      {
+        tpdfDitherEnabled: true,
+        subsonicFilterEnabled: true,
+        volTaperLogEnabled: true,
+        dynamicBassEnabled: true,
+        dynamicBassAmount: 65,
+        autoPreampEnabled: true,
+      },
+      4
+    );
+    expect(pkt).toHaveLength(64);
+    expect(CMD_SET_DSP_PRO).toBe(0x0f);
+    expect(Array.from(pkt.slice(0, 6))).toEqual([0x51, 0x45, 0x0f, 0x1f, 65, 4]);
+
+    const buf = new ArrayBuffer(64);
+    const dv = new DataView(buf);
+    dv.setUint16(0, WEBHID_MAGIC_16, true);
+    dv.setUint8(2, CMD_SET_DYNAMICS);
+    dv.setUint8(3, 0xfd);
+    dv.setUint8(4, 1);
+    dv.setUint8(5, 0x41);
+    dv.setUint8(40, 1);
+    dv.setUint8(41, 0x1d); // tpdf(1) | log(4) | dynBass(8) | autoPreamp(16)
+    dv.setUint8(42, 72);
+    dv.setUint8(43, 4);
+
+    const ext = decodeInputReport(dv);
+    expect(ext.dynamics.oledView).toBe(4);
+    expect(ext.dspPro).toEqual({
+      tpdfDitherEnabled: true,
+      subsonicFilterEnabled: false,
+      volTaperLogEnabled: true,
+      dynamicBassEnabled: true,
+      dynamicBassAmount: 72,
+      autoPreampEnabled: true,
+    });
   });
 });

@@ -24,6 +24,7 @@
 #define NVS_KEY_FIR_L       "fir_taps_l"
 #define NVS_KEY_FIR_R       "fir_taps_r"
 #define NVS_KEY_HARM_V1     "harm_cfg_v1"
+#define NVS_KEY_DSP_PRO_V1  "dsp_pro_v1"
 
 #define PEQ_NVS_MAGIC_V2    0x50455132UL // "PEQ2"
 #define PEQ_NVS_VERSION_V2  2U
@@ -34,6 +35,8 @@
 #define PEQ_FIR_MAGIC       0x46495231UL // "FIR1"
 #define PEQ_HARM_MAGIC_V1   0x48415231UL // "HAR1"
 #define PEQ_HARM_VERSION_V1 1U
+#define PEQ_DSP_PRO_MAGIC_V1   0x44535031UL // "DSP1"
+#define PEQ_DSP_PRO_VERSION_V1 1U
 
 #define CROSSFEED_MAX_DELAY 32
 #define FIR_BLOCK_MAX       128
@@ -159,6 +162,14 @@ typedef struct __attribute__((packed)) {
     uint32_t crc32;
 } peq_harm_nvs_v1_t;
 
+typedef struct __attribute__((packed)) {
+    uint32_t magic;
+    uint16_t version;
+    uint8_t  flags;                  // bit0:tpdf, bit1:subsonic, bit2:log_taper, bit3:dyn_bass
+    uint8_t  dynamic_bass_amount_pct;// 0..100
+    uint32_t crc32;
+} peq_dsp_pro_nvs_v1_t;
+
 
 /* Shared Core 0/1 synchronization lock & state (defined in main/dsp/peq_dsp.c) */
 extern portMUX_TYPE s_peq_lock;
@@ -179,6 +190,7 @@ extern uint16_t            s_oled_dim_sec;
 extern bool                s_fir_enabled;
 extern bool                s_auto_preamp_enabled;
 extern float               s_auto_preamp_db;
+extern peq_dsp_pro_cfg_t   s_dsp_pro_cfg;
 
 extern peq_harmonics_cfg_t s_harm_cfg;
 extern float *s_harm_lut_bass;
@@ -242,13 +254,15 @@ void init_harmonics_luts_once(void);
 uint32_t calc_crc32(const uint8_t *data, size_t len);
 void init_flat_profile(peq_profile_t *prof, const char *slot_name);
 void setup_default_slots(void);
+void setup_default_dsp_pro(peq_dsp_pro_cfg_t *cfg);
 void sanitize_profile(peq_profile_t *prof);
 esp_err_t save_slot_nvs_internal(int slot_id);
 esp_err_t save_meta_nvs_internal(void);
 void save_fir_nvs_internal(peq_channel_t ch);
 esp_err_t save_harm_nvs_internal(void);
+esp_err_t save_dsp_pro_nvs_internal(void);
 void load_user_profile_nvs(void);
 
-void stage_pending_from_active_ex(bool reset_states, bool stage_mixer, bool stage_fir, bool reinit_harm);
+void stage_pending_from_active_ex(bool reset_states, bool stage_mixer, bool stage_fir, bool stage_harm);
 void stage_pending_from_active(bool reset_states, bool stage_mixer, bool stage_fir);
 void stage_pending_harmonics(bool reset_states);

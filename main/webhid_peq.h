@@ -41,6 +41,7 @@ typedef enum {
     WEBHID_CMD_SET_POWER_CFG      = 0x0C,  // Configure Auto-Mute silence sec & OLED dimmer sec
     WEBHID_CMD_FACTORY_RESET_SLOT = 0x0D,  // Reset specified slot (0..7) to Reference Flat + "Slot N"
     WEBHID_CMD_SET_HARMONICS      = 0x0E,  // Configure Psychoacoustic Bass Enhancer & Harmonic Exciter
+    WEBHID_CMD_SET_DSP_PRO        = 0x0F,  // Configure v0.5.0 DSP Pro flags (Dither, Subsonic, Log Taper, Dyn Bass, View)
     WEBHID_CMD_SET_MIXER          = 0x13,  // Configure 2x2 Channel Matrix & Chu Moy Crossfeed
     WEBHID_CMD_UPLOAD_FIR_CHUNK   = 0x14,  // Stream float32 FIR impulse response chunks (up to 12 floats/report)
 } webhid_cmd_t;

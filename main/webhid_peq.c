@@ -86,6 +86,19 @@ static bool webhid_build_band_packet(uint8_t band_idx, peq_channel_t ch, webhid_
         if (auto_att_x10 < 0) auto_att_x10 = 0;
         if (auto_att_x10 > 120) auto_att_x10 = 120;
         pkt->reserved[27] = (uint8_t)auto_att_x10;
+
+        /* v0.5.0 DSP Pro telemetry mirrored in reserved[28..31] (packet bytes 40..43) */
+        peq_dsp_pro_cfg_t pro;
+        peq_dsp_get_pro_cfg(&pro);
+        uint8_t pro_flags = (pro.tpdf_dither_enabled ? 0x01U : 0U) |
+                            (pro.subsonic_filter_enabled ? 0x02U : 0U) |
+                            (pro.vol_taper_log_enabled ? 0x04U : 0U) |
+                            (pro.dynamic_bass_enabled ? 0x08U : 0U) |
+                            (dyn.auto_preamp_enabled ? 0x10U : 0U);
+        pkt->reserved[28] = 1U; // DSP Pro telemetry schema version 1
+        pkt->reserved[29] = pro_flags;
+        pkt->reserved[30] = pro.dynamic_bass_amount_pct;
+        pkt->reserved[31] = dyn.oled_view;
         return true;
     }
 
@@ -375,6 +388,26 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
             if (ferr == ESP_OK && (total_taps == 0 || (uint32_t)offset + count >= total_taps)) {
                 oled_display_show_eq_overlay(total_taps == 0 ? "FIR Cleared" : "FIR Loaded");
             }
+            break;
+        }
+
+        case WEBHID_CMD_SET_DSP_PRO: {
+            uint8_t flags = pkt->band_idx;
+            peq_dsp_pro_cfg_t pro;
+            peq_dsp_get_pro_cfg(&pro);
+            pro.tpdf_dither_enabled = (flags & 0x01U) != 0U;
+            pro.subsonic_filter_enabled = (flags & 0x02U) != 0U;
+            pro.vol_taper_log_enabled = (flags & 0x04U) != 0U;
+            pro.dynamic_bass_enabled = (flags & 0x08U) != 0U;
+            pro.dynamic_bass_amount_pct = (pkt->filter_type <= 100U) ? pkt->filter_type : 100U;
+            peq_dsp_set_pro_cfg(&pro);
+            peq_dsp_set_auto_preamp_enabled((flags & 0x10U) != 0U);
+            if (pkt->enabled != 0xFFU && pkt->enabled < OLED_VIEW_COUNT) {
+                peq_dsp_set_oled_view(pkt->enabled);
+                oled_display_set_playback_view((oled_playback_view_t)pkt->enabled);
+            }
+            oled_display_invalidate_curve();
+            webhid_peq_notify_state_changed();
             break;
         }
 

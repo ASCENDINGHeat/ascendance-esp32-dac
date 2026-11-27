@@ -1,4 +1,5 @@
 #include "peq_dsp_internal.h"
+#include <stdatomic.h>
 
 portMUX_TYPE s_peq_lock = portMUX_INITIALIZER_UNLOCKED;
 
@@ -19,6 +20,8 @@ uint16_t            s_oled_dim_sec    = 60;
 bool                s_fir_enabled         = false;
 bool                s_auto_preamp_enabled = false;
 float               s_auto_preamp_db      = 0.0f;
+peq_dsp_pro_cfg_t   s_dsp_pro_cfg;
+static _Atomic bool s_tpdf_dither_rt_en   = true;
 
 /* Psychoacoustic Bass Enhancer & Harmonic Exciter Configuration & PSRAM LUTs */
 peq_harmonics_cfg_t s_harm_cfg;
@@ -368,7 +371,9 @@ esp_err_t peq_dsp_init(int sample_rate)
     if (sample_rate <= 0) sample_rate = 48000;
 
     setup_default_slots();
+    setup_default_dsp_pro(&s_dsp_pro_cfg);
     load_user_profile_nvs();
+    atomic_store_explicit(&s_tpdf_dither_rt_en, s_dsp_pro_cfg.tpdf_dither_enabled, memory_order_release);
     init_harmonics_luts_once();
 
     float crossfade_step = 1.0f / (0.015f * (float)sample_rate);
@@ -578,7 +583,9 @@ esp_err_t peq_dsp_save_user_profile_nvs(void)
     if (err != ESP_OK) return err;
     err = save_meta_nvs_internal();
     if (err != ESP_OK) return err;
-    return save_harm_nvs_internal();
+    err = save_harm_nvs_internal();
+    if (err != ESP_OK) return err;
+    return save_dsp_pro_nvs_internal();
 }
 
 esp_err_t peq_dsp_rename_slot(int slot_id, const char *new_name)
@@ -840,7 +847,7 @@ void peq_dsp_notify_volume_pct(int volume_pct)
 
 void peq_dsp_set_oled_view(uint8_t view)
 {
-    if (view >= 4) view = 0;
+    if (view >= 5) view = 0;
     taskENTER_CRITICAL(&s_peq_lock);
     s_oled_view = view;
     taskEXIT_CRITICAL(&s_peq_lock);
@@ -900,6 +907,27 @@ void peq_dsp_get_dynamics_cfg(peq_dynamics_cfg_t *out_cfg)
     out_cfg->fir_taps_r = s_fir_taps_r;
     out_cfg->auto_preamp_enabled = s_auto_preamp_enabled;
     out_cfg->auto_preamp_db = s_auto_preamp_db;
+    taskEXIT_CRITICAL(&s_peq_lock);
+}
+
+void peq_dsp_set_pro_cfg(const peq_dsp_pro_cfg_t *cfg)
+{
+    if (!cfg) return;
+    peq_dsp_pro_cfg_t clamped = *cfg;
+    if (clamped.dynamic_bass_amount_pct > 100U) {
+        clamped.dynamic_bass_amount_pct = 100U;
+    }
+    taskENTER_CRITICAL(&s_peq_lock);
+    s_dsp_pro_cfg = clamped;
+    taskEXIT_CRITICAL(&s_peq_lock);
+    atomic_store_explicit(&s_tpdf_dither_rt_en, clamped.tpdf_dither_enabled, memory_order_release);
+}
+
+void peq_dsp_get_pro_cfg(peq_dsp_pro_cfg_t *out_cfg)
+{
+    if (!out_cfg) return;
+    taskENTER_CRITICAL(&s_peq_lock);
+    *out_cfg = s_dsp_pro_cfg;
     taskEXIT_CRITICAL(&s_peq_lock);
 }
 
@@ -1560,6 +1588,7 @@ static inline void process_dsp_chunk_f32_to_s32(size_t chunk, int32_t *dst_s32, 
     float pk_r = *blk_pk_r;
     float sq_l = *blk_sq_l;
     float sq_r = *blk_sq_r;
+    bool  tpdf_en = atomic_load_explicit(&s_tpdf_dither_rt_en, memory_order_relaxed);
     for (size_t i = 0; i < chunk; i++) {
         float hm_l, hm_r, mx_l, mx_r, fin_l, fin_r;
         s_vol_smooth += s_vol_smooth_coeff * (volume_factor - s_vol_smooth);
@@ -1580,7 +1609,7 @@ static inline void process_dsp_chunk_f32_to_s32(size_t chunk, int32_t *dst_s32, 
         sq_l += fin_l * fin_l;
         sq_r += fin_r * fin_r;
 
-        bool dither_en = (al > 0.5f || ar > 0.5f);
+        bool dither_en = tpdf_en && (al > 0.5f || ar > 0.5f);
         dst_s32[i * 2]     = clamp_s24_to_s32_dither(fin_l, dither_en);
         dst_s32[i * 2 + 1] = clamp_s24_to_s32_dither(fin_r, dither_en);
     }

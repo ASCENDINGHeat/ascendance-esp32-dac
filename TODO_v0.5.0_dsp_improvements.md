@@ -46,12 +46,12 @@ Invariants preserved: `44.1 / 48 kHz` 24-bit Async UAC 1.0 (`860 B <= 1,024 B` D
 ## Phase 4 — HID Protocol & Cross-Platform UI Parity *(New Features $\rightarrow$ New UI)*
 
 ### A. 64-Byte HID Protocol (`0x4551`) & NVS Persistence
-- [ ] **Extend `WEBHID_CMD_SET_DYNAMICS` (`0x0B`) or add `WEBHID_CMD_SET_DSP_PRO` (`0x0F`):**
-  - Bitflags for: `auto_preamp_en`, `tpdf_dither_en`, `subsonic_filter_en`, `vol_taper_log_en`, `dynamic_bass_en`, plus `dynamic_bass_amount_pct` (`0..100`) and expanded `oled_view` (`0..4`: Classic, EQ Curve, VU Meter, Split, **Spectrum**).
-  - Expand `crossfeed_level` (`0..3`: Off, Chu Moy, Jan Meier, J. Meier) in `WEBHID_CMD_SET_MIXER` (`0x13`).
-- [ ] **Mirror New State in `0xFD` Telemetry Report (`reserved[27..31]`):**
-  - Keep `reserved[0..26]` backward-compatible with `v0.4.x` clients; pack new `v0.5.0` DSP flags + Dynamic Bass amount into `reserved[27..31]`.
-- [ ] **NVS Persistence:** Extend `nvs_meta_v3` (or add `dsp_pro_v1` blob with CRC32 + `memcmp` delta verification), committed only on explicit Save.
+- [x] **Add `WEBHID_CMD_SET_DSP_PRO` (`0x0F`):**
+  - Bitflags for: `tpdf_dither_en` (`0x01`), `subsonic_filter_en` (`0x02`), `vol_taper_log_en` (`0x04`), `dynamic_bass_en` (`0x08`), `auto_preamp_en` (`0x10`), plus `dynamic_bass_amount_pct` (`0..100`) and expanded `oled_view` (`0..4`: Classic, EQ Curve, VU Meter, Split, **Spectrum**, or `0xFF` unchanged).
+  - [ ] Expand `crossfeed_level` (`0..3`: Off, Chu Moy, Jan Meier, J. Meier) in `WEBHID_CMD_SET_MIXER` (`0x13`).
+- [x] **Mirror New State in `0xFD` Telemetry Report (`reserved[28..31]` = `bytes 40..43`):**
+  - Keeps `reserved[0..27]` 100% backward-compatible with `v0.4.x` clients; packs `dsp_pro_version=1`, `pro_flags`, `dynamic_bass_amount_pct`, and `oled_view_ext` into `bytes 40..43`.
+- [x] **NVS Persistence:** Added `dsp_pro_v1` blob (`peq_storage_nvs.c`) with CRC32 + `memcmp` delta verification, committed only on explicit Save.
 
 ### B. React WebHID Tuner (`tools/webhid_tuner/src/`)
 - [ ] **EQ / Preamp Card:** Add **Auto-Preamp** toggle pill next to the Preamp slider (displays computed attenuation badge e.g. `-4.2 dB Auto`, grays out manual slider when enabled).

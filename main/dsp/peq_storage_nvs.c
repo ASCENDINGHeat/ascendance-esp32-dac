@@ -241,6 +241,61 @@ esp_err_t save_harm_nvs_internal(void)
     return err;
 }
 
+void setup_default_dsp_pro(peq_dsp_pro_cfg_t *cfg)
+{
+    if (!cfg) return;
+    memset(cfg, 0, sizeof(*cfg));
+    cfg->tpdf_dither_enabled = true;
+    cfg->subsonic_filter_enabled = false;
+    cfg->vol_taper_log_enabled = false;
+    cfg->dynamic_bass_enabled = false;
+    cfg->dynamic_bass_amount_pct = 40;
+}
+
+esp_err_t save_dsp_pro_nvs_internal(void)
+{
+    peq_dsp_pro_nvs_v1_t blob;
+    memset(&blob, 0, sizeof(blob));
+    blob.magic = PEQ_DSP_PRO_MAGIC_V1;
+    blob.version = PEQ_DSP_PRO_VERSION_V1;
+
+    taskENTER_CRITICAL(&s_peq_lock);
+    peq_dsp_pro_cfg_t snap = s_dsp_pro_cfg;
+    taskEXIT_CRITICAL(&s_peq_lock);
+
+    if (snap.dynamic_bass_amount_pct > 100) snap.dynamic_bass_amount_pct = 100;
+    blob.flags = (snap.tpdf_dither_enabled ? 0x01U : 0U) |
+                 (snap.subsonic_filter_enabled ? 0x02U : 0U) |
+                 (snap.vol_taper_log_enabled ? 0x04U : 0U) |
+                 (snap.dynamic_bass_enabled ? 0x08U : 0U);
+    blob.dynamic_bass_amount_pct = snap.dynamic_bass_amount_pct;
+    blob.crc32 = calc_crc32((const uint8_t *)&blob, offsetof(peq_dsp_pro_nvs_v1_t, crc32));
+
+    nvs_handle_t nvs_h;
+    esp_err_t err = nvs_open(NVS_NAMESPACE, NVS_READWRITE, &nvs_h);
+    if (err != ESP_OK) return err;
+
+    size_t sz = sizeof(peq_dsp_pro_nvs_v1_t);
+    peq_dsp_pro_nvs_v1_t existing;
+    bool needs_write = true;
+    if (nvs_get_blob(nvs_h, NVS_KEY_DSP_PRO_V1, &existing, &sz) == ESP_OK &&
+        sz == sizeof(peq_dsp_pro_nvs_v1_t) &&
+        memcmp(&existing, &blob, sizeof(peq_dsp_pro_nvs_v1_t)) == 0) {
+        needs_write = false;
+    }
+
+    if (needs_write) {
+        err = nvs_set_blob(nvs_h, NVS_KEY_DSP_PRO_V1, &blob, sizeof(peq_dsp_pro_nvs_v1_t));
+        if (err == ESP_OK) {
+            err = nvs_commit(nvs_h);
+            ESP_LOGI(TAG, "Committed NVS %s (flags=0x%02X, dyn_bass=%u%%)",
+                     NVS_KEY_DSP_PRO_V1, (unsigned)blob.flags, (unsigned)blob.dynamic_bass_amount_pct);
+        }
+    }
+    nvs_close(nvs_h);
+    return err;
+}
+
 void load_user_profile_nvs(void)
 {
     nvs_handle_t nvs_h;
@@ -264,7 +319,7 @@ void load_user_profile_nvs(void)
         s_limiter_enabled = (meta.limiter_enabled != 0);
         s_loudness_mode = (meta.loudness_mode < PEQ_LOUDNESS_COUNT)
                           ? (peq_loudness_mode_t)meta.loudness_mode : PEQ_LOUDNESS_OFF;
-        s_oled_view = (meta.oled_view < 4) ? meta.oled_view : 0;
+        s_oled_view = (meta.oled_view < 5) ? meta.oled_view : 0;
         s_fir_enabled = (meta.fir_enabled != 0);
         s_auto_preamp_enabled = ((meta.reserved & 0x01) != 0);
         s_auto_mute_sec = meta.auto_mute_sec;
@@ -338,6 +393,22 @@ void load_user_profile_nvs(void)
         loaded_harm.exciter_freq_hz = harm_blob.exciter_freq_hz;
         clamp_harmonics_cfg(&loaded_harm);
         s_harm_cfg = loaded_harm;
+    }
+
+    /* 3c. Load v0.5.0 DSP Pro configuration (dsp_pro_v1) */
+    size_t req_pro = sizeof(peq_dsp_pro_nvs_v1_t);
+    peq_dsp_pro_nvs_v1_t pro_blob;
+    if (nvs_get_blob(nvs_h, NVS_KEY_DSP_PRO_V1, &pro_blob, &req_pro) == ESP_OK &&
+        req_pro == sizeof(peq_dsp_pro_nvs_v1_t) &&
+        pro_blob.magic == PEQ_DSP_PRO_MAGIC_V1 &&
+        pro_blob.version == PEQ_DSP_PRO_VERSION_V1 &&
+        calc_crc32((const uint8_t *)&pro_blob, offsetof(peq_dsp_pro_nvs_v1_t, crc32)) == pro_blob.crc32) {
+        s_dsp_pro_cfg.tpdf_dither_enabled = (pro_blob.flags & 0x01U) != 0U;
+        s_dsp_pro_cfg.subsonic_filter_enabled = (pro_blob.flags & 0x02U) != 0U;
+        s_dsp_pro_cfg.vol_taper_log_enabled = (pro_blob.flags & 0x04U) != 0U;
+        s_dsp_pro_cfg.dynamic_bass_enabled = (pro_blob.flags & 0x08U) != 0U;
+        s_dsp_pro_cfg.dynamic_bass_amount_pct = (pro_blob.dynamic_bass_amount_pct <= 100U)
+                                                ? pro_blob.dynamic_bass_amount_pct : 100U;
     }
 
     /* 4. Migrate legacy v0.1.0 NVS v2 / v1 into Slot 0 if NVS v3 absent */

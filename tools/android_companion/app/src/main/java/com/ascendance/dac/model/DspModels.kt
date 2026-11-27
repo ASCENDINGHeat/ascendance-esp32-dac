@@ -129,6 +129,20 @@ data class HarmonicsConfig(
 }
 
 @Serializable
+data class DspProConfig(
+    val tpdfDitherEnabled: Boolean = true,
+    val subsonicFilterEnabled: Boolean = false,
+    val volTaperLogEnabled: Boolean = false,
+    val dynamicBassEnabled: Boolean = false,
+    val dynamicBassAmountPct: Int = 40,
+    val autoPreampEnabled: Boolean = false
+) {
+    fun clamped(): DspProConfig = copy(
+        dynamicBassAmountPct = dynamicBassAmountPct.coerceIn(0, 100)
+    )
+}
+
+@Serializable
 data class PeqBand(
     val type: Int = FilterType.PEAKING.code,
     val freq: Int = 1000,

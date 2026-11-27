@@ -1,6 +1,7 @@
 package com.ascendance.dac
 
 import com.ascendance.dac.model.DspDefaults
+import com.ascendance.dac.model.DspProConfig
 import com.ascendance.dac.model.DynamicsConfig
 import com.ascendance.dac.model.ExciterMode
 import com.ascendance.dac.model.FilterType
@@ -328,5 +329,47 @@ class PeqPacketCodecTest {
         assertEquals(AppThemeMode.DYNAMIC_YOU, AppThemeMode.fromKey("dynamic_you"))
         assertEquals(AppThemeMode.DARK_STUDIO, AppThemeMode.fromKey(null))
         assertEquals(AppThemeMode.DARK_STUDIO, AppThemeMode.fromKey("unknown_key"))
+    }
+
+    @Test
+    fun encodesDspProGoldenVectorAndDecodesExtTelemetry() {
+        val pkt = PeqPacketCodec.buildSetDspPro(
+            DspProConfig(
+                tpdfDitherEnabled = true,
+                subsonicFilterEnabled = true,
+                volTaperLogEnabled = true,
+                dynamicBassEnabled = true,
+                dynamicBassAmountPct = 65,
+                autoPreampEnabled = true
+            ),
+            oledViewOverride = 4
+        )
+        assertEquals(64, pkt.size)
+        assertArrayEquals(
+            byteArrayOf(0x51, 0x45, 0x0F, 0x1F, 65, 4),
+            pkt.copyOfRange(0, 6)
+        )
+
+        val extRaw = ByteBuffer.allocate(64).order(ByteOrder.LITTLE_ENDIAN).apply {
+            putShort(0, 0x4551)
+            put(2, PeqPacketCodec.CMD_SET_DYNAMICS.toByte())
+            put(3, PeqPacketCodec.BAND_IDX_EXT_STATE_QUERY.toByte())
+            put(4, 1)
+            put(5, 0x41)
+            put(40, 1)
+            put(41, 0x1D)
+            put(42, 72)
+            put(43, 4)
+        }.array()
+
+        val msg = PeqPacketCodec.parseReport(extRaw) as? HidIncomingMessage.ExtendedStateReport
+        assertNotNull(msg)
+        assertEquals(4, msg!!.dynamics.oledView)
+        assertTrue(msg.dspPro.tpdfDitherEnabled)
+        assertFalse(msg.dspPro.subsonicFilterEnabled)
+        assertTrue(msg.dspPro.volTaperLogEnabled)
+        assertTrue(msg.dspPro.dynamicBassEnabled)
+        assertEquals(72, msg.dspPro.dynamicBassAmountPct)
+        assertTrue(msg.dspPro.autoPreampEnabled)
     }
 }
