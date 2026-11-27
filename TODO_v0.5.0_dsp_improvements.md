@@ -15,10 +15,8 @@ Invariants preserved: `44.1 / 48 kHz` 24-bit Async UAC 1.0 (`860 B <= 1,024 B` D
   - Reuse `peq_dsp_eval_curve_db()` peak positive gain + active Bass Enhancer / Exciter mix headroom to automatically compute negative preamp compensation (`15 ms` crossfade), preventing `0 dBFS` tracks from slamming into the limiter when boosting EQ or harmonics. (Full parity: firmware + OLED menu + WebHID + Android Companion + NVS v3.)
 - [x] **3. 24-Bit TPDF Dithering (`main/peq_dsp.c`)**
   - Apply fast `xorshift32` Triangular Probability Density Function (TPDF) dither ($\pm 1\text{ LSB}$ at bit 24) immediately before `clamp_s24_to_s32()` when signal is non-silent (preserving bit-exact digital zero for auto-mute) to decorrelate quantization noise at low digital volumes.
-- [ ] **3b. True Post-DSP Output VU Metering (`main/peq_dsp.c`, `main/oled_display.c`)**
-  - Move the VU peak/RMS tap in `peq_dsp_process_interleaved_s24_to_s32()` and `s16_to_s32()` from `mx_l / mx_r` (pre-volume, pre-limiter) to `fin_l / fin_r` (post-volume, post-limiter, post-wake-ramp, post-soft-clipper, pre-TPDF-dither) so the OLED VU & Split meters reflect the exact final signal sent to the PCM5102A DAC.
-  - Keep `s_silence_samples` on raw input (for reliable Auto-Mute) and gate `dither_en` on `fabsf(fin_l) / fabsf(fin_r)` so muted/ramped silence stays bit-exact zero.
-  - Decide whether to keep the `-60..0 dBFS` OLED bar scale (or widen to `-72..0 dBFS` for low-volume IEM readability) and whether to optionally expose a Pre-Volume vs. Post-Output meter tap toggle later.
+- [x] **3b. True Post-DSP Output VU Metering (`main/dsp/peq_dsp.c`)**
+  - Moved the VU peak/RMS tap in `process_dsp_chunk_f32_to_s32()` (shared by `s24_to_s32` and `s16_to_s32`) from `mx_l / mx_r` to `fin_l / fin_r` (post-volume, post-limiter, post-wake-ramp, post-soft-clipper, pre-TPDF-dither) with dither gated on `fin_l / fin_r` magnitude and raw-input `s_silence_samples` preserved for Auto-Mute.
 
 ---
 

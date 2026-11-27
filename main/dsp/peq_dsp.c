@@ -1572,17 +1572,15 @@ static inline void process_dsp_chunk_f32_to_s32(size_t chunk, int32_t *dst_s32, 
         apply_limiter_and_ramp(mx_l * vol_cur, mx_r * vol_cur,
                                &fin_l, &fin_r, blk_lim, blk_clip);
 
-        /* Meter pre-volume (post-DSP/mixer) level unless muted so VU stays lively at any knob position */
-        float ml = (vol_cur > 0.0f) ? mx_l : 0.0f;
-        float mr = (vol_cur > 0.0f) ? mx_r : 0.0f;
-        float al = fabsf(ml);
-        float ar = fabsf(mr);
+        /* Meter true post-DSP output (post-volume, post-limiter, post-soft-clip, pre-dither) */
+        float al = fabsf(fin_l);
+        float ar = fabsf(fin_r);
         if (al > pk_l) pk_l = al;
         if (ar > pk_r) pk_r = ar;
-        sq_l += ml * ml;
-        sq_r += mr * mr;
+        sq_l += fin_l * fin_l;
+        sq_r += fin_r * fin_r;
 
-        bool dither_en = (vol_cur > 0.0f && (al > 1.0f || ar > 1.0f));
+        bool dither_en = (al > 0.5f || ar > 0.5f);
         dst_s32[i * 2]     = clamp_s24_to_s32_dither(fin_l, dither_en);
         dst_s32[i * 2 + 1] = clamp_s24_to_s32_dither(fin_r, dither_en);
     }
