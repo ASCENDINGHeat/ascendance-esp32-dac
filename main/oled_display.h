@@ -37,6 +37,7 @@ typedef enum {
     MENU_ITEM_PREAMP_GAIN,
     MENU_ITEM_AUTO_PREAMP,
     MENU_ITEM_VOL_TAPER,
+    MENU_ITEM_SUBSONIC,
     MENU_ITEM_AUDIO_SOURCE,
     MENU_ITEM_SAVE_NVS,
     MENU_ITEM_EXIT,
@@ -80,6 +81,7 @@ typedef struct {
     uint8_t exciter_mode;
     bool  auto_preamp_enabled;
     bool  vol_taper_log;
+    bool  subsonic_enabled;
 } ui_menu_state_t;
 
 typedef struct {

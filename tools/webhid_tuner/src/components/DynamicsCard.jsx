@@ -86,6 +86,28 @@ export function DynamicsCard({
               )}
             </label>
           </div>
+          <div className="control-label-row" style={{ marginTop: '6px' }}>
+            <label>
+              <input
+                type="checkbox"
+                id="chkSubsonicFilter"
+                checked={!!pro.subsonicFilterEnabled}
+                onChange={(e) => emitDspPro({ subsonicFilterEnabled: e.target.checked })}
+              />{' '}
+              Subsonic / DC Blocker (18 Hz)
+            </label>
+          </div>
+          <div className="control-label-row" style={{ marginTop: '4px' }}>
+            <label>
+              <input
+                type="checkbox"
+                id="chkTpdfDither"
+                checked={!!pro.tpdfDitherEnabled}
+                onChange={(e) => emitDspPro({ tpdfDitherEnabled: e.target.checked })}
+              />{' '}
+              24-Bit TPDF Dither
+            </label>
+          </div>
         </div>
 
         <div>

@@ -288,7 +288,10 @@ static void update_menu_ui(void)
     ms.exciter_enabled = harm.exciter_enabled;
     ms.exciter_mode = (uint8_t)harm.exciter_mode;
     ms.auto_preamp_enabled = peq_dsp_is_auto_preamp_enabled();
-    ms.vol_taper_log = audio_pipeline_is_log_volume_taper();
+    peq_dsp_pro_cfg_t pro;
+    peq_dsp_get_pro_cfg(&pro);
+    ms.vol_taper_log = pro.vol_taper_log_enabled;
+    ms.subsonic_enabled = pro.subsonic_filter_enabled;
     oled_display_update_menu_ex(&ms);
 }
 
@@ -584,6 +587,15 @@ static void handle_menu_event(const control_event_t *evt)
             peq_dsp_pro_cfg_t pro;
             peq_dsp_get_pro_cfg(&pro);
             pro.vol_taper_log_enabled = !pro.vol_taper_log_enabled;
+            peq_dsp_set_pro_cfg(&pro);
+            update_menu_ui();
+            webhid_peq_notify_state_changed();
+            break;
+        }
+        case MENU_ITEM_SUBSONIC: {
+            peq_dsp_pro_cfg_t pro;
+            peq_dsp_get_pro_cfg(&pro);
+            pro.subsonic_filter_enabled = !pro.subsonic_filter_enabled;
             peq_dsp_set_pro_cfg(&pro);
             update_menu_ui();
             webhid_peq_notify_state_changed();

@@ -28,8 +28,8 @@ Invariants preserved: `44.1 / 48 kHz` 24-bit Async UAC 1.0 (`860 B <= 1,024 B` D
 - [ ] **5. Tonal-Neutral BS2B Headphone Crossfeed (`main/peq_dsp.c`)**
   - [x] Added coherent low-frequency crossfeed makeup headroom normalization (`1 / (1 + 0.5 * cf_gain)`) in `compute_mixer_rt()` so toggling Crossfeed levels 1 & 2 stays loudness-neutral without boosting bass into the limiter.
   - [ ] Expand to 4-level BS2B presets (`Off`, `Chu Moy 700 Hz / 4.5 dB`, `Jan Meier 700 Hz / 6.0 dB`, `J. Meier 650 Hz / 9.5 dB`) with full UI parity.
-- [ ] **6. Global Switchable Subsonic / DC Blocker (`18 Hz`) (`main/peq_dsp.c`)**
-  - Add an optional 1st-order `18 Hz` HPF before the lookahead limiter so infrasonic rumble and residual DC offset never trigger false limiter gain reduction or waste headphone excursion.
+- [x] **6. Global Switchable Subsonic / DC Blocker (`18 Hz`) (`main/dsp/peq_dsp.c`)**
+  - Added optional 1st-order `18 Hz` HPF before the lookahead limiter (`r = exp(-2*pi*18/fs)`) so infrasonic rumble and residual DC offset never trigger false limiter gain reduction, with full OLED + WebHID + Android + `dsp_pro_v1` NVS parity (plus 24-Bit TPDF Dither UI toggles).
 
 ---
 

@@ -406,10 +406,12 @@ private fun AscendanceCompanionApp(viewModel: DacViewModel) {
                         mixer = state.mixer,
                         dynamics = state.dynamics,
                         harmonics = state.harmonics,
+                        dspPro = state.dspPro,
                         sampleRateHz = state.sampleRateHz,
                         onUpdateMixer = viewModel::updateMixer,
                         onUpdateDynamics = viewModel::updateDynamics,
                         onUpdateHarmonics = viewModel::updateHarmonics,
+                        onUpdateDspPro = viewModel::updateDspPro,
                         onUploadFirFile = { firLauncher.launch(arrayOf("text/plain", "text/csv", "audio/wav", "audio/x-wav", "*/*")) },
                         onClearFir = viewModel::clearFirImpulse
                     )

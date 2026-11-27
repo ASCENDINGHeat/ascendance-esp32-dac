@@ -17,6 +17,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.ascendance.dac.model.DspProConfig
 import com.ascendance.dac.model.DynamicsConfig
 import com.ascendance.dac.model.HarmonicsConfig
 import com.ascendance.dac.model.MixerConfig
@@ -26,10 +27,12 @@ fun ToneTab(
     mixer: MixerConfig,
     dynamics: DynamicsConfig,
     harmonics: HarmonicsConfig,
+    dspPro: DspProConfig,
     sampleRateHz: Int,
     onUpdateMixer: (MixerConfig) -> Unit,
     onUpdateDynamics: (DynamicsConfig) -> Unit,
     onUpdateHarmonics: (HarmonicsConfig) -> Unit,
+    onUpdateDspPro: (DspProConfig) -> Unit,
     onUploadFirFile: () -> Unit,
     onClearFir: () -> Unit,
     modifier: Modifier = Modifier
@@ -46,7 +49,9 @@ fun ToneTab(
         )
         ToneDynamicsCard(
             dynamics = dynamics,
-            onUpdateDynamics = onUpdateDynamics
+            dspPro = dspPro,
+            onUpdateDynamics = onUpdateDynamics,
+            onUpdateDspPro = onUpdateDspPro
         )
         ToneMatrixCrossfeedCard(
             mixer = mixer,

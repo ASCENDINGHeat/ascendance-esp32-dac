@@ -26,6 +26,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.ascendance.dac.model.DspProConfig
 import com.ascendance.dac.model.DynamicsConfig
 import com.ascendance.dac.model.LoudnessMode
 import com.ascendance.dac.ui.theme.AscendanceColors
@@ -34,7 +35,9 @@ import java.util.Locale
 @Composable
 internal fun ToneDynamicsCard(
     dynamics: DynamicsConfig,
-    onUpdateDynamics: (DynamicsConfig) -> Unit
+    dspPro: DspProConfig,
+    onUpdateDynamics: (DynamicsConfig) -> Unit,
+    onUpdateDspPro: (DspProConfig) -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     val haptics = LocalHapticFeedback.current
@@ -100,6 +103,42 @@ internal fun ToneDynamicsCard(
                     onCheckedChange = {
                         haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
                         onUpdateDynamics(dynamics.copy(autoPreampEnabled = it))
+                    }
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Subsonic / DC Blocker (18 Hz)", color = colors.onSurface, fontSize = 13.sp)
+                    Text("Filters infrasonic rumble before limiter", color = colors.onSurfaceVariant, fontSize = 11.sp)
+                }
+                Switch(
+                    checked = dspPro.subsonicFilterEnabled,
+                    onCheckedChange = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onUpdateDspPro(dspPro.copy(subsonicFilterEnabled = it))
+                    }
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("24-Bit TPDF Dither", color = colors.onSurface, fontSize = 13.sp)
+                    Text("Decorrelates quantization noise at low volume", color = colors.onSurfaceVariant, fontSize = 11.sp)
+                }
+                Switch(
+                    checked = dspPro.tpdfDitherEnabled,
+                    onCheckedChange = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onUpdateDspPro(dspPro.copy(tpdfDitherEnabled = it))
                     }
                 )
             }

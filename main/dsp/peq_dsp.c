@@ -23,6 +23,8 @@ bool                s_auto_preamp_enabled = false;
 float               s_auto_preamp_db      = 0.0f;
 peq_dsp_pro_cfg_t   s_dsp_pro_cfg;
 static _Atomic bool s_tpdf_dither_rt_en   = true;
+static _Atomic bool s_subsonic_rt_en      = false;
+static dc_block_state_t s_subsonic_dc     = {0};
 
 /* Psychoacoustic Bass Enhancer & Harmonic Exciter Configuration & PSRAM LUTs */
 peq_harmonics_cfg_t s_harm_cfg;
@@ -369,6 +371,11 @@ static void configure_limiter_rt_for_sr(int sample_rate)
     s_vol_smooth_coeff = 1.0f - expf(-1.0f / (0.0100f * (float)sample_rate)); // 10 ms zipper-free volume ramp
     s_wake_ramp_step = 1.0f / (0.001f * (float)sample_rate);
     if (s_wake_ramp_step <= 0.0f) s_wake_ramp_step = 0.02f;
+
+    /* 1st-order 18 Hz Subsonic / DC Blocker pole: r = exp(-2*pi*18 / fs) */
+    s_subsonic_dc.r = expf(-2.0f * (float)M_PI * 18.0f / (float)sample_rate);
+    s_subsonic_dc.x1_l = 0.0f; s_subsonic_dc.y1_l = 0.0f;
+    s_subsonic_dc.x1_r = 0.0f; s_subsonic_dc.y1_r = 0.0f;
 }
 
 
@@ -380,6 +387,7 @@ esp_err_t peq_dsp_init(int sample_rate)
     setup_default_dsp_pro(&s_dsp_pro_cfg);
     load_user_profile_nvs();
     atomic_store_explicit(&s_tpdf_dither_rt_en, s_dsp_pro_cfg.tpdf_dither_enabled, memory_order_release);
+    atomic_store_explicit(&s_subsonic_rt_en, s_dsp_pro_cfg.subsonic_filter_enabled, memory_order_release);
     audio_pipeline_set_log_volume_taper(s_dsp_pro_cfg.vol_taper_log_enabled);
     init_harmonics_luts_once();
 
@@ -928,6 +936,7 @@ void peq_dsp_set_pro_cfg(const peq_dsp_pro_cfg_t *cfg)
     s_dsp_pro_cfg = clamped;
     taskEXIT_CRITICAL(&s_peq_lock);
     atomic_store_explicit(&s_tpdf_dither_rt_en, clamped.tpdf_dither_enabled, memory_order_release);
+    atomic_store_explicit(&s_subsonic_rt_en, clamped.subsonic_filter_enabled, memory_order_release);
     audio_pipeline_set_log_volume_taper(clamped.vol_taper_log_enabled);
 }
 
@@ -1614,6 +1623,11 @@ static inline void process_dsp_chunk_f32_to_s32(size_t chunk, int32_t *dst_s32, 
     float sq_l = *blk_sq_l;
     float sq_r = *blk_sq_r;
     bool  tpdf_en = atomic_load_explicit(&s_tpdf_dither_rt_en, memory_order_relaxed);
+    bool  subsonic_en = atomic_load_explicit(&s_subsonic_rt_en, memory_order_relaxed);
+    if (!subsonic_en) {
+        s_subsonic_dc.x1_l = 0.0f; s_subsonic_dc.y1_l = 0.0f;
+        s_subsonic_dc.x1_r = 0.0f; s_subsonic_dc.y1_r = 0.0f;
+    }
     for (size_t i = 0; i < chunk; i++) {
         float hm_l, hm_r, mx_l, mx_r, fin_l, fin_r;
         s_vol_smooth += s_vol_smooth_coeff * (volume_factor - s_vol_smooth);
@@ -1623,6 +1637,10 @@ static inline void process_dsp_chunk_f32_to_s32(size_t chunk, int32_t *dst_s32, 
         float vol_cur = s_vol_smooth;
         process_harmonics_sample(ch_l_ptr[i], ch_r_ptr[i], 1.0f / FULLSCALE_S24_F, FULLSCALE_S24_F, &hm_l, &hm_r);
         process_mixer_sample(hm_l, hm_r, &mx_l, &mx_r);
+        if (subsonic_en) {
+            mx_l = dc_block_sample(&s_subsonic_dc, mx_l, false);
+            mx_r = dc_block_sample(&s_subsonic_dc, mx_r, true);
+        }
         apply_limiter_and_ramp(mx_l * vol_cur, mx_r * vol_cur,
                                &fin_l, &fin_r, blk_lim, blk_clip);
 
