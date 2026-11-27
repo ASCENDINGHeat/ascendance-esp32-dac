@@ -64,6 +64,7 @@ typedef struct {
     float crossfeed_gain;
     float cf_alpha;
     int   cf_delay_samples;
+    bool  identity;
 } mixer_rt_t;
 
 typedef struct {

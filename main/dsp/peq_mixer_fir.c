@@ -85,6 +85,7 @@ void compute_mixer_rt(const peq_mixer_config_t *cfg, float sample_rate, mixer_rt
     out->crossfeed_gain = cf_gain;
     out->cf_alpha = alpha;
     out->cf_delay_samples = delay_n;
+    out->identity = (!cf_en && m_ll == 1.0f && m_rl == 0.0f && m_lr == 0.0f && m_rr == 1.0f);
 }
 
 void setup_default_mixer(peq_mixer_config_t *cfg)

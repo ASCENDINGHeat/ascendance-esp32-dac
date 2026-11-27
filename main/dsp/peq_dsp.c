@@ -1438,6 +1438,12 @@ static inline void process_harmonics_sample(float in_l, float in_r,
 
 static inline void process_mixer_sample(float in_l, float in_r, float *out_l_ptr, float *out_r_ptr)
 {
+    if (s_mixer_rt.identity) {
+        *out_l_ptr = in_l;
+        *out_r_ptr = in_r;
+        return;
+    }
+
     float mx_l = s_mixer_rt.m_ll * in_l + s_mixer_rt.m_rl * in_r;
     float mx_r = s_mixer_rt.m_lr * in_l + s_mixer_rt.m_rr * in_r;
 
