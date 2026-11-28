@@ -37,9 +37,9 @@ Invariants preserved: `44.1 / 48 kHz` 24-bit Async UAC 1.0 (`860 B <= 1,024 B` D
 
 - [ ] **7. Dynamic Bass (Envelope-Controlled Sub-Bass) (`main/peq_dsp.c`)**
   - Envelope-following sub-bass shelf that gently boosts low/moderate passages and pulls back smoothly on heavy sub-bass peaks (`> -3 dBFS`) to preserve punch without mud or limiter pumping.
-- [ ] **8. Real-Time 16-Band FFT Spectrum Analyzer (5th OLED View) (`main/peq_dsp.c`, `main/oled_display.c`)**
-  - Copy a lock-free 256-sample mono snapshot in internal DRAM every `~30 ms` on Core 1.
-  - Run `espressif/esp-dsp` `dsps_fft2r_fc32` strictly on **Core 0 (`oled_ui_task`)** to render a live 16-bar logarithmic RTA spectrum on the 128×64 SSD1306 OLED with zero Core 1 audio overhead.
+- [x] **8. Real-Time 32-Band FFT Spectrum Analyzer (5th OLED View) (`main/dsp/peq_dsp.c`, `main/oled_display.c`)**
+  - Lock-free 1024-sample post-DSP mono snapshot in static BSS on Core 1 (zero overhead when Spectrum view is inactive).
+  - Runs `espressif/esp-dsp` 1024-pt `dsps_fft2r_fc32` + Hann window strictly on **Core 0 (`oled_ui_task`)** to render a live 32-bar (`3 px` bar + `1 px` gap) logarithmic RTA spectrum (`47 Hz..18 kHz`) with floating peak-hold dots on the 128×64 SSD1306 OLED, with full OLED + WebHID + Android parity.
 
 ---
 

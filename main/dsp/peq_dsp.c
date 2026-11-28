@@ -158,6 +158,13 @@ static uint32_t         s_vu_clear_seen   = 0U;
 static float            s_vu_rms_rt_l     = 0.0f;
 static float            s_vu_rms_rt_r     = 0.0f;
 
+/* Lock-free 1024-sample mono snapshot for Core 0 32-band FFT Spectrum OLED view */
+static float            s_fft_snap[PEQ_FFT_SIZE];
+static uint32_t         s_fft_wr          = 0U;
+static _Atomic bool     s_fft_snap_req    = false;
+static _Atomic bool     s_fft_snap_ready  = false;
+static _Atomic int      s_fft_snap_sr     = 48000;
+
 
 static inline int16_t clamp_s16(float val)
 {
@@ -979,6 +986,23 @@ void peq_dsp_clear_vu_metrics(void)
     atomic_fetch_add_explicit(&s_vu_clear_gen, 1U, memory_order_release);
 }
 
+bool peq_dsp_read_fft_snapshot(float out_samples[PEQ_FFT_SIZE], int *out_sample_rate)
+{
+    if (!out_samples) return false;
+    if (atomic_exchange_explicit(&s_fft_snap_ready, false, memory_order_acq_rel)) {
+        memcpy(out_samples, s_fft_snap, sizeof(float) * PEQ_FFT_SIZE);
+        if (out_sample_rate) {
+            *out_sample_rate = atomic_load_explicit(&s_fft_snap_sr, memory_order_acquire);
+        }
+        atomic_store_explicit(&s_fft_snap_req, true, memory_order_release);
+        return true;
+    }
+    if (!atomic_load_explicit(&s_fft_snap_req, memory_order_relaxed)) {
+        atomic_store_explicit(&s_fft_snap_req, true, memory_order_release);
+    }
+    return false;
+}
+
 void peq_dsp_trigger_wake_ramp(void)
 {
     taskENTER_CRITICAL(&s_peq_lock);
@@ -1624,6 +1648,7 @@ static inline void process_dsp_chunk_f32_to_s32(size_t chunk, int32_t *dst_s32, 
     float sq_r = *blk_sq_r;
     bool  tpdf_en = atomic_load_explicit(&s_tpdf_dither_rt_en, memory_order_relaxed);
     bool  subsonic_en = atomic_load_explicit(&s_subsonic_rt_en, memory_order_relaxed);
+    bool  fft_cap = atomic_load_explicit(&s_fft_snap_req, memory_order_acquire);
     if (!subsonic_en) {
         s_subsonic_dc.x1_l = 0.0f; s_subsonic_dc.y1_l = 0.0f;
         s_subsonic_dc.x1_r = 0.0f; s_subsonic_dc.y1_r = 0.0f;
@@ -1651,6 +1676,17 @@ static inline void process_dsp_chunk_f32_to_s32(size_t chunk, int32_t *dst_s32, 
         if (ar > pk_r) pk_r = ar;
         sq_l += fin_l * fin_l;
         sq_r += fin_r * fin_r;
+
+        if (fft_cap) {
+            s_fft_snap[s_fft_wr++] = 0.5f * (fin_l + fin_r) * (1.0f / FULLSCALE_S24_F);
+            if (s_fft_wr >= PEQ_FFT_SIZE) {
+                s_fft_wr = 0U;
+                fft_cap = false;
+                atomic_store_explicit(&s_fft_snap_sr, s_rt_sr, memory_order_relaxed);
+                atomic_store_explicit(&s_fft_snap_req, false, memory_order_relaxed);
+                atomic_store_explicit(&s_fft_snap_ready, true, memory_order_release);
+            }
+        }
 
         bool dither_en = tpdf_en && (al > 0.5f || ar > 0.5f);
         dst_s32[i * 2]     = clamp_s24_to_s32_dither(fin_l, dither_en);

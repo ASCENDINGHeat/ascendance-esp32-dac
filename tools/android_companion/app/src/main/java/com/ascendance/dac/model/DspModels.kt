@@ -60,7 +60,8 @@ enum class OledViewMode(val code: Int, val label: String) {
     HUD(0, "Classic"),
     CURVE(1, "EQ Curve"),
     VU(2, "VU Meters"),
-    SPLIT(3, "Split");
+    SPLIT(3, "Split"),
+    SPECTRUM(4, "FFT");
 
     companion object {
         fun fromCode(code: Int): OledViewMode =

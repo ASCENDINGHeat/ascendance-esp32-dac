@@ -249,6 +249,9 @@ void peq_dsp_eval_curve_db(float *out_db, int num_points, float min_hz, float ma
 void peq_dsp_get_vu_metrics(peq_vu_metrics_t *out_vu, bool clear_clip);
 void peq_dsp_clear_vu_metrics(void);
 
+#define PEQ_FFT_SIZE 1024
+bool peq_dsp_read_fft_snapshot(float out_samples[PEQ_FFT_SIZE], int *out_sample_rate);
+
 void peq_dsp_trigger_wake_ramp(void);
 bool peq_dsp_is_signal_silent(void);
 

@@ -174,7 +174,7 @@ export function encodeRenameSlot(slot, nameStr) {
 export function encodeDynamicsConfig(dynamics) {
   const { buffer, view } = makeReport();
   view.setUint8(2, CMD_SET_DYNAMICS);
-  view.setUint8(3, clamp(dynamics.oledView, 0, 3));
+  view.setUint8(3, clamp(dynamics.oledView, 0, 4));
   view.setUint8(4, clamp(dynamics.loudnessMode, 0, 2));
   const flags =
     (dynamics.limiterEnabled ? 0x01 : 0x00) |

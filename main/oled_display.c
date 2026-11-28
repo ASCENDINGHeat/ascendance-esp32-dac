@@ -11,9 +11,20 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
+#include "esp_dsp.h"
 
 #define TAG "OLED"
 #define OLED_BLANK_SEC 180U
+#define OLED_SPEC_BANDS 32
+
+/* Static BSS buffers for Core 0 1024-pt FFT 32-band RTA (off task stack) */
+static float s_fft_in[PEQ_FFT_SIZE];
+static __attribute__((aligned(16))) float s_fft_cf[PEQ_FFT_SIZE * 2];
+static float s_fft_win[PEQ_FFT_SIZE];
+static float s_spec_db[OLED_SPEC_BANDS];
+static float s_spec_peak_db[OLED_SPEC_BANDS];
+static uint8_t s_spec_peak_hold[OLED_SPEC_BANDS];
+static bool s_fft_inited = false;
 
 static SemaphoreHandle_t s_ui_mutex = NULL;
 static ui_display_state_t s_current_state;
@@ -214,6 +225,104 @@ static void render_split_body(void)
     oled_draw_string(117, 42, "R", vu.limiter_active);
 }
 
+static void render_spectrum_body(void)
+{
+    if (!s_fft_inited) {
+        dsps_fft2r_init_fc32(NULL, PEQ_FFT_SIZE);
+        dsps_wind_hann_f32(s_fft_win, PEQ_FFT_SIZE);
+        for (int b = 0; b < OLED_SPEC_BANDS; b++) {
+            s_spec_db[b] = -60.0f;
+            s_spec_peak_db[b] = -60.0f;
+            s_spec_peak_hold[b] = 0;
+        }
+        s_fft_inited = true;
+    }
+
+    int sr = 48000;
+    if (peq_dsp_read_fft_snapshot(s_fft_in, &sr)) {
+        if (sr <= 0) sr = 48000;
+        for (int i = 0; i < PEQ_FFT_SIZE; i++) {
+            s_fft_cf[2 * i]     = s_fft_in[i] * s_fft_win[i];
+            s_fft_cf[2 * i + 1] = 0.0f;
+        }
+        dsps_fft2r_fc32(s_fft_cf, PEQ_FFT_SIZE);
+        dsps_bit_rev_fc32(s_fft_cf, PEQ_FFT_SIZE);
+
+        /* Group bins 1..511 into 32 log-spaced bands (47 Hz .. 18 kHz) */
+        const float f_min = 47.0f;
+        const float f_max = fminf(18000.0f, 0.45f * (float)sr);
+        const float ratio = powf(f_max / f_min, 1.0f / (float)OLED_SPEC_BANDS);
+        const float norm_scale = 4.0f / (float)PEQ_FFT_SIZE; // Hann coherent gain = 0.5, single-sided = 2x
+        int prev_hi = 1;
+
+        for (int b = 0; b < OLED_SPEC_BANDS; b++) {
+            float f_lo = f_min * powf(ratio, (float)b);
+            float f_hi = f_lo * ratio;
+            int b0 = (int)lroundf(f_lo * (float)PEQ_FFT_SIZE / (float)sr);
+            int b1 = (int)lroundf(f_hi * (float)PEQ_FFT_SIZE / (float)sr);
+            if (b0 < prev_hi) b0 = prev_hi;
+            if (b0 < 1) b0 = 1;
+            if (b1 <= b0) b1 = b0 + 1;
+            if (b1 > (PEQ_FFT_SIZE / 2)) b1 = PEQ_FFT_SIZE / 2;
+            prev_hi = b1;
+
+            float max_mag2 = 0.0f;
+            for (int k = b0; k < b1; k++) {
+                float re = s_fft_cf[2 * k];
+                float im = s_fft_cf[2 * k + 1];
+                float m2 = re * re + im * im;
+                if (m2 > max_mag2) max_mag2 = m2;
+            }
+
+            float mag = sqrtf(max_mag2) * norm_scale;
+            float db = (mag > 1e-4f) ? (20.0f * log10f(mag)) : -60.0f;
+            if (db < -60.0f) db = -60.0f;
+            if (db > 0.0f) db = 0.0f;
+
+            /* Fast attack, smooth decay */
+            if (db > s_spec_db[b]) {
+                s_spec_db[b] = 0.70f * db + 0.30f * s_spec_db[b];
+            } else {
+                s_spec_db[b] = 0.25f * db + 0.75f * s_spec_db[b];
+            }
+
+            /* Peak-hold dot with 6-tick (~600 ms) hold */
+            if (s_spec_db[b] >= s_spec_peak_db[b]) {
+                s_spec_peak_db[b] = s_spec_db[b];
+                s_spec_peak_hold[b] = 6;
+            } else if (s_spec_peak_hold[b] > 0) {
+                s_spec_peak_hold[b]--;
+            } else {
+                s_spec_peak_db[b] -= 2.5f;
+                if (s_spec_peak_db[b] < -60.0f) s_spec_peak_db[b] = -60.0f;
+            }
+        }
+    } else {
+        /* Gentle idle decay when no new audio frames arrive */
+        for (int b = 0; b < OLED_SPEC_BANDS; b++) {
+            s_spec_db[b] -= 3.0f;
+            if (s_spec_db[b] < -60.0f) s_spec_db[b] = -60.0f;
+            s_spec_peak_db[b] -= 2.0f;
+            if (s_spec_peak_db[b] < -60.0f) s_spec_peak_db[b] = -60.0f;
+        }
+    }
+
+    /* Draw 32 bars across 128 px (3 px bar + 1 px gap), y = 12..48 (36 px height) */
+    const int base_y = 48;
+    const int max_h = 36;
+    for (int b = 0; b < OLED_SPEC_BANDS; b++) {
+        int x = b * 4;
+        int h = db_to_bar_px(s_spec_db[b], max_h);
+        if (h > 0) {
+            oled_draw_rect(x, base_y - h, 3, h, true, true);
+        }
+        int ph = db_to_bar_px(s_spec_peak_db[b], max_h);
+        if (ph > 0) {
+            oled_draw_hline(x, base_y - ph, 3, true);
+        }
+    }
+}
+
 static void render_playback_screen(void)
 {
     xSemaphoreTake(s_ui_mutex, portMAX_DELAY);
@@ -278,6 +387,9 @@ static void render_playback_screen(void)
         case OLED_VIEW_SPLIT:
             render_split_body();
             break;
+        case OLED_VIEW_SPECTRUM:
+            render_spectrum_body();
+            break;
         case OLED_VIEW_HUD:
         default:
             oled_draw_string(2, 16, state.title[0] ? state.title : "ASCENDANCE Hi-Fi", false);
@@ -304,7 +416,7 @@ static void format_menu_item_label(int item_idx, const ui_menu_state_t *m, char 
 {
     static const char *const k_xf_names[4]   = { "Off", "CM", "JM", "JM+" };
     static const char *const k_loud_names[3] = { "Off", "Mild", "Full" };
-    static const char *const k_view_names[4] = { "Classic", "Curve", "VU", "Split" };
+    static const char *const k_view_names[5] = { "Classic", "Curve", "VU", "Split", "Spectrum" };
     static const char *const k_exc_names[PEQ_EXCITER_MODE_COUNT] = { "Tube", "Tape", "Air" };
 
     int num = item_idx + 1;
@@ -332,7 +444,7 @@ static void format_menu_item_label(int item_idx, const ui_menu_state_t *m, char 
         break;
     case MENU_ITEM_OLED_VIEW:
         snprintf(buf, sz, "%d. View:%s", num,
-                 k_view_names[(m->oled_view < 4) ? m->oled_view : 0]);
+                 k_view_names[(m->oled_view < 5) ? m->oled_view : 0]);
         break;
     case MENU_ITEM_BASS_ENH:
         snprintf(buf, sz, "%d. Bass Enh:%s", num, m->bass_enabled ? "On" : "Off");

@@ -140,7 +140,7 @@ export function DynamicsCard({
             onChange={(e) =>
               onChangeDynamics({
                 ...dynamics,
-                oledView: clamp(parseInt(e.target.value, 10), 0, 3),
+                oledView: clamp(parseInt(e.target.value, 10), 0, 4),
               })
             }
           >
@@ -148,6 +148,7 @@ export function DynamicsCard({
             <option value={1}>EQ Curve</option>
             <option value={2}>VU Meters</option>
             <option value={3}>Split</option>
+            <option value={4}>Spectrum (32-Band FFT)</option>
           </select>
         </div>
 

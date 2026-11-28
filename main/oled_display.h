@@ -21,6 +21,7 @@ typedef enum {
     OLED_VIEW_CURVE,
     OLED_VIEW_VU,
     OLED_VIEW_SPLIT,
+    OLED_VIEW_SPECTRUM,
     OLED_VIEW_COUNT
 } oled_playback_view_t;
 

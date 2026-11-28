@@ -291,7 +291,7 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
             bool fir_en = (pkt->enabled & 0x02) != 0;
             bool auto_preamp_en = (pkt->enabled & 0x04) != 0;
             uint8_t loud = (pkt->filter_type < PEQ_LOUDNESS_COUNT) ? pkt->filter_type : 0;
-            uint8_t view = (uint8_t)(pkt->band_idx & 0x03);
+            uint8_t view = (pkt->band_idx < OLED_VIEW_COUNT) ? pkt->band_idx : 0;
 
             peq_dsp_set_limiter_enabled(lim_en);
             peq_dsp_set_auto_preamp_enabled(auto_preamp_en);

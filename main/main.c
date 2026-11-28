@@ -455,7 +455,7 @@ static void handle_playback_event(const control_event_t *evt)
         oled_playback_view_t next_view = (oled_playback_view_t)((oled_display_get_playback_view() + 1) % OLED_VIEW_COUNT);
         peq_dsp_set_oled_view((uint8_t)next_view);
         oled_display_set_playback_view(next_view);
-        static const char *view_labels[OLED_VIEW_COUNT] = { "View: HUD", "View: EQ Curve", "View: VU Meter", "View: Split" };
+        static const char *view_labels[OLED_VIEW_COUNT] = { "View: HUD", "View: EQ Curve", "View: VU Meter", "View: Split", "View: Spectrum" };
         oled_display_show_eq_overlay(view_labels[next_view]);
         break;
     }
