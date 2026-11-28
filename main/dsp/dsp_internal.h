@@ -1,6 +1,6 @@
 #pragma once
 
-#include "peq_dsp.h"
+#include "dsp_peq.h"
 
 #include <stdio.h>
 #include <stdlib.h>

@@ -39,12 +39,12 @@
 #include "nvs_flash.h"
 #include "driver/gpio.h"
 
-#include "audio_pipeline.h"
-#include "controls.h"
-#include "oled_display.h"
-#include "peq_dsp.h"
-#include "audio_source_arbiter.h"
-#include "webhid_peq.h"
+#include "audio_i2s.h"
+#include "hal_controls.h"
+#include "ui_oled.h"
+#include "dsp_peq.h"
+#include "audio_arbiter.h"
+#include "usb_hid.h"
 #include "board_pins.h"
 
 #define TAG "AUDIO_DAC_DSP"

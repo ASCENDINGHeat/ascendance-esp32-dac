@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#include "peq_dsp.h"
+#include "dsp_peq.h"
 
 typedef enum {
     UI_MODE_PLAYBACK = 0,

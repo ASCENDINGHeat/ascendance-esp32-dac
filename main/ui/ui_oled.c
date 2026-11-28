@@ -1,8 +1,8 @@
-#include "oled_display.h"
-#include "ssd1306_drv.h"
+#include "ui_oled.h"
+#include "ui_ssd1306.h"
 #include "board_pins.h"
-#include "peq_dsp.h"
-#include "webhid_peq.h"
+#include "dsp_peq.h"
+#include "usb_hid.h"
 
 #include <stdio.h>
 #include <string.h>

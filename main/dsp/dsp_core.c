@@ -1,5 +1,5 @@
-#include "peq_dsp_internal.h"
-#include "audio_pipeline.h"
+#include "dsp_internal.h"
+#include "audio_i2s.h"
 #include <stdatomic.h>
 
 portMUX_TYPE s_peq_lock = portMUX_INITIALIZER_UNLOCKED;

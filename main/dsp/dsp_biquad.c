@@ -1,4 +1,4 @@
-#include "peq_dsp_internal.h"
+#include "dsp_internal.h"
 
 
 static bool filter_uses_gain(peq_filter_type_t type)

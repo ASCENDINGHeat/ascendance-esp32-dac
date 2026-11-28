@@ -1,4 +1,4 @@
-#include "peq_dsp_internal.h"
+#include "dsp_internal.h"
 
 void compute_mixer_rt(const peq_mixer_config_t *cfg, float sample_rate, mixer_rt_t *out)
 {

@@ -1,4 +1,4 @@
-#include "peq_dsp_internal.h"
+#include "dsp_internal.h"
 
 uint32_t calc_crc32(const uint8_t *data, size_t len)
 {

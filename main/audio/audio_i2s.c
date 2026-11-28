@@ -1,7 +1,7 @@
-#include "audio_pipeline.h"
+#include "audio_i2s.h"
 #include "board_pins.h"
-#include "led_indicator.h"
-#include "peq_dsp.h"
+#include "hal_led.h"
+#include "dsp_peq.h"
 
 #include <stdio.h>
 #include <stdlib.h>

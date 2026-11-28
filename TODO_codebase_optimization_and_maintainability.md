@@ -74,8 +74,8 @@ main/
 - Move `main/minimp3.h` into `main/third_party/minimp3.h` (or remove if SD/MP3 is permanently retired) to keep `main/` clean.
 
 ### M5. Refactor & Standardize C Source/Header Filenames (`main/`)
-- [ ] Audit and standardize C module filenames & folder grouping across `main/` so naming is consistent by subsystem (e.g., `dsp/`, `usb/`, `ui/`, `hal/` or uniform prefixes like `usb_uac.c` + `usb_hid.c`, `ui_oled.c` + `ui_ssd1306.c`, `hal_i2s.c` + `hal_controls.c` + `hal_led.c`, `dsp_core.c` + `dsp_biquad.c` + `dsp_harmonics.c` + `dsp_mixer_fir.c` + `dsp_nvs.c`).
-- [ ] Update `#include` directives, `main/CMakeLists.txt`, `AGENTS.md`, and `docs/` references atomically in one dedicated refactor commit.
+- [x] Standardized all C modules by subsystem (`main/audio/{audio_i2s,audio_arbiter}.[ch]`, `main/dsp/{dsp_peq.h,dsp_internal.h,dsp_core.c,dsp_biquad.c,dsp_harmonics.c,dsp_mixer_fir.c,dsp_nvs.c}`, `main/usb/{usb_hid.[ch],usb_uac.c}`, `main/ui/{ui_oled,ui_ssd1306}.[ch]`, `main/hal/{hal_controls,hal_led}.[ch]`).
+- [x] Updated all `#include` directives, `main/CMakeLists.txt`, `AGENTS.md`, and `.agents/skills/ascendance-hid-parity/SKILL.md` atomically in one dedicated refactor commit.
 
 ---
 

@@ -16,7 +16,7 @@
 #include <stdint.h>
 #include <stdbool.h>
 #include "esp_err.h"
-#include "peq_dsp.h"
+#include "dsp_peq.h"
 
 #ifdef __cplusplus
 extern "C" {

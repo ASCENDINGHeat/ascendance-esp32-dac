@@ -1,4 +1,4 @@
-#include "controls.h"
+#include "hal_controls.h"
 #include "board_pins.h"
 
 #include <stdio.h>

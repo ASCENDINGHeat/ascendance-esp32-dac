@@ -6,7 +6,7 @@
  * main/usb_uac_audio.c. Pinned strictly to Core 0 (Golden Rule 1).
  */
 
-#include "webhid_peq.h"
+#include "usb_hid.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -17,8 +17,8 @@
 #include "tusb.h"
 #include "class/hid/hid_device.h"
 
-#include "peq_dsp.h"
-#include "oled_display.h"
+#include "dsp_peq.h"
+#include "ui_oled.h"
 
 #define TAG "WEBHID_PEQ"
 

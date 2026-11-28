@@ -6,7 +6,7 @@
  * 64-byte WebHID protocol router (main/webhid_peq.c).
  */
 
-#include "webhid_peq.h"
+#include "usb_hid.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -26,10 +26,10 @@
 #include "class/hid/hid_device.h"
 #include "class/audio/audio_device.h"
 
-#include "peq_dsp.h"
-#include "audio_pipeline.h"
-#include "oled_display.h"
-#include "led_indicator.h"
+#include "dsp_peq.h"
+#include "audio_i2s.h"
+#include "ui_oled.h"
+#include "hal_led.h"
 #include "board_pins.h"
 
 #define TAG "WEBHID_PEQ"

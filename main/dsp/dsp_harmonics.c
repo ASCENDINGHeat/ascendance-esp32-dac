@@ -1,4 +1,4 @@
-#include "peq_dsp_internal.h"
+#include "dsp_internal.h"
 
 void clamp_harmonics_cfg(peq_harmonics_cfg_t *cfg)
 {

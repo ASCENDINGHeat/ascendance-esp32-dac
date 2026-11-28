@@ -1,7 +1,7 @@
-#include "audio_source_arbiter.h"
-#include "audio_pipeline.h"
-#include "oled_display.h"
-#include "peq_dsp.h"
+#include "audio_arbiter.h"
+#include "audio_i2s.h"
+#include "ui_oled.h"
+#include "dsp_peq.h"
 #include "board_pins.h"
 
 #include <stdio.h>
