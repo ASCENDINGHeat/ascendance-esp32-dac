@@ -71,7 +71,7 @@ Simultaneously, the device provides an on-device **SSD1306 128x64 OLED display**
 ```
 
 ### 2.1 Standalone Diagnostic Audio Sources
-The system also incorporates an internal **Audio Source Arbiter** ([`main/audio_source_arbiter.c`](../../main/audio_source_arbiter.c)) that can generate onboard diagnostic signals on Core 1 when no USB host is streaming:
+The system also incorporates an internal **Audio Source Arbiter** ([`main/audio/audio_arbiter.c`](../../main/audio/audio_arbiter.c)) that can generate onboard diagnostic signals on Core 1 when no USB host is streaming:
 1. `AUDIO_SOURCE_STANDALONE`: Default UAC 1.0 USB DAC stream consumer.
 2. `AUDIO_SOURCE_TONE_TEST`: Synthesizes an A minor arpeggio (A4 $440\text{ Hz}$, C5 $523\text{ Hz}$, E5 $659\text{ Hz}$, A5 $880\text{ Hz}$) cycling every 250 ms to evaluate EQ curves without host audio.
 3. `AUDIO_SOURCE_SWEEP`: Continuous logarithmic/linear sweep from 100 Hz to 4,000 Hz for acoustic and distortion testing.

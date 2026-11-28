@@ -95,4 +95,4 @@ Invariants preserved: `44.1 / 48 kHz` 24-bit Async UAC 1.0 (`860 B <= 1,024 B` D
 - [ ] Firmware CI (`build.yml` under `espressif/idf:v6.1`) builds cleanly with zero `-Werror=address-of-packed-member` or stack/RAM regressions.
 - [ ] WebHID Tuner passes `npm test`, `npm run build`, and `node --check` on `dist/index.html` (`dist/` and `node_modules/` remain untracked).
 - [ ] Android Companion passes `gradle testDebugUnitTest lintDebug assembleDebug` (`android.yml`).
-- [ ] Documentation updated (`docs/firmware/current_firmware_implementation.md`, `docs/guides/usb_dac_guide.md`, `CHANGELOG.md`).
+- [x] Documentation updated (`README.md`, `CHANGELOG.md`, `docs/firmware/current_firmware_implementation.md`, `docs/guides/usb_dac_guide.md`, and M5 subsystem paths across `docs/`).

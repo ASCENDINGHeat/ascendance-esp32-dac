@@ -77,13 +77,13 @@ The codebase is structured into modular, decoupled C subsystems in [`main/`](../
 │   ├── Kconfig.projbuild                  # Menuconfig schema (pins, buffer sizes, debug flags)
 │   ├── board_pins.h                       # Centralized master hardware pinout definitions
 │   ├── main.c                            # Entry point (`app_main`), task orchestration & loops
-│   ├── audio_pipeline.c / .h              # Master I2S0 DMA driver, soft-mute & startup chime
-│   ├── audio_source_arbiter.c / .h        # 4-Phase zero-pop source switcher (USB DAC/Tone/Sweep)
-│   ├── controls.c / .h                    # Hardware PCNT rotary encoder & debounced button handlers
-│   ├── oled_display.c / .h                # SSD1306 128x64 OLED driver (I2C 400kHz, non-blocking)
-│   ├── peq_dsp.c / .h                     # 1-to-10 band PEQ DSP engine, RBJ biquads & crossfader
-│   ├── led_indicator.c / .h               # WS2812B aRGB LED volume loudness driver (RMT 800kHz)
-│   ├── webhid_peq.c / .h                  # TinyUSB composite UAC 1.0 + WebHID stack & callbacks
+│   ├── audio/audio_i2s.c / .h              # Master I2S0 DMA driver, soft-mute & startup chime
+│   ├── audio/audio_arbiter.c / .h        # 4-Phase zero-pop source switcher (USB DAC/Tone/Sweep)
+│   ├── hal/hal_controls.c / .h                    # Hardware PCNT rotary encoder & debounced button handlers
+│   ├── ui/ui_oled.c / .h                # SSD1306 128x64 OLED driver (I2C 400kHz, non-blocking)
+│   ├── dsp/dsp_core.c / .h                     # 1-to-10 band PEQ DSP engine, RBJ biquads & crossfader
+│   ├── hal/hal_led.c / .h               # WS2812B aRGB LED volume loudness driver (RMT 800kHz)
+│   ├── usb/usb_hid.c / .h                  # TinyUSB composite UAC 1.0 + WebHID stack & callbacks
 │   └── minimp3.h                          # Public-domain zero-dependency MP3 decoder (research)
 └── tools/
     └── webhid_tuner/
@@ -94,7 +94,7 @@ The codebase is structured into modular, decoupled C subsystems in [`main/`](../
 
 ## 2. Hardware Abstraction & Peripheral Drivers
 
-### 2.1 Master I2S0 Audio Driver ([`main/audio_pipeline.c`](../../main/audio_pipeline.c))
+### 2.1 Master I2S0 Audio Driver ([`main/audio/audio_i2s.c`](../../main/audio/audio_i2s.c))
 The I2S controller is configured using the modern ESP-IDF v6.1 driver API (`esp_driver_i2s`):
 
 ```c
@@ -120,23 +120,23 @@ i2s_std_config_t std_cfg = {
 * **Hardware Soft-Mute (`GPIO 7`):** Actively asserted LOW during boot, frequency switches, and source transitions to ensure zero audible pops or clicks.
 * **Perceptual Volume Taper:** Software master volume uses a quadratic perceptual curve (`norm * norm`) aligned with the UAC 1.0 dB Feature Unit mapping and applied inside Core 1's 32-bit DSP output stage (`audio_pipeline_get_volume_factor()`).
 
-### 2.2 Native USB OTG Composite Stack ([`main/webhid_peq.c`](../../main/webhid_peq.c))
+### 2.2 Native USB OTG Composite Stack ([`main/usb/usb_hid.c`](../../main/usb/usb_hid.c))
 Operating over Native USB Full-Speed (12.0 Mbps) on GPIO 19 (`D-`) and GPIO 20 (`D+`):
 * **Interface Association Descriptor (IAD):** Groups Interface 0 (Audio Control) and Interface 1 (Audio Streaming) as a compliant UAC 1.0 speaker.
 * **Interface 0 (Audio Control):** Feature Unit provides Master Volume and Mute control integrated directly into the OS volume mixer.
 * **Interface 1 (Audio Streaming):** Isochronous OUT endpoint (`0x01`, `294` max bytes fitting ESP32-S3's `1,024`-byte DWC2 hardware FIFO, 1 ms polling, `16,384`-byte TinyUSB SW FIFO) delivering **24-bit PCM** at **44.1 kHz or 48.0 kHz**.
 * **Interface 2 (Vendor WebHID):** Interrupt endpoints (`EP 0x02 OUT`, `EP 0x82 IN`, 64 bytes) for bidirectional communication with the WebHID browser tuner and Android Companion app (Dual-Mono L/R PEQ, A/B Toggle, 2×2 Matrix/Crossfeed, Dynamics, FIR Impulse Filter, Bass Enhancer & Harmonic Exciter via `0x0E`, and `0xFD` `reserved[20..27]` / Sample Rate Telemetry).
 
-### 2.3 Hardware Pulse Counter (PCNT) Driver ([`main/controls.c`](../../main/controls.c))
+### 2.3 Hardware Pulse Counter (PCNT) Driver ([`main/hal/hal_hal/hal_controls.c`](../../main/hal/hal_hal/hal_controls.c))
 Quadrature decoding of the EC11 rotary encoder uses the ESP32-S3 dedicated hardware PCNT peripheral:
 * **Glitch Filter:** Hardware filter suppresses contact bounce under $1{,}000\text{ ns}$.
 * **Offloaded Decoding:** Core 0/1 CPUs are not interrupted on rotary state transitions; pulses accumulate in hardware counter registers and are polled efficiently at 50 Hz (`20 ms` period).
 
-### 2.4 Fast I2C Master Bus ([`main/oled_display.c`](../../main/oled_display.c))
+### 2.4 Fast I2C Master Bus ([`main/ui/ui_oled.c`](../../main/ui/ui_oled.c))
 * **Bus Speed:** 400 kHz Fast Mode on GPIO 8 (`SDA`) and GPIO 9 (`SCL`) with external 4.7 kΩ pull-ups.
 * **Non-Blocking Framebuffer:** SSD1306 updates are flushed via a low-priority background task on Core 0 at 10 FPS, preventing display I/O from stalling audio processing.
 
-### 2.5 Onboard WS2812B aRGB LED Driver ([`main/led_indicator.c`](../../main/led_indicator.c))
+### 2.5 Onboard WS2812B aRGB LED Driver ([`main/hal/hal_led.c`](../../main/hal/hal_led.c))
 * **Peripheral Engine:** Driven using ESP-IDF v6.1 native `esp_driver_rmt` (Remote Control peripheral) on `GPIO 48` on Core 0.
 * **Timing & Resolution:** RMT channel configured at 10 MHz resolution (100 ns/tick) paired with a bytes encoder implementing WS2812B NRZ symbols (Bit 0: 300 ns High / 900 ns Low; Bit 1: 900 ns High / 300 ns Low; 24-bit GRB sequence).
 * **Optical Safety & Thermal Clamping:** Peak software brightness is capped to ~25% duty cycle (`MAX_BRIGHTNESS = 60`) per Section 3.5 of `docs/hardware/hardware.md`, eliminating glare while preserving a dynamic range of 60 discrete luminance levels.
@@ -150,7 +150,7 @@ Quadrature decoding of the EC11 rotary encoder uses the ESP32-S3 dedicated hardw
 
 ## 3. Parametric Equalizer (PEQ) DSP Engine
 
-Implemented in [`main/peq_dsp.c`](../../main/peq_dsp.c), the audio engine provides studio-grade acoustic correction.
+Implemented in [`main/dsp/dsp_core.c`](../../main/dsp/dsp_core.c), the audio engine provides studio-grade acoustic correction.
 
 ### 3.1 Biquad Filter Topologies
 Filters are implemented as Robert Bristow-Johnson (RBJ) Audio EQ Cookbook **Direct Form II Transposed** biquads:
@@ -215,7 +215,7 @@ All hardcoded factory presets (`Flat`, `Bass Boost`, `Harman`) have been removed
 
 ## 4. Audio Source Arbiter & Zero-Pop Handover
 
-Implemented in [`main/audio_source_arbiter.c`](../../main/audio_source_arbiter.c), the arbiter coordinates operational audio sources using the **4-Phase Zero-Pop Protocol**:
+Implemented in [`main/audio/audio_arbiter.c`](../../main/audio/audio_arbiter.c), the arbiter coordinates operational audio sources using the **4-Phase Zero-Pop Protocol**:
 
 ```
  Phase 1: Hardware Soft-Mute (Pull GPIO 7 LOW for 15 ms)
@@ -237,7 +237,7 @@ Implemented in [`main/audio_source_arbiter.c`](../../main/audio_source_arbiter.c
 
 ## 5. User Controls & On-Device OLED UI
 
-Implemented in [`main/controls.c`](../../main/controls.c) and [`main/oled_display.c`](../../main/oled_display.c).
+Implemented in [`main/hal/hal_hal/hal_controls.c`](../../main/hal/hal_hal/hal_controls.c) and [`main/ui/ui_oled.c`](../../main/ui/ui_oled.c).
 
 ### 5.1 Physical Controls Interaction Matrix
 

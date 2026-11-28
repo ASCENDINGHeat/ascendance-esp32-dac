@@ -49,7 +49,7 @@ esp_err_t webhid_peq_init(void);
 
 #### Production Reference Implementation
 ```c
-#include "webhid_peq.h"
+#include "usb/usb_hid.h"
 #include "tinyusb.h"
 #include "tusb.h"
 

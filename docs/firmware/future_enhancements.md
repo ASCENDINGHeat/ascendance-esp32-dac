@@ -303,7 +303,7 @@ The **SSD1306 128x64 Monochrome OLED Display** has sufficient spatial resolution
 ---
 
 ### 2.3 Cycleable Playback Views & Main Menu DSP Controls (`v0.2.0`)
-> *(Note: The original standalone rotary PEQ editor proposal was superseded and implemented in `v0.1.0` as Mode 3 On-Device Digit-by-Digit PEQ Editor in `oled_display.c` / `main.c`.)*
+> *(Note: The original standalone rotary PEQ editor proposal was superseded and implemented in `v0.1.0` as Mode 3 On-Device Digit-by-Digit PEQ Editor in `ui/ui_oled.c` / `main.c`.)*
 
 * **Cycleable Playback Body Views:**
   Users can cycle the `y=14..46` Playback screen body (persisted in RAM/NVS UI preference) across four layouts:
@@ -397,7 +397,7 @@ The WebHID Tuner (`tools/webhid_tuner/`) and Android Companion (`tools/android_c
 ## 5. v0.2.0 Extended 64-Byte HID & Companion Protocol
 
 ### 5.1 Extended `webhid_cmd_t` Command Assignments (`0x0A–0x14`)
-Building directly on [`webhid_peq.h`](../../main/webhid_peq.h) commands `0x01..0x09` and `0x13` while preserving full backwards compatibility with `0x4551` ("EQ") 64-byte packets:
+Building directly on [`usb/usb_hid.h`](../../main/usb/usb_hid.h) commands `0x01..0x09` and `0x13` while preserving full backwards compatibility with `0x4551` ("EQ") 64-byte packets:
 
 | Command ID | Enum Symbol | Payload Layout (`64` Bytes) | Behavior |
 | :---: | :--- | :--- | :--- |
@@ -415,18 +415,18 @@ Building directly on [`webhid_peq.h`](../../main/webhid_peq.h) commands `0x01..0
 
 | Enhancement Area | Component | Primary Benefit | Target Release | Status |
 | :--- | :--- | :--- | :---: | :---: |
-| **HPF / LPF / Notch / BPF** | `peq_dsp.c` / WebHID / Android | Subsonic protection, noise reduction, and resonance removal | `v0.1.0` | **Implemented** |
-| **24-Bit / 96 kHz Audio & 32-bit I2S** | `CMakeLists.txt` / `audio_pipeline.c` | 112 dB dynamic range and studio master resolution | `v0.1.0` | **Implemented** |
+| **HPF / LPF / Notch / BPF** | `dsp/dsp_core.c` / WebHID / Android | Subsonic protection, noise reduction, and resonance removal | `v0.1.0` | **Implemented** |
+| **24-Bit / 96 kHz Audio & 32-bit I2S** | `CMakeLists.txt` / `audio/audio_i2s.c` | 112 dB dynamic range and studio master resolution | `v0.1.0` | **Implemented** |
 | **Tri-Rate (44.1k, 48k, 96k)** | TinyUSB / Core 1 Reclock | Bit-perfect CD & Hi-Res playback with zero OS resampling | `v0.1.0` | **Implemented** |
-| **Dual-Mono L/R PEQ & NVS v2** | `peq_dsp.c` / WebHID / Android | Independent channel balance and CRC32 persistence | `v0.1.0` | **Implemented** |
-| **A/B Instant Toggle** | `peq_dsp.c` / WebHID / Android | Instant preamp-normalized comparison against bypass | `v0.1.0` | **Implemented** |
-| **Channel Matrix & Crossfeed** | `peq_dsp.c` / WebHID / Android | Stereo widening, mono downmix, and Headphone Crossfeed (Chu Moy) | `v0.1.0` | **Implemented** |
+| **Dual-Mono L/R PEQ & NVS v2** | `dsp/dsp_core.c` / WebHID / Android | Independent channel balance and CRC32 persistence | `v0.1.0` | **Implemented** |
+| **A/B Instant Toggle** | `dsp/dsp_core.c` / WebHID / Android | Instant preamp-normalized comparison against bypass | `v0.1.0` | **Implemented** |
+| **Channel Matrix & Crossfeed** | `dsp/dsp_core.c` / WebHID / Android | Stereo widening, mono downmix, and Headphone Crossfeed (Chu Moy) | `v0.1.0` | **Implemented** |
 | **AutoEQ / APO Import, PWA & Phase/GD** | `tools/webhid_tuner/` | One-click community headphone presets & complex curve plots | `v0.1.0` | **Implemented** |
 | **Native Android Companion** | `tools/android_companion/` | Control-only mobile tuning alongside OS audio + local library | `v0.1.0` | **Implemented** |
-| **True-Peak Limiter & Soft-Clipper** | `peq_dsp.c` (1.5 ms lookahead) | -0.5 dBFS transient clip protection on heavy EQ boosts | `v0.2.0` | **Implemented** |
-| **Equal Loudness (ISO 226)** | `peq_dsp.c` / `audio_pipeline.c` | Volume-coupled ISO 226 bass/air compensation for low SPLs | `v0.2.0` | **Implemented** |
-| **FIR Impulse Filter (`esp-dsp`)** | `peq_dsp.c` (`esp-dsp`) | Adaptive 256-tap (48k) / 128-tap (96k) phase/room FIR engine | `v0.2.0` | **Implemented** |
-| **8 Editable DAC Presets (`Slot 1–8`)** | `peq_dsp.c` / `main.c` / Apps | Replaces hardcoded factory presets with 8 flat-seeded named slots | `v0.2.0` | **Implemented** |
-| **Cycleable OLED Screen Views** | `oled_display.c` / `peq_dsp.c` | `Classic`, `EQ Curve`, `VU Meters`, `Split` + expanded menu | `v0.2.0` | **Implemented** |
-| **OLED Hot-Plug & Auto-Dim / Sleep** | `oled_display.c` (`0x3C`/`0x3D`) | Non-blocking I2C recovery, 60 s dim, pixel shift & 180 s sleep | `v0.2.0` | **Implemented** |
-| **USB Suspend & Auto-Mute on Silence** | `webhid_peq.c` / `GPIO 7` | `<15 mA` USB suspend sleep & zero-signal analog silence mute | `v0.2.0` | **Implemented** |
+| **True-Peak Limiter & Soft-Clipper** | `dsp/dsp_core.c` (1.5 ms lookahead) | -0.5 dBFS transient clip protection on heavy EQ boosts | `v0.2.0` | **Implemented** |
+| **Equal Loudness (ISO 226)** | `dsp/dsp_core.c` / `audio/audio_i2s.c` | Volume-coupled ISO 226 bass/air compensation for low SPLs | `v0.2.0` | **Implemented** |
+| **FIR Impulse Filter (`esp-dsp`)** | `dsp/dsp_core.c` (`esp-dsp`) | Adaptive 256-tap (48k) / 128-tap (96k) phase/room FIR engine | `v0.2.0` | **Implemented** |
+| **8 Editable DAC Presets (`Slot 1–8`)** | `dsp/dsp_core.c` / `main.c` / Apps | Replaces hardcoded factory presets with 8 flat-seeded named slots | `v0.2.0` | **Implemented** |
+| **Cycleable OLED Screen Views** | `ui/ui_oled.c` / `dsp/dsp_core.c` | `Classic`, `EQ Curve`, `VU Meters`, `Split` + expanded menu | `v0.2.0` | **Implemented** |
+| **OLED Hot-Plug & Auto-Dim / Sleep** | `ui/ui_oled.c` (`0x3C`/`0x3D`) | Non-blocking I2C recovery, 60 s dim, pixel shift & 180 s sleep | `v0.2.0` | **Implemented** |
+| **USB Suspend & Auto-Mute on Silence** | `usb/usb_hid.c` / `GPIO 7` | `<15 mA` USB suspend sleep & zero-signal analog silence mute | `v0.2.0` | **Implemented** |

@@ -2,6 +2,23 @@
 
 All notable changes to **Project ASCENDANCE** are documented in this file.
 
+## [v0.5.0] — Unreleased
+
+### Added (ESP32-S3 Firmware, OLED, WebHID & Android Parity)
+- **Real-Time 32-Band 1024-pt FFT Spectrum Analyzer (`OLED_VIEW_SPECTRUM`, 5th OLED View):** Lock-free `1024`-sample post-DSP mono capture on Core 1 (zero overhead when inactive) feeding `espressif/esp-dsp` `dsps_fft2r_fc32` + Hann window in static BSS on Core 0 (`oled_ui_task`) to render 32 logarithmic bars (`47 Hz..18 kHz`) with `600 ms` peak-hold dots, selectable across OLED, WebHID, and Android Companion.
+- **Dynamic Bass (Envelope-Controlled Sub-Bass):** Core 1 `90 Hz` 2nd-order Butterworth sub-bass stage (`5 ms` attack / `120 ms` release, `20 ms` gain smoother, `0–100%` amount) that boosts low/moderate passages and smoothly ducks above `-18 dBFS` toward `-3 dBFS`, with zero-CPU bypass when disabled and full OLED/WebHID/Android controls.
+- **4-Level Tonal-Neutral BS2B Headphone Crossfeed:** Upgraded Crossfeed to `Off`, `Chu Moy` (`700 Hz / -4.5 dB`), `Jan Meier` (`700 Hz / -6.0 dB`), and `J. Meier` (`650 Hz / -9.5 dB`) with coherent low-frequency normalization across Firmware, OLED (`Off/CM/JM/JM+`), WebHID, and Android.
+- **Auto-Preamp Headroom Guard:** Sweeps active L/R biquad + Equal Loudness cascades across `20 Hz..20 kHz` on Core 0 and applies automatic headroom attenuation (`0x0B` bit `0x04`, `0xFD` bit `0x40` + byte `39` live `auto_att_x10` readout) to prevent digital clipping.
+- **Selectable Logarithmic dB Volume Taper (`-60..0 dB`):** Added IEM-friendly logarithmic volume curve alongside the standard quadratic taper (`audio_pipeline_set_log_volume_taper()`), toggleable on OLED (`VolTaper:Std/Log`), WebHID, and Android.
+- **Global 18 Hz Subsonic / DC Blocker & 24-Bit TPDF Dither Toggles:** Added a 1st-order `18 Hz` subsonic filter before the limiter plus full WebHID & Android UI controls for both Subsonic and 24-Bit TPDF Dither.
+- **Post-DSP Output VU Metering:** Moved Core 1 VU peak/RMS tap & TPDF dither gate to true post-DSP output (post-volume, post-limiter, post-soft-clip, pre-dither) while preserving raw-input silence detection for Auto-Mute.
+- **HID `CMD_SET_DSP_PRO` (`0x0F`) & `dsp_pro_v1` NVS Blob:** Versioned 64-byte extension command (`0x0F`), backward-compatible `0xFD` bytes `40..43` (`reserved[28..31]`) telemetry mirror, and CRC32-verified `dsp_pro_v1` flash persistence.
+
+### Refactored & Optimized
+- **Subsystem Modularization & Standardized Filenames (M1–M5):** Reorganized `main/` into `main/audio/` (`audio_i2s`, `audio_arbiter`), `main/dsp/` (`dsp_peq.h`, `dsp_internal.h`, `dsp_core`, `dsp_biquad`, `dsp_harmonics`, `dsp_mixer_fir`, `dsp_nvs`), `main/usb/` (`usb_uac`, `usb_hid`), `main/ui/` (`ui_oled`, `ui_ssd1306`), and `main/hal/` (`hal_controls`, `hal_led`); removed unused `minimp3.h` (`-1,865` lines).
+- **Core 1 Lock-Free VU & Mixer Fast-Path (P1/P4):** Deduplicated Core 1 `s24`/`s16` DSP loops, made VU telemetry 100% lock-free with C11 `_Atomic`, and added a precomputed `mixer_rt_t.identity` fast-path bypass.
+- **Android `ToneTab` Modularization (A1):** Split `ToneTab.kt` into focused card composables under `ui/screens/tone/`.
+
 ## [v0.4.2] — 2026-11-26
 
 ### Fixed (ESP32-S3 Firmware)

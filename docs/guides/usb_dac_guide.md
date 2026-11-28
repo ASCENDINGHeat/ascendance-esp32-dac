@@ -192,7 +192,7 @@ enum {
 
 ### 5.3 64-Byte Raw HID Tuning Packet Schema
 
-Tuning commands and profile queries travel in fixed 64-byte packets (`webhid_peq_packet_t` in [`main/webhid_peq.h`](../../main/webhid_peq.h)):
+Tuning commands and profile queries travel in fixed 64-byte packets (`webhid_peq_packet_t` in [`main/usb/usb_hid.h`](../../main/usb/usb_hid.h)):
 
 ```c
 #define WEBHID_PEQ_REPORT_SIZE      64
@@ -255,7 +255,14 @@ typedef struct __attribute__((packed)) {
   * `reserved[22]` = `exciter_amount_pct` (`0..100`)
   * `reserved[23..24]` = `bass_freq_hz` (`uint16` LE, `50..150`)
   * `reserved[25..26]` = `exciter_freq_hz` (`uint16` LE, `1500..8000`)
-  * `reserved[27]` = `0`
+  * `reserved[27]` (byte `39`) = `auto_att_x10` (`uint8`, live Auto-Preamp headroom attenuation in `0.1 dB` units; `0x0B` bit `0x04` enables Auto-Preamp, `0xFD` `reserved` flags bit `0x40` mirrors active state)
+  * `reserved[28..31]` (bytes `40..43`) = **`v0.5.0` DSP Pro Telemetry Mirror** (`dsp_pro_version = 1` in byte `40`, `pro_flags` in byte `41`, `dynamic_bass_amount_pct` `0..100` in byte `42`, `oled_view_ext` `0..4` in byte `43`)
+
+#### `WEBHID_CMD_SET_DSP_PRO` (`0x0F`) & `dsp_pro_v1` Persistence
+`WEBHID_CMD_SET_DSP_PRO` (`0x0F`) configures `v0.5.0` DSP Pro controls in volatile RAM (persisted only on explicit save under global NVS key `"dsp_pro_v1"` with CRC32 + `memcmp` delta verification):
+* `byte 3` (`pro_flags`): `bit 0 = tpdf_dither_en`, `bit 1 = subsonic_18hz_en`, `bit 2 = vol_taper_log_en`, `bit 3 = dynamic_bass_en`, `bit 4 = auto_preamp_en`.
+* `byte 4`: `dynamic_bass_amount_pct` (`0..100`).
+* `byte 5`: `oled_view` (`0=Classic`, `1=EQ Curve`, `2=VU`, `3=Split`, `4=32-Band FFT Spectrum`, or `0xFF` unchanged).
 
 ---
 
