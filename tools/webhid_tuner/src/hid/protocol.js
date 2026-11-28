@@ -155,7 +155,7 @@ export function encodeMixerConfig(mixer) {
   view.setUint8(3, mixer.mode);
   view.setInt8(4, mixer.balance);
   view.setUint8(5, clamp(mixer.widthPct, 0, 200));
-  view.setUint16(6, clamp(mixer.crossfeedLevel, 0, 2), true);
+  view.setUint16(6, clamp(mixer.crossfeedLevel, 0, 3), true);
   for (let i = 0; i < 4; i++) {
     view.setFloat32(12 + i * 4, mixer.customMatrix[i], true);
   }

@@ -510,7 +510,7 @@ static void handle_menu_event(const control_event_t *evt)
         case MENU_ITEM_CROSSFEED: {
             peq_mixer_config_t mixer;
             if (peq_dsp_get_mixer(&mixer) == ESP_OK) {
-                mixer.crossfeed_level = (uint8_t)((mixer.crossfeed_level + 1) % 3);
+                mixer.crossfeed_level = (uint8_t)((mixer.crossfeed_level + 1) % 4);
                 if (mixer.crossfeed_level > 0 && mixer.mode == MIXER_MODE_STEREO) {
                     mixer.mode = MIXER_MODE_CROSSFEED;
                 } else if (mixer.crossfeed_level == 0 && mixer.mode == MIXER_MODE_CROSSFEED) {

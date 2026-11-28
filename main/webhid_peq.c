@@ -367,7 +367,7 @@ void tud_hid_set_report_cb(uint8_t instance, uint8_t report_id, hid_report_type_
             cfg.mode = (pkt->band_idx < MIXER_MODE_COUNT) ? (mixer_mode_t)pkt->band_idx : MIXER_MODE_STEREO;
             cfg.balance = (int8_t)pkt->filter_type;
             cfg.width_pct = (pkt->enabled <= 200) ? pkt->enabled : 200;
-            cfg.crossfeed_level = (uint8_t)(pkt->freq_hz <= 2 ? pkt->freq_hz : 2);
+            cfg.crossfeed_level = (uint8_t)(pkt->freq_hz <= 3 ? pkt->freq_hz : 3);
             memcpy(&cfg.custom_matrix[0][0], &pkt->reserved[0], sizeof(float) * 4);
             peq_dsp_set_mixer(&cfg);
             oled_display_show_eq_overlay("Mixer Updated");

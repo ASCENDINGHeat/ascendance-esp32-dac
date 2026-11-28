@@ -182,7 +182,7 @@ data class MixerConfig(
             mode = MixerMode.fromCode(mode).code,
             balance = balance.coerceIn(-100, 100),
             widthPct = widthPct.coerceIn(0, 200),
-            crossfeedLevel = crossfeedLevel.coerceIn(0, 2),
+            crossfeedLevel = crossfeedLevel.coerceIn(0, 3),
             customMatrix = mat
         )
     }

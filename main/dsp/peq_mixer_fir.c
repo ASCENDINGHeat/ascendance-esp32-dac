@@ -26,10 +26,14 @@ void compute_mixer_rt(const peq_mixer_config_t *cfg, float sample_rate, mixer_rt
         m_rr = 0.5f * (1.0f + w);
         break;
     }
-    case MIXER_MODE_CROSSFEED:
+    case MIXER_MODE_CROSSFEED: {
+        uint8_t lvl = (cfg->crossfeed_level > 0 && cfg->crossfeed_level <= 3) ? cfg->crossfeed_level : 1;
         cf_en = true;
-        cf_gain = (cfg->crossfeed_level >= 2) ? 0.5012f : 0.5957f;
+        if (lvl == 1) cf_gain = 0.5957f;       // Chu Moy: 700 Hz, -4.5 dB
+        else if (lvl == 2) cf_gain = 0.5012f;  // Jan Meier: 700 Hz, -6.0 dB
+        else cf_gain = 0.3350f;                // J. Meier: 650 Hz, -9.5 dB
         break;
+    }
     case MIXER_MODE_CUSTOM_MATRIX:
         m_ll = isfinite(cfg->custom_matrix[0][0]) ? cfg->custom_matrix[0][0] : 1.0f;
         m_rl = isfinite(cfg->custom_matrix[0][1]) ? cfg->custom_matrix[0][1] : 0.0f;
@@ -43,8 +47,11 @@ void compute_mixer_rt(const peq_mixer_config_t *cfg, float sample_rate, mixer_rt
     case MIXER_MODE_STEREO:
     default:
         if (cfg->crossfeed_level > 0) {
+            uint8_t lvl = (cfg->crossfeed_level <= 3) ? cfg->crossfeed_level : 3;
             cf_en = true;
-            cf_gain = (cfg->crossfeed_level >= 2) ? 0.5012f : 0.5957f;
+            if (lvl == 1) cf_gain = 0.5957f;
+            else if (lvl == 2) cf_gain = 0.5012f;
+            else cf_gain = 0.3350f;
         }
         break;
     }
@@ -63,13 +70,15 @@ void compute_mixer_rt(const peq_mixer_config_t *cfg, float sample_rate, mixer_rt
     }
 
     float sr = (sample_rate > 0.0f) ? sample_rate : 48000.0f;
-    float alpha = expf(-2.0f * (float)M_PI * 700.0f / sr);
-    int delay_n = (int)lroundf(0.00027f * sr);
+    float cf_fc = (cfg->crossfeed_level >= 3) ? 650.0f : 700.0f;
+    float cf_delay_s = (cfg->crossfeed_level >= 3) ? 0.00026f : 0.00027f;
+    float alpha = expf(-2.0f * (float)M_PI * cf_fc / sr);
+    int delay_n = (int)lroundf(cf_delay_s * sr);
     if (delay_n < 1) delay_n = 1;
     if (delay_n >= CROSSFEED_MAX_DELAY) delay_n = CROSSFEED_MAX_DELAY - 1;
 
     if (cf_en && cf_gain > 0.0f) {
-        // Compensate coherent low-frequency crossfeed sum (~-1.8 to -2.0 dB) so toggling Crossfeed stays loudness-neutral
+        // Compensate coherent low-frequency crossfeed sum so toggling Crossfeed stays loudness-neutral
         float cf_norm = 1.0f / (1.0f + 0.5f * cf_gain);
         m_ll *= cf_norm;
         m_rl *= cf_norm;

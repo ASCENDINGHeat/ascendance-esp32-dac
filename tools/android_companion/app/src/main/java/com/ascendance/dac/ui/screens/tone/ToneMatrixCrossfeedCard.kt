@@ -141,8 +141,8 @@ internal fun ToneMatrixCrossfeedCard(
                 )
             )
 
-            Text("Headphone Crossfeed (Chu Moy)", color = colors.onSurfaceVariant, fontSize = 12.sp)
-            val cfLabels = listOf("Off", "Low (-4.5 dB)", "High (-6.0 dB)")
+            Text("Headphone Crossfeed (BS2B)", color = colors.onSurfaceVariant, fontSize = 12.sp)
+            val cfLabels = listOf("Off", "Chu Moy", "Meier", "J. Meier")
             SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
                 cfLabels.forEachIndexed { idx, lbl ->
                     SegmentedButton(
@@ -157,7 +157,7 @@ internal fun ToneMatrixCrossfeedCard(
                             onUpdateMixer(mixer.copy(mode = nextMode, crossfeedLevel = idx))
                         },
                         shape = SegmentedButtonDefaults.itemShape(index = idx, count = cfLabels.size),
-                        label = { Text(lbl, fontSize = 11.sp) }
+                        label = { Text(lbl, fontSize = 10.sp) }
                     )
                 }
             }

@@ -302,7 +302,7 @@ static void render_playback_screen(void)
 
 static void format_menu_item_label(int item_idx, const ui_menu_state_t *m, char *buf, size_t sz)
 {
-    static const char *const k_xf_names[3]   = { "Off", "Low", "High" };
+    static const char *const k_xf_names[4]   = { "Off", "CM", "JM", "JM+" };
     static const char *const k_loud_names[3] = { "Off", "Mild", "Full" };
     static const char *const k_view_names[4] = { "Classic", "Curve", "VU", "Split" };
     static const char *const k_exc_names[PEQ_EXCITER_MODE_COUNT] = { "Tube", "Tape", "Air" };
@@ -321,7 +321,7 @@ static void format_menu_item_label(int item_idx, const ui_menu_state_t *m, char 
         break;
     case MENU_ITEM_CROSSFEED:
         snprintf(buf, sz, "%d. Crossfeed:%s", num,
-                 k_xf_names[(m->crossfeed_level < 3) ? m->crossfeed_level : 0]);
+                 k_xf_names[(m->crossfeed_level < 4) ? m->crossfeed_level : 0]);
         break;
     case MENU_ITEM_LOUDNESS:
         snprintf(buf, sz, "%d. Loudness:%s", num,

@@ -84,7 +84,7 @@ export function MatrixCard({ mixer, onChangeMixer }) {
 
         <div>
           <div className="control-label-row">
-            <span>Headphone Crossfeed (700 Hz / 270 µs):</span>
+            <span>Headphone Crossfeed (BS2B):</span>
           </div>
           <select
             id="crossfeedSelect"
@@ -96,8 +96,9 @@ export function MatrixCard({ mixer, onChangeMixer }) {
             }}
           >
             <option value={0}>Off (Bypassed)</option>
-            <option value={1}>Low (-4.5 dB blend)</option>
-            <option value={2}>High (-6.0 dB blend)</option>
+            <option value={1}>Chu Moy (700 Hz / -4.5 dB)</option>
+            <option value={2}>Jan Meier (700 Hz / -6.0 dB)</option>
+            <option value={3}>J. Meier (650 Hz / -9.5 dB)</option>
           </select>
         </div>
 
