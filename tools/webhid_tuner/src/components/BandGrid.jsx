@@ -1,5 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { BAND_COLORS, FILTER_NAMES, clamp, filterUsesGain } from '../dsp/biquad.js';
+import {
+  computeRecommendedPreampDb,
+  parseEqualizerApoText,
+  suggestSlotNameFromSource,
+} from '../io/fileParsers.js';
 
 function BandCard({
   index,
@@ -213,16 +218,31 @@ export function BandGrid({
   onRemoveBand,
   onHoverBand,
   onImportClick,
+  onQuickImportAutoEq,
+  sampleRateHz = 48000,
   onExportApo,
   onExportJson,
   onResetBands,
   onSaveToDac,
 }) {
   const [countDraft, setCountDraft] = useState(String(bands.length));
+  const [quickOpen, setQuickOpen] = useState(false);
+  const [quickText, setQuickText] = useState('');
+  const [quickSlotName, setQuickSlotName] = useState('');
+  const [quickAutoPreamp, setQuickAutoPreamp] = useState(true);
 
   useEffect(() => {
     setCountDraft(String(bands.length));
   }, [bands.length]);
+
+  const quickParsed = quickText.trim() ? parseEqualizerApoText(quickText, 0.0) : null;
+  const quickCalcPreamp =
+    quickParsed && quickParsed.bands.length > 0
+      ? computeRecommendedPreampDb(quickParsed.bands, sampleRateHz)
+      : 0.0;
+  const quickEffectivePreamp = quickAutoPreamp
+    ? Math.min(quickCalcPreamp, quickParsed?.hasExplicitPreamp ? quickParsed.preamp : 0.0)
+    : quickParsed?.preamp ?? 0.0;
 
   const presetVal = [3, 5, 7, 10].includes(bands.length) ? String(bands.length) : 'custom';
 
@@ -337,6 +357,14 @@ export function BandGrid({
             📂 Import APO / JSON
           </button>
           <button
+            id="btnAutoEqQuick"
+            className={quickOpen ? 'seg-active' : ''}
+            title="Paste or drop AutoEQ ParametricEQ.txt with 1-click Auto-Preamp and Slot Name"
+            onClick={() => setQuickOpen((v) => !v)}
+          >
+            ⚡ AutoEQ Quick-Import
+          </button>
+          <button
             id="btnExportApo"
             title="Export active channel as Equalizer APO .txt"
             onClick={onExportApo}
@@ -365,6 +393,107 @@ export function BandGrid({
           </button>
         </div>
       </div>
+
+      {quickOpen && (
+        <div
+          style={{
+            marginTop: '12px',
+            padding: '12px',
+            borderRadius: '8px',
+            border: '1px dashed var(--border)',
+            background: 'rgba(13, 17, 23, 0.55)',
+            display: 'flex',
+            flexDirection: 'column',
+            gap: '8px',
+          }}
+          onDragOver={(e) => e.preventDefault()}
+          onDrop={async (e) => {
+            e.preventDefault();
+            const f = e.dataTransfer?.files?.[0];
+            if (!f) return;
+            const txt = await f.text();
+            setQuickText(txt);
+            const suggested = suggestSlotNameFromSource(f.name, txt);
+            if (suggested) setQuickSlotName(suggested);
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+            <strong style={{ fontSize: '0.82rem' }}>AutoEQ Quick-Import (Paste or Drop ParametricEQ.txt)</strong>
+            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+              {quickParsed && quickParsed.bands.length > 0
+                ? `${quickParsed.bands.length} bands · Headroom Preamp: ${quickEffectivePreamp.toFixed(1)} dB`
+                : 'Paste Filter lines or drop a .txt file'}
+            </span>
+          </div>
+          <textarea
+            id="txtAutoEqQuick"
+            rows={4}
+            placeholder={'# Sennheiser HD 600\nPreamp: -6.2 dB\nFilter 1: ON PK Fc 105 Hz Gain 5.5 dB Q 0.70'}
+            value={quickText}
+            onChange={(e) => {
+              const v = e.target.value;
+              setQuickText(v);
+              if (!quickSlotName.trim()) {
+                const suggested = suggestSlotNameFromSource('', v);
+                if (suggested) setQuickSlotName(suggested);
+              }
+            }}
+            style={{
+              width: '100%',
+              boxSizing: 'border-box',
+              fontFamily: 'monospace',
+              fontSize: '0.76rem',
+              padding: '8px',
+              borderRadius: '6px',
+              background: '#0d1117',
+              color: 'var(--text-main)',
+              border: '1px solid var(--border)',
+            }}
+          />
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' }}>
+            <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '0.78rem', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={quickAutoPreamp}
+                onChange={(e) => setQuickAutoPreamp(e.target.checked)}
+              />
+              Auto-Preamp Headroom
+            </label>
+            <input
+              type="text"
+              maxLength={16}
+              placeholder="Optional Slot Name (16 chars)"
+              value={quickSlotName}
+              onChange={(e) => setQuickSlotName(e.target.value.slice(0, 16))}
+              style={{
+                width: '190px',
+                padding: '4px 8px',
+                fontSize: '0.78rem',
+                borderRadius: '6px',
+                background: '#0d1117',
+                color: 'var(--text-main)',
+                border: '1px solid var(--border)',
+              }}
+            />
+            <button
+              id="btnApplyAutoEqQuick"
+              className="primary"
+              disabled={!quickParsed || quickParsed.bands.length === 0}
+              onClick={() => {
+                if (!quickParsed || quickParsed.bands.length === 0) return;
+                onQuickImportAutoEq?.({
+                  bands: quickParsed.bands,
+                  preamp: quickEffectivePreamp,
+                  slotName: quickSlotName.trim(),
+                });
+                setQuickOpen(false);
+              }}
+            >
+              ⚡ Preview Live
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

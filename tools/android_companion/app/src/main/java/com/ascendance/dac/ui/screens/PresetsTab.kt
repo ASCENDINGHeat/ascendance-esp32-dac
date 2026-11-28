@@ -28,6 +28,7 @@ import androidx.compose.material.icons.outlined.UploadFile
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -51,6 +52,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.ascendance.dac.dsp.EqualizerApoCodec
 import com.ascendance.dac.model.DspDefaults
 import com.ascendance.dac.model.LocalPreset
 import com.ascendance.dac.ui.DacUiState
@@ -67,6 +69,7 @@ fun PresetsTab(
     onSaveToNvs: () -> Unit,
     onResetFlat: () -> Unit,
     onImportFile: () -> Unit,
+    onQuickImportAutoEq: (String, String?, Boolean) -> Unit,
     onExportApoTxt: () -> Unit,
     onExportJson: () -> Unit,
     onSaveLocalPreset: (String) -> Unit,
@@ -81,6 +84,10 @@ fun PresetsTab(
     var newPresetName by remember { mutableStateOf("") }
     var showRenameSlotDialog by remember { mutableStateOf(false) }
     var slotRenameText by remember { mutableStateOf("") }
+    var showQuickAutoEqDialog by remember { mutableStateOf(false) }
+    var quickAutoEqText by remember { mutableStateOf("") }
+    var quickSlotName by remember { mutableStateOf("") }
+    var quickAutoPreamp by remember { mutableStateOf(true) }
     var renamingPreset by remember { mutableStateOf<LocalPreset?>(null) }
     var renameText by remember { mutableStateOf("") }
 
@@ -216,6 +223,19 @@ fun PresetsTab(
                         Spacer(Modifier.width(4.dp))
                         Text("JSON", fontSize = 12.sp)
                     }
+                }
+                OutlinedButton(
+                    onClick = {
+                        quickAutoEqText = ""
+                        quickSlotName = ""
+                        quickAutoPreamp = true
+                        showQuickAutoEqDialog = true
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.Outlined.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(4.dp))
+                    Text("AutoEQ Quick-Import (Paste ParametricEQ.txt)", fontSize = 12.sp)
                 }
             }
         }
@@ -403,6 +423,80 @@ fun PresetsTab(
             },
             dismissButton = {
                 TextButton(onClick = { showRenameSlotDialog = false }) { Text("Cancel") }
+            }
+        )
+    }
+
+    if (showQuickAutoEqDialog) {
+        val parsed = remember(quickAutoEqText) {
+            if (quickAutoEqText.isBlank()) null else EqualizerApoCodec.parseEqualizerApoText(quickAutoEqText, 0.0f)
+        }
+        val recPreamp = remember(parsed, state.sampleRateHz) {
+            if (parsed != null && parsed.bands.isNotEmpty()) {
+                EqualizerApoCodec.computeRecommendedPreampDb(parsed.bands, state.sampleRateHz)
+            } else 0.0f
+        }
+        val effectivePreamp = if (quickAutoPreamp) {
+            kotlin.math.min(recPreamp, if (parsed?.hasExplicitPreamp == true) parsed.preampDb else 0.0f)
+        } else {
+            parsed?.preampDb ?: 0.0f
+        }
+        AlertDialog(
+            onDismissRequest = { showQuickAutoEqDialog = false },
+            title = { Text("AutoEQ Quick-Import", fontSize = 15.sp) },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    OutlinedTextField(
+                        value = quickAutoEqText,
+                        onValueChange = { txt ->
+                            quickAutoEqText = txt
+                            if (quickSlotName.isBlank()) {
+                                val suggested = EqualizerApoCodec.suggestSlotName(text = txt)
+                                if (suggested.isNotEmpty()) quickSlotName = suggested
+                            }
+                        },
+                        label = { Text("Paste ParametricEQ.txt") },
+                        placeholder = { Text("# HD 600\nPreamp: -6.2 dB\nFilter 1: ON PK Fc 105 Hz Gain 5.5 dB Q 0.70", fontSize = 11.sp) },
+                        minLines = 4,
+                        maxLines = 7,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Text(
+                        text = if (parsed != null && parsed.bands.isNotEmpty()) {
+                            "${parsed.bands.size} bands detected • Headroom Preamp: ${String.format(Locale.US, "%.1f", effectivePreamp)} dB"
+                        } else {
+                            "Paste Equalizer APO / AutoEQ Filter lines above."
+                        },
+                        color = if (parsed != null && parsed.bands.isNotEmpty()) AscendanceColors.AccentGreen else colors.onSurfaceVariant,
+                        fontSize = 11.sp
+                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(
+                            checked = quickAutoPreamp,
+                            onCheckedChange = { quickAutoPreamp = it }
+                        )
+                        Text("Auto-Preamp Headroom", fontSize = 12.sp, color = colors.onSurface)
+                    }
+                    OutlinedTextField(
+                        value = quickSlotName,
+                        onValueChange = { quickSlotName = it.take(16) },
+                        label = { Text("Optional Slot Name (max 16 chars)") },
+                        singleLine = true,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = parsed != null && parsed.bands.isNotEmpty(),
+                    onClick = {
+                        onQuickImportAutoEq(quickAutoEqText, quickSlotName.takeIf { it.isNotBlank() }, quickAutoPreamp)
+                        showQuickAutoEqDialog = false
+                    }
+                ) { Text("Preview Live") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showQuickAutoEqDialog = false }) { Text("Cancel") }
             }
         )
     }

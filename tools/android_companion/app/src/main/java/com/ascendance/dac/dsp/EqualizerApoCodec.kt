@@ -7,11 +7,15 @@ import com.ascendance.dac.model.PeqBand
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
+import kotlin.math.ceil
+import kotlin.math.min
+import kotlin.math.pow
 import kotlin.math.roundToInt
 
 data class ApoParseResult(
     val preampDb: Float,
-    val bands: List<PeqBand>
+    val bands: List<PeqBand>,
+    val hasExplicitPreamp: Boolean = false
 )
 
 @Serializable
@@ -65,8 +69,62 @@ object EqualizerApoCodec {
         encodeDefaults = true
     }
 
+    private val NOISE_WORDS_REGEX = Regex(
+        """\b(ParametricEQ|FixedBandEQ|GraphicEQ|AutoEQ|oratory1990|crinacle|rtings|innerfidelity|headphonecom)\b""",
+        RegexOption.IGNORE_CASE
+    )
+
+    fun suggestSlotName(fileName: String? = null, text: String = ""): String {
+        var raw = (fileName ?: "").trim()
+        if (raw.isNotEmpty()) {
+            raw = raw
+                .substringAfterLast('/')
+                .substringAfterLast('\\')
+                .replace(Regex("""\.(txt|json|csv)$""", RegexOption.IGNORE_CASE), "")
+                .replace(Regex("""[_-]+"""), " ")
+                .replace(NOISE_WORDS_REGEX, " ")
+                .replace(Regex("""\s+"""), " ")
+                .trim()
+        }
+        if (raw.isEmpty() && text.isNotBlank()) {
+            val firstComment = text.lineSequence()
+                .map { it.trim() }
+                .firstOrNull { it.startsWith("#") && it.removePrefix("#").trim().length >= 2 }
+            if (firstComment != null) {
+                raw = firstComment
+                    .replace(Regex("""^#+\s*"""), "")
+                    .replace(NOISE_WORDS_REGEX, " ")
+                    .replace(Regex("""\s+"""), " ")
+                    .trim()
+            }
+        }
+        return raw.take(16).trim()
+    }
+
+    fun computeRecommendedPreampDb(bands: List<PeqBand>, sampleRateHz: Int = 48000): Float {
+        if (bands.isEmpty()) return 0.0f
+        val coeffs = bands.map { BiquadMath.calcBiquadCoeffs(it, sampleRateHz) }
+        val steps = 64
+        val fMin = 20.0
+        val fMax = min(20000.0, sampleRateHz * 0.45)
+        val ratio = (fMax / fMin).pow(1.0 / (steps - 1))
+        var freq = fMin
+        var maxBoostDb = 0.0
+        for (i in 0 until steps) {
+            val magDb = BiquadMath.evalCoeffsAtFreq(coeffs, freq, sampleRateHz).magDb
+            if (magDb.isFinite() && magDb > maxBoostDb) {
+                maxBoostDb = magDb
+            }
+            freq *= ratio
+        }
+        if (maxBoostDb <= 0.05) return 0.0f
+        val needed = -(ceil(maxBoostDb * 10.0) / 10.0).toFloat()
+        return needed.coerceIn(DspDefaults.MIN_PREAMP_DB, DspDefaults.MAX_PREAMP_DB)
+    }
+
     fun parseEqualizerApoText(text: String, fallbackPreampDb: Float = 0.0f): ApoParseResult {
         var parsedPreamp = fallbackPreampDb.coerceIn(DspDefaults.MIN_PREAMP_DB, DspDefaults.MAX_PREAMP_DB)
+        var hasExplicitPreamp = false
         val parsedBands = mutableListOf<PeqBand>()
 
         for (rawLine in text.lineSequence()) {
@@ -77,6 +135,7 @@ object EqualizerApoCodec {
             if (preampMatch != null) {
                 val v = preampMatch.groupValues[1].toFloatOrNull() ?: parsedPreamp
                 parsedPreamp = v.coerceIn(DspDefaults.MIN_PREAMP_DB, DspDefaults.MAX_PREAMP_DB)
+                hasExplicitPreamp = true
                 continue
             }
 
@@ -96,7 +155,11 @@ object EqualizerApoCodec {
             }
         }
 
-        return ApoParseResult(preampDb = parsedPreamp, bands = parsedBands)
+        return ApoParseResult(
+            preampDb = parsedPreamp,
+            bands = parsedBands,
+            hasExplicitPreamp = hasExplicitPreamp
+        )
     }
 
     fun exportEqualizerApoText(preampDb: Float, bands: List<PeqBand>): String {

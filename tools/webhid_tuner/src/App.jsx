@@ -37,11 +37,13 @@ import {
   encodeSetHarmonics,
 } from './hid/protocol.js';
 import {
+  computeRecommendedPreampDb,
   downloadTextFile,
   exportEqualizerApoText,
   parseEqualizerApoText,
   parseFirFileBuffer,
   sanitizeImportedBands,
+  suggestSlotNameFromSource,
 } from './io/fileParsers.js';
 import { HeaderBar } from './components/HeaderBar.jsx';
 import { VisualizerCard } from './components/VisualizerCard.jsx';
@@ -466,18 +468,51 @@ export default function App() {
         alert('No valid Equalizer APO / AutoEQ Filter lines found.');
         return;
       }
-      setPreampDb(parsed.preamp);
+      const nextPreamp = parsed.hasExplicitPreamp
+        ? parsed.preamp
+        : computeRecommendedPreampDb(parsed.bands, sampleRateHz);
+      setPreampDb(nextPreamp);
       replaceActiveBands(parsed.bands);
-      await sendReport(encodePreampLive(parsed.preamp));
+      await sendReport(encodePreampLive(nextPreamp));
       await sendReport(encodeSetBandCount(parsed.bands.length, selectedChannel));
       for (let i = 0; i < parsed.bands.length; i++) {
         await sendReport(encodeSetBandLive(i, selectedChannel, parsed.bands[i]));
       }
+      const suggestedName = suggestSlotNameFromSource(file.name, text);
+      if (suggestedName) {
+        setSlotNameDraft(suggestedName);
+      }
       appendLog(
-        `Imported ${parsed.bands.length} bands from ${file.name} (Preamp ${parsed.preamp.toFixed(1)} dB).`
+        `Imported ${parsed.bands.length} bands from ${file.name} (Preamp ${nextPreamp.toFixed(1)} dB${suggestedName ? `, suggested slot "${suggestedName}"` : ''}).`
       );
     },
-    [appendLog, leftBands, mixer, preampDb, replaceActiveBands, selectedChannel, sendReport]
+    [appendLog, leftBands, mixer, preampDb, replaceActiveBands, sampleRateHz, selectedChannel, sendReport]
+  );
+
+  const handleQuickImportAutoEq = useCallback(
+    async ({ bands: nextBands, preamp: nextPreamp, slotName }) => {
+      if (!Array.isArray(nextBands) || nextBands.length === 0) return;
+      setPreampDb(nextPreamp);
+      replaceActiveBands(nextBands);
+      await sendReport(encodePreampLive(nextPreamp));
+      await sendReport(encodeSetBandCount(nextBands.length, selectedChannel));
+      for (let i = 0; i < nextBands.length; i++) {
+        await sendReport(encodeSetBandLive(i, selectedChannel, nextBands[i]));
+      }
+      if (slotName) {
+        setSlotNameDraft(slotName);
+        setSlotNames((prev) => {
+          const next = [...prev];
+          next[activeSlotIdx] = slotName;
+          return next;
+        });
+        await sendReport(encodeRenameSlot(activeSlotIdx, slotName));
+      }
+      appendLog(
+        `AutoEQ Quick-Import: ${nextBands.length} bands (Preamp ${nextPreamp.toFixed(1)} dB${slotName ? `, Slot -> "${slotName}"` : ''}).`
+      );
+    },
+    [activeSlotIdx, appendLog, replaceActiveBands, selectedChannel, sendReport]
   );
 
   const handleChangeMixer = useCallback(
@@ -621,6 +656,8 @@ export default function App() {
         onRemoveBand={handleRemoveBand}
         onHoverBand={setHoveredBandIdx}
         onImportClick={() => fileImportRef.current?.click()}
+        onQuickImportAutoEq={handleQuickImportAutoEq}
+        sampleRateHz={sampleRateHz}
         onExportApo={() => {
           downloadTextFile(
             'ascendance_peq_apo.txt',

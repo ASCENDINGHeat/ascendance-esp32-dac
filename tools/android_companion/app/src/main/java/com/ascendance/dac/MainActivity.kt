@@ -424,6 +424,7 @@ private fun AscendanceCompanionApp(viewModel: DacViewModel) {
                         onSaveToNvs = viewModel::saveToHardwareNvs,
                         onResetFlat = viewModel::resetActiveChannelFlat,
                         onImportFile = { importLauncher.launch(arrayOf("text/plain", "application/json", "*/*")) },
+                        onQuickImportAutoEq = viewModel::importAutoEqQuick,
                         onExportApoTxt = { exportApoLauncher.launch("ascendance_peq_apo.txt") },
                         onExportJson = { exportJsonLauncher.launch("ascendance_peq_snapshot.json") },
                         onSaveLocalPreset = viewModel::saveCurrentAsLocalPreset,

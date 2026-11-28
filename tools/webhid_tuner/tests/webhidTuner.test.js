@@ -21,9 +21,11 @@ import {
   formatSlotOptionLabel,
 } from '../src/hid/protocol.js';
 import {
+  computeRecommendedPreampDb,
   exportEqualizerApoText,
   parseEqualizerApoText,
   parseFirFileBuffer,
+  suggestSlotNameFromSource,
 } from '../src/io/fileParsers.js';
 
 describe('WebHID Tuner DSP, Protocol & Parsers', () => {
@@ -285,5 +287,16 @@ describe('WebHID Tuner DSP, Protocol & Parsers', () => {
       dynamicBassAmount: 72,
       autoPreampEnabled: true,
     });
+  });
+
+  it('suggests 16-char AutoEQ slot names and computes Auto-Preamp headroom', () => {
+    expect(suggestSlotNameFromSource('Sennheiser HD 600 ParametricEQ.txt')).toBe('Sennheiser HD 60');
+    expect(suggestSlotNameFromSource('Moondrop_Aria_AutoEQ.txt')).toBe('Moondrop Aria');
+    expect(suggestSlotNameFromSource('', '# Sony IER-M9\nFilter 1: ON PK Fc 100 Hz Gain 5.0 dB Q 1.0')).toBe('Sony IER-M9');
+
+    const parsed = parseEqualizerApoText('Filter 1: ON PK Fc 100 Hz Gain 5.5 dB Q 1.0\n');
+    expect(parsed.hasExplicitPreamp).toBe(false);
+    expect(computeRecommendedPreampDb(parsed.bands, 48000)).toBeLessThanOrEqual(-5.4);
+    expect(computeRecommendedPreampDb(parsed.bands, 48000)).toBeGreaterThanOrEqual(-6.0);
   });
 });

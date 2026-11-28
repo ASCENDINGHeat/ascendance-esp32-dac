@@ -909,12 +909,17 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
             _uiState.update { it.copy(statusBanner = "No Equalizer APO Filter lines found.") }
             return
         }
+        val effectivePreamp = if (parsed.hasExplicitPreamp) {
+            parsed.preampDb
+        } else {
+            EqualizerApoCodec.computeRecommendedPreampDb(parsed.bands, _uiState.value.sampleRateHz)
+        }
         val ch = _uiState.value.selectedChannel
         _uiState.update {
             val nextLeft = if (ch == PeqChannel.RIGHT && !it.linkedStereo) it.leftBands else parsed.bands
             val nextRight = if (it.linkedStereo || ch == PeqChannel.RIGHT) parsed.bands else it.rightBands
             it.copy(
-                preampDb = parsed.preampDb,
+                preampDb = effectivePreamp,
                 leftBands = nextLeft,
                 rightBands = nextRight,
                 selectedBandIdx = 0,
@@ -927,9 +932,50 @@ class DacViewModel(application: Application) : AndroidViewModel(application) {
             parsed.bands.forEachIndexed { idx, b ->
                 transport.sendPacket(PeqPacketCodec.buildSetBandLive(idx, ch, b))
             }
-            transport.sendPacket(PeqPacketCodec.buildSetPreampLive(parsed.preampDb))
+            transport.sendPacket(PeqPacketCodec.buildSetPreampLive(effectivePreamp))
         }
-        appendLog("Imported ${parsed.bands.size} Equalizer APO filters (preamp ${parsed.preampDb} dB).")
+        appendLog("Imported ${parsed.bands.size} Equalizer APO filters (preamp $effectivePreamp dB).")
+    }
+
+    fun importAutoEqQuick(rawText: String, slotName: String?, applyAutoPreamp: Boolean) {
+        val parsed = EqualizerApoCodec.parseEqualizerApoText(rawText, 0.0f)
+        if (parsed.bands.isEmpty()) {
+            _uiState.update { it.copy(statusBanner = "No Equalizer APO Filter lines found.") }
+            return
+        }
+        val calcPreamp = EqualizerApoCodec.computeRecommendedPreampDb(parsed.bands, _uiState.value.sampleRateHz)
+        val effectivePreamp = if (applyAutoPreamp) {
+            kotlin.math.min(calcPreamp, if (parsed.hasExplicitPreamp) parsed.preampDb else 0.0f)
+        } else {
+            parsed.preampDb
+        }
+        val ch = _uiState.value.selectedChannel
+        _uiState.update {
+            val nextLeft = if (ch == PeqChannel.RIGHT && !it.linkedStereo) it.leftBands else parsed.bands
+            val nextRight = if (it.linkedStereo || ch == PeqChannel.RIGHT) parsed.bands else it.rightBands
+            it.copy(
+                preampDb = effectivePreamp,
+                leftBands = nextLeft,
+                rightBands = nextRight,
+                selectedBandIdx = 0,
+                hasUnsavedChanges = true,
+                pendingOfflineDraft = !it.usbInfo.connected || it.pendingOfflineDraft,
+                statusBanner = "AutoEQ Quick-Import: ${parsed.bands.size} bands (Preamp ${String.format(java.util.Locale.US, "%.1f", effectivePreamp)} dB)."
+            )
+        }
+        if (_uiState.value.usbInfo.connected) {
+            transport.sendPacket(PeqPacketCodec.buildSetBandCount(parsed.bands.size, ch))
+            parsed.bands.forEachIndexed { idx, b ->
+                transport.sendPacket(PeqPacketCodec.buildSetBandLive(idx, ch, b))
+            }
+            transport.sendPacket(PeqPacketCodec.buildSetPreampLive(effectivePreamp))
+        }
+        val trimmedSlot = slotName?.trim().orEmpty()
+        if (trimmedSlot.isNotEmpty()) {
+            renameActiveSlot(trimmedSlot)
+        }
+        val slotSuffix = if (trimmedSlot.isNotEmpty()) ", slot '$trimmedSlot'" else ""
+        appendLog("AutoEQ Quick-Import: ${parsed.bands.size} bands (preamp $effectivePreamp dB$slotSuffix).")
     }
 
     fun exportCurrentApoText(): String {

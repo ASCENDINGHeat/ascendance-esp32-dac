@@ -61,8 +61,8 @@ Invariants preserved: `44.1 / 48 kHz` 24-bit Async UAC 1.0 (`860 B <= 1,024 B` D
   - Updated **Headphone Crossfeed** selector to 4 presets (`Off`, `Chu Moy`, `Jan Meier`, `J. Meier`).
 - [x] **Device Settings Card:**
   - Added **Spectrum (FFT)** as the 5th option in **OLED Screen View**.
-- [ ] **AutoEQ Quick-Import:** Paste/drop AutoEQ `ParametricEQ.txt` (or raw URL) with 1-click Auto-Preamp headroom calculation + automatic DAC Slot Name suggestion from filename/model.
-- [x] **Protocol & Tests:** Updated `src/hid/protocol.js` (`0x0F`, `0xFD[40..43]`) with Vitest golden-vector tests (`10/10` passing) and verified `npm run build`.
+- [x] **AutoEQ Quick-Import:** Paste/drop AutoEQ `ParametricEQ.txt` with 1-click Auto-Preamp headroom calculation + automatic 16-char DAC Slot Name suggestion from filename/header.
+- [x] **Protocol & Tests:** Updated `src/hid/protocol.js` (`0x0F`, `0xFD[40..43]`) with Vitest golden-vector tests (`11/11` passing) and verified `npm run build`.
 
 ### C. Android Companion App (`tools/android_companion/`)
 - [x] **Models & Codec (`DspModels.kt`, `PeqPacketCodec.kt`, `PeqPacketCodecTest.kt`):**
@@ -73,8 +73,8 @@ Invariants preserved: `44.1 / 48 kHz` 24-bit Async UAC 1.0 (`860 B <= 1,024 B` D
   - [x] Added **Dynamic Bass** toggle + slider inside `ToneHarmonicsCard.kt`.
   - [x] Added **Subsonic Filter (18 Hz)** and **24-Bit TPDF Dither** switches inside `ToneDynamicsCard.kt`.
   - [x] Expanded **Crossfeed** segmented control to `Off` | `Chu Moy` | `Meier` | `J. Meier` in `ToneMatrixCrossfeedCard.kt`.
-- [ ] **`Presets` Tab (`PresetsTab.kt`):**
-  - [ ] Add **AutoEQ Quick-Import** (paste/import AutoEQ `ParametricEQ.txt` with 1-click Auto-Preamp + Slot Name auto-fill from filename).
+- [x] **`Presets` Tab (`PresetsTab.kt`):**
+  - [x] Added **AutoEQ Quick-Import** dialog (paste AutoEQ `ParametricEQ.txt` with 1-click Auto-Preamp + 16-char Slot Name auto-fill).
 - [x] **`Device` Tab (`DeviceTab.kt`):**
   - [x] Added **Volume Taper** segmented toggle (`Standard` | `Log dB (IEM)`).
   - [x] Added **Spectrum** chip to **OLED Screen View** (`Classic` | `Curve` | `VU` | `Split` | `FFT`).

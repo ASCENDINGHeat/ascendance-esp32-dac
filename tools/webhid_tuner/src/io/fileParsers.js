@@ -1,8 +1,57 @@
-import { clamp, filterUsesGain } from '../dsp/biquad.js';
+import { clamp, evalCascadeAtFreq, filterUsesGain } from '../dsp/biquad.js';
+
+export function suggestSlotNameFromSource(fileName = '', text = '') {
+  let raw = (fileName || '').trim();
+  if (raw) {
+    raw = raw
+      .replace(/^.*[\\/]/, '')
+      .replace(/\.(txt|json|csv)$/i, '')
+      .replace(/[_-]+/g, ' ')
+      .replace(/\b(ParametricEQ|FixedBandEQ|GraphicEQ|AutoEQ|oratory1990|crinacle|rtings|innerfidelity|headphonecom)\b/gi, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+  if (!raw && text) {
+    const firstComment = text
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .find((l) => l.startsWith('#') && l.replace(/^#+\s*/, '').length >= 2);
+    if (firstComment) {
+      raw = firstComment
+        .replace(/^#+\s*/, '')
+        .replace(/\b(ParametricEQ|FixedBandEQ|AutoEQ|EQ)\b/gi, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+    }
+  }
+  if (!raw) return '';
+  return raw.slice(0, 16).trim();
+}
+
+export function computeRecommendedPreampDb(bands, sampleRate = 48000) {
+  if (!Array.isArray(bands) || bands.length === 0) return 0.0;
+  let maxBoostDb = 0.0;
+  const steps = 64;
+  const fMin = 20.0;
+  const fMax = Math.min(20000.0, sampleRate * 0.45);
+  const ratio = Math.pow(fMax / fMin, 1.0 / (steps - 1));
+  let freq = fMin;
+  for (let i = 0; i < steps; i++) {
+    const { magDb } = evalCascadeAtFreq(bands, freq, sampleRate);
+    if (Number.isFinite(magDb) && magDb > maxBoostDb) {
+      maxBoostDb = magDb;
+    }
+    freq *= ratio;
+  }
+  if (maxBoostDb <= 0.05) return 0.0;
+  const needed = -Math.ceil(maxBoostDb * 10) / 10;
+  return clamp(Number(needed.toFixed(1)), -12.0, 0.0);
+}
 
 export function parseEqualizerApoText(text, fallbackPreamp = 0.0) {
   const lines = text.split(/\r?\n/);
   let parsedPreamp = fallbackPreamp;
+  let hasExplicitPreamp = false;
   const parsedBands = [];
   const typeMap = {
     PK: 1,
@@ -27,6 +76,7 @@ export function parseEqualizerApoText(text, fallbackPreamp = 0.0) {
     const preampMatch = line.match(/^Preamp:\s*([+-]?\d+(?:\.\d+)?)\s*dB/i);
     if (preampMatch) {
       parsedPreamp = clamp(parseFloat(preampMatch[1]), -12.0, 0.0);
+      hasExplicitPreamp = true;
       continue;
     }
 
@@ -43,7 +93,7 @@ export function parseEqualizerApoText(text, fallbackPreamp = 0.0) {
       parsedBands.push({ type: mappedType, freq, gain, q });
     }
   }
-  return { preamp: parsedPreamp, bands: parsedBands };
+  return { preamp: parsedPreamp, hasExplicitPreamp, bands: parsedBands };
 }
 
 export function exportEqualizerApoText(bands, preampDb) {
