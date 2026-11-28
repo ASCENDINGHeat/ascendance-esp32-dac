@@ -31,6 +31,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ascendance.dac.model.DspDefaults
+import com.ascendance.dac.model.DspProConfig
 import com.ascendance.dac.model.ExciterMode
 import com.ascendance.dac.model.HarmonicsConfig
 import com.ascendance.dac.ui.theme.AscendanceColors
@@ -40,7 +41,9 @@ import kotlin.math.roundToInt
 @Composable
 internal fun ToneHarmonicsCard(
     harmonics: HarmonicsConfig,
-    onUpdateHarmonics: (HarmonicsConfig) -> Unit
+    onUpdateHarmonics: (HarmonicsConfig) -> Unit,
+    dspPro: DspProConfig,
+    onUpdateDspPro: (DspProConfig) -> Unit
 ) {
     val colors = MaterialTheme.colorScheme
     val haptics = LocalHapticFeedback.current
@@ -110,6 +113,54 @@ internal fun ToneHarmonicsCard(
                 value = harmonics.bassFreqHz.toFloat(),
                 onValueChange = { onUpdateHarmonics(harmonics.copy(bassFreqHz = it.roundToInt())) },
                 valueRange = DspDefaults.MIN_BASS_FREQ_HZ.toFloat()..DspDefaults.MAX_BASS_FREQ_HZ.toFloat(),
+                colors = SliderDefaults.colors(
+                    thumbColor = AscendanceColors.AccentBlue,
+                    activeTrackColor = AscendanceColors.AccentBlue
+                )
+            )
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(1.dp)
+                    .background(colors.outline)
+            )
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Dynamic Bass", color = colors.onSurface, fontSize = 13.sp)
+                    Text(
+                        "Envelope-controlled 90 Hz sub-bass boost that ducks on loud hits",
+                        color = colors.onSurfaceVariant,
+                        fontSize = 11.sp
+                    )
+                }
+                Switch(
+                    checked = dspPro.dynamicBassEnabled,
+                    onCheckedChange = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onUpdateDspPro(dspPro.copy(dynamicBassEnabled = it))
+                    }
+                )
+            }
+
+            Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("Sub-Bass Amount", color = colors.onSurfaceVariant, fontSize = 11.sp)
+                Text(
+                    text = "${dspPro.dynamicBassAmountPct}%",
+                    color = if (dspPro.dynamicBassEnabled) AscendanceColors.AccentBlue else colors.onSurfaceVariant,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.sp
+                )
+            }
+            Slider(
+                value = dspPro.dynamicBassAmountPct.toFloat(),
+                onValueChange = { onUpdateDspPro(dspPro.copy(dynamicBassAmountPct = it.roundToInt())) },
+                valueRange = 0f..100f,
                 colors = SliderDefaults.colors(
                     thumbColor = AscendanceColors.AccentBlue,
                     activeTrackColor = AscendanceColors.AccentBlue

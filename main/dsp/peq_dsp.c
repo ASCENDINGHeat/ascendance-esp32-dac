@@ -25,6 +25,14 @@ peq_dsp_pro_cfg_t   s_dsp_pro_cfg;
 static _Atomic bool s_tpdf_dither_rt_en   = true;
 static _Atomic bool s_subsonic_rt_en      = false;
 static dc_block_state_t s_subsonic_dc     = {0};
+static _Atomic bool s_dynbass_rt_en       = false;
+static _Atomic uint8_t s_dynbass_rt_amt   = 40U;
+static biquad_state_t s_dynbass_lpf       = {0};
+static float s_dynbass_env                = 0.0f;
+static float s_dynbass_gain               = 0.0f;
+static float s_dynbass_att_c              = 0.004f;
+static float s_dynbass_rel_c              = 0.00017f;
+static float s_dynbass_smooth_c           = 0.001f;
 
 /* Psychoacoustic Bass Enhancer & Harmonic Exciter Configuration & PSRAM LUTs */
 peq_harmonics_cfg_t s_harm_cfg;
@@ -383,6 +391,16 @@ static void configure_limiter_rt_for_sr(int sample_rate)
     s_subsonic_dc.r = expf(-2.0f * (float)M_PI * 18.0f / (float)sample_rate);
     s_subsonic_dc.x1_l = 0.0f; s_subsonic_dc.y1_l = 0.0f;
     s_subsonic_dc.x1_r = 0.0f; s_subsonic_dc.y1_r = 0.0f;
+
+    /* Dynamic Bass 2nd-order 90 Hz Butterworth LPF + 5ms/120ms envelope follower */
+    calc_butterworth_lpf(90.0, (double)sample_rate, &s_dynbass_lpf);
+    s_dynbass_lpf.w1_l = 0.0f; s_dynbass_lpf.w2_l = 0.0f;
+    s_dynbass_lpf.w1_r = 0.0f; s_dynbass_lpf.w2_r = 0.0f;
+    s_dynbass_env = 0.0f;
+    s_dynbass_gain = 0.0f;
+    s_dynbass_att_c = 1.0f - expf(-1.0f / (0.005f * (float)sample_rate));
+    s_dynbass_rel_c = 1.0f - expf(-1.0f / (0.120f * (float)sample_rate));
+    s_dynbass_smooth_c = 1.0f - expf(-1.0f / (0.020f * (float)sample_rate));
 }
 
 
@@ -395,6 +413,8 @@ esp_err_t peq_dsp_init(int sample_rate)
     load_user_profile_nvs();
     atomic_store_explicit(&s_tpdf_dither_rt_en, s_dsp_pro_cfg.tpdf_dither_enabled, memory_order_release);
     atomic_store_explicit(&s_subsonic_rt_en, s_dsp_pro_cfg.subsonic_filter_enabled, memory_order_release);
+    atomic_store_explicit(&s_dynbass_rt_en, s_dsp_pro_cfg.dynamic_bass_enabled, memory_order_release);
+    atomic_store_explicit(&s_dynbass_rt_amt, s_dsp_pro_cfg.dynamic_bass_amount_pct, memory_order_release);
     audio_pipeline_set_log_volume_taper(s_dsp_pro_cfg.vol_taper_log_enabled);
     init_harmonics_luts_once();
 
@@ -944,6 +964,8 @@ void peq_dsp_set_pro_cfg(const peq_dsp_pro_cfg_t *cfg)
     taskEXIT_CRITICAL(&s_peq_lock);
     atomic_store_explicit(&s_tpdf_dither_rt_en, clamped.tpdf_dither_enabled, memory_order_release);
     atomic_store_explicit(&s_subsonic_rt_en, clamped.subsonic_filter_enabled, memory_order_release);
+    atomic_store_explicit(&s_dynbass_rt_en, clamped.dynamic_bass_enabled, memory_order_release);
+    atomic_store_explicit(&s_dynbass_rt_amt, clamped.dynamic_bass_amount_pct, memory_order_release);
     audio_pipeline_set_log_volume_taper(clamped.vol_taper_log_enabled);
 }
 
@@ -1648,10 +1670,19 @@ static inline void process_dsp_chunk_f32_to_s32(size_t chunk, int32_t *dst_s32, 
     float sq_r = *blk_sq_r;
     bool  tpdf_en = atomic_load_explicit(&s_tpdf_dither_rt_en, memory_order_relaxed);
     bool  subsonic_en = atomic_load_explicit(&s_subsonic_rt_en, memory_order_relaxed);
+    bool  dynbass_en = atomic_load_explicit(&s_dynbass_rt_en, memory_order_relaxed);
+    float dynbass_max = (float)atomic_load_explicit(&s_dynbass_rt_amt, memory_order_relaxed) * 0.01f;
+    bool  dynbass_run = dynbass_en || (s_dynbass_gain >= 1e-4f);
     bool  fft_cap = atomic_load_explicit(&s_fft_snap_req, memory_order_acquire);
     if (!subsonic_en) {
         s_subsonic_dc.x1_l = 0.0f; s_subsonic_dc.y1_l = 0.0f;
         s_subsonic_dc.x1_r = 0.0f; s_subsonic_dc.y1_r = 0.0f;
+    }
+    if (!dynbass_run) {
+        s_dynbass_lpf.w1_l = 0.0f; s_dynbass_lpf.w2_l = 0.0f;
+        s_dynbass_lpf.w1_r = 0.0f; s_dynbass_lpf.w2_r = 0.0f;
+        s_dynbass_env = 0.0f;
+        s_dynbass_gain = 0.0f;
     }
     for (size_t i = 0; i < chunk; i++) {
         float hm_l, hm_r, mx_l, mx_r, fin_l, fin_r;
@@ -1661,6 +1692,18 @@ static inline void process_dsp_chunk_f32_to_s32(size_t chunk, int32_t *dst_s32, 
         }
         float vol_cur = s_vol_smooth;
         process_harmonics_sample(ch_l_ptr[i], ch_r_ptr[i], 1.0f / FULLSCALE_S24_F, FULLSCALE_S24_F, &hm_l, &hm_r);
+        if (dynbass_run) {
+            float sub_l = biquad_filter_sample(&s_dynbass_lpf, hm_l, &s_dynbass_lpf.w1_l, &s_dynbass_lpf.w2_l);
+            float sub_r = biquad_filter_sample(&s_dynbass_lpf, hm_r, &s_dynbass_lpf.w1_r, &s_dynbass_lpf.w2_r);
+            float sub_pk = fmaxf(fabsf(sub_l), fabsf(sub_r)) * (1.0f / FULLSCALE_S24_F);
+            s_dynbass_env += ((sub_pk > s_dynbass_env) ? s_dynbass_att_c : s_dynbass_rel_c) * (sub_pk - s_dynbass_env);
+            float duck = (s_dynbass_env <= 0.125f) ? 1.0f
+                       : ((s_dynbass_env >= 0.707f) ? 0.0f : (0.707f - s_dynbass_env) * (1.0f / (0.707f - 0.125f)));
+            float tgt_g = dynbass_en ? (dynbass_max * duck) : 0.0f;
+            s_dynbass_gain += s_dynbass_smooth_c * (tgt_g - s_dynbass_gain);
+            hm_l += s_dynbass_gain * sub_l;
+            hm_r += s_dynbass_gain * sub_r;
+        }
         process_mixer_sample(hm_l, hm_r, &mx_l, &mx_r);
         if (subsonic_en) {
             mx_l = dc_block_sample(&s_subsonic_dc, mx_l, false);

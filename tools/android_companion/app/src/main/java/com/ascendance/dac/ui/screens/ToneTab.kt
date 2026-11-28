@@ -45,7 +45,9 @@ fun ToneTab(
     ) {
         ToneHarmonicsCard(
             harmonics = harmonics,
-            onUpdateHarmonics = onUpdateHarmonics
+            dspPro = dspPro,
+            onUpdateHarmonics = onUpdateHarmonics,
+            onUpdateDspPro = onUpdateDspPro
         )
         ToneDynamicsCard(
             dynamics = dynamics,

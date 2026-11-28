@@ -275,6 +275,40 @@ export function DynamicsCard({
               }
             />
           </div>
+          <div
+            style={{
+              marginTop: '10px',
+              paddingTop: '8px',
+              borderTop: '1px solid var(--border-color)',
+              opacity: pro.dynamicBassEnabled ? 1 : 0.72,
+            }}
+          >
+            <div className="control-label-row">
+              <label>
+                <input
+                  type="checkbox"
+                  id="chkDynBassEnabled"
+                  checked={!!pro.dynamicBassEnabled}
+                  onChange={(e) => emitDspPro({ dynamicBassEnabled: e.target.checked })}
+                />{' '}
+                Dynamic Bass
+              </label>
+              <span style={{ fontFamily: 'monospace', color: 'var(--accent-color)' }}>
+                {pro.dynamicBassAmount}%
+              </span>
+            </div>
+            <input
+              type="range"
+              id="dynBassAmountSlider"
+              min={0}
+              max={100}
+              step={1}
+              value={pro.dynamicBassAmount}
+              onChange={(e) =>
+                emitDspPro({ dynamicBassAmount: clamp(parseInt(e.target.value, 10), 0, 100) })
+              }
+            />
+          </div>
         </div>
 
         <div style={{ opacity: harm.exciterEnabled ? 1 : 0.72 }}>

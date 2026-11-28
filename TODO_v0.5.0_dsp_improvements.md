@@ -35,8 +35,8 @@ Invariants preserved: `44.1 / 48 kHz` 24-bit Async UAC 1.0 (`860 B <= 1,024 B` D
 
 ## Phase 3 — Dynamic Processing & Live OLED Visualizer *(Medium CPU)*
 
-- [ ] **7. Dynamic Bass (Envelope-Controlled Sub-Bass) (`main/peq_dsp.c`)**
-  - Envelope-following sub-bass shelf that gently boosts low/moderate passages and pulls back smoothly on heavy sub-bass peaks (`> -3 dBFS`) to preserve punch without mud or limiter pumping.
+- [x] **7. Dynamic Bass (Envelope-Controlled Sub-Bass) (`main/dsp/peq_dsp.c`)**
+  - Envelope-following 90 Hz Butterworth sub-bass shelf (`5 ms` attack / `120 ms` release, `20 ms` gain smoother) that gently boosts low/moderate passages and ducks smoothly above `-18 dBFS` toward `-3 dBFS` to preserve punch without mud or limiter pumping, with full OLED + WebHID + Android parity.
 - [x] **8. Real-Time 32-Band FFT Spectrum Analyzer (5th OLED View) (`main/dsp/peq_dsp.c`, `main/oled_display.c`)**
   - Lock-free 1024-sample post-DSP mono snapshot in static BSS on Core 1 (zero overhead when Spectrum view is inactive).
   - Runs `espressif/esp-dsp` 1024-pt `dsps_fft2r_fc32` + Hann window strictly on **Core 0 (`oled_ui_task`)** to render a live 32-bar (`3 px` bar + `1 px` gap) logarithmic RTA spectrum (`47 Hz..18 kHz`) with floating peak-hold dots on the 128×64 SSD1306 OLED, with full OLED + WebHID + Android parity.
@@ -48,46 +48,46 @@ Invariants preserved: `44.1 / 48 kHz` 24-bit Async UAC 1.0 (`860 B <= 1,024 B` D
 ### A. 64-Byte HID Protocol (`0x4551`) & NVS Persistence
 - [x] **Add `WEBHID_CMD_SET_DSP_PRO` (`0x0F`):**
   - Bitflags for: `tpdf_dither_en` (`0x01`), `subsonic_filter_en` (`0x02`), `vol_taper_log_en` (`0x04`), `dynamic_bass_en` (`0x08`), `auto_preamp_en` (`0x10`), plus `dynamic_bass_amount_pct` (`0..100`) and expanded `oled_view` (`0..4`: Classic, EQ Curve, VU Meter, Split, **Spectrum**, or `0xFF` unchanged).
-  - [ ] Expand `crossfeed_level` (`0..3`: Off, Chu Moy, Jan Meier, J. Meier) in `WEBHID_CMD_SET_MIXER` (`0x13`).
+  - [x] Expanded `crossfeed_level` (`0..3`: Off, Chu Moy, Jan Meier, J. Meier) in `WEBHID_CMD_SET_MIXER` (`0x13`).
 - [x] **Mirror New State in `0xFD` Telemetry Report (`reserved[28..31]` = `bytes 40..43`):**
   - Keeps `reserved[0..27]` 100% backward-compatible with `v0.4.x` clients; packs `dsp_pro_version=1`, `pro_flags`, `dynamic_bass_amount_pct`, and `oled_view_ext` into `bytes 40..43`.
 - [x] **NVS Persistence:** Added `dsp_pro_v1` blob (`peq_storage_nvs.c`) with CRC32 + `memcmp` delta verification, committed only on explicit Save.
 
 ### B. React WebHID Tuner (`tools/webhid_tuner/src/`)
 - [x] **Dynamics / Preamp Card:** Added **Auto-Preamp Headroom Guard** toggle + live `(-X.X dB)` attenuation badge and **Volume Taper** (`Standard (Quadratic)` / `Logarithmic dB (IEM)`).
-- [ ] **Tone / Dynamics Card:**
-  - Add **Dynamic Bass** toggle + Amount slider (`0–100%`) inside the Bass Enhancer / Tone section.
-  - Add **Subsonic Filter (18 Hz)** and **24-Bit TPDF Dither** toggles under **Dynamics & Output Purity** (`0x0F` bits 0 & 1 already wired in firmware/NVS).
-  - Update **Headphone Crossfeed** selector to 4 presets (`Off`, `Chu Moy`, `Jan Meier`, `J. Meier`).
-- [ ] **Device Settings Card:**
-  - Add **Spectrum (FFT)** as the 5th option in **OLED Screen View**.
+- [x] **Tone / Dynamics Card:**
+  - Added **Dynamic Bass** toggle + Amount slider (`0–100%`) inside the Bass Enhancer / Tone section.
+  - Added **Subsonic Filter (18 Hz)** and **24-Bit TPDF Dither** toggles under **Dynamics & Output Purity**.
+  - Updated **Headphone Crossfeed** selector to 4 presets (`Off`, `Chu Moy`, `Jan Meier`, `J. Meier`).
+- [x] **Device Settings Card:**
+  - Added **Spectrum (FFT)** as the 5th option in **OLED Screen View**.
 - [ ] **AutoEQ Quick-Import:** Paste/drop AutoEQ `ParametricEQ.txt` (or raw URL) with 1-click Auto-Preamp headroom calculation + automatic DAC Slot Name suggestion from filename/model.
 - [x] **Protocol & Tests:** Updated `src/hid/protocol.js` (`0x0F`, `0xFD[40..43]`) with Vitest golden-vector tests (`10/10` passing) and verified `npm run build`.
 
 ### C. Android Companion App (`tools/android_companion/`)
 - [x] **Models & Codec (`DspModels.kt`, `PeqPacketCodec.kt`, `PeqPacketCodecTest.kt`):**
   - Added `DspProConfig`, `CMD_SET_DSP_PRO` (`0x0F`), `0xFD[40..43]` decoding, and unit tests.
-  - [ ] Add `OledViewMode.SPECTRUM` and 4-level BS2B `CrossfeedLevel`.
-- [ ] **`Tone` Tab (`ToneDynamicsCard.kt`, `ToneHarmonicsCard.kt`, `ToneMatrixCrossfeedCard.kt`):**
+  - [x] Added `OledViewMode.SPECTRUM` and 4-level BS2B `CrossfeedLevel`.
+- [x] **`Tone` Tab (`ToneDynamicsCard.kt`, `ToneHarmonicsCard.kt`, `ToneMatrixCrossfeedCard.kt`):**
   - [x] Added **Auto-Preamp Headroom Guard** switch + live attenuation readout in `ToneDynamicsCard.kt`.
-  - [ ] Add **Dynamic Bass** toggle + slider inside `ToneHarmonicsCard.kt`.
-  - [ ] Add **Subsonic Filter (18 Hz)** and **24-Bit TPDF Dither** switches inside `ToneDynamicsCard.kt`.
-  - [ ] Expand **Crossfeed** segmented control to `Off` | `Chu Moy` | `Meier` | `J. Meier` in `ToneMatrixCrossfeedCard.kt`.
+  - [x] Added **Dynamic Bass** toggle + slider inside `ToneHarmonicsCard.kt`.
+  - [x] Added **Subsonic Filter (18 Hz)** and **24-Bit TPDF Dither** switches inside `ToneDynamicsCard.kt`.
+  - [x] Expanded **Crossfeed** segmented control to `Off` | `Chu Moy` | `Meier` | `J. Meier` in `ToneMatrixCrossfeedCard.kt`.
 - [ ] **`Presets` Tab (`PresetsTab.kt`):**
   - [ ] Add **AutoEQ Quick-Import** (paste/import AutoEQ `ParametricEQ.txt` with 1-click Auto-Preamp + Slot Name auto-fill from filename).
-- [ ] **`Device` Tab (`DeviceTab.kt`):**
+- [x] **`Device` Tab (`DeviceTab.kt`):**
   - [x] Added **Volume Taper** segmented toggle (`Standard` | `Log dB (IEM)`).
-  - [ ] Add **Spectrum** chip to **OLED Screen View** (`Classic` | `Curve` | `VU` | `Split` | `Spectrum`).
+  - [x] Added **Spectrum** chip to **OLED Screen View** (`Classic` | `Curve` | `VU` | `Split` | `FFT`).
 
 ### D. On-Device SSD1306 128×64 OLED UI (`main/oled_display.c`, `main/main.c`)
-- [ ] **5th Playback View (`OLED_VIEW_SPECTRUM`):** 16-bar logarithmic FFT visualizer with peak-hold dots, selectable via `BTN2` double-click, Menu, WebHID, or Android Companion.
-- [ ] **OLED Main Menu Additions (strictly $\le 20$ chars at `x = 2`):**
+- [x] **5th Playback View (`OLED_VIEW_SPECTRUM`):** 32-bar logarithmic 1024-pt FFT visualizer with peak-hold dots, selectable via `BTN2` double-click, Menu, WebHID, or Android Companion.
+- [x] **OLED Main Menu Additions (strictly $\le 20$ chars at `x = 2`):**
   - [x] `AutoPreamp:On/Off`
   - [x] `VolTaper:Std/Log`
-  - [ ] `Subsonic:On/Off`
-  - [ ] `Dyn Bass:On/Off`
-  - [ ] `View: Spectrum` (in existing `OLED View` cycler)
-  - [ ] `Crossfeed: Off/CM/JM/JM+`
+  - [x] `Subsonic:On/Off`
+  - [x] `DynBass:On/Off`
+  - [x] `View: Spectrum` (in existing `OLED View` cycler)
+  - [x] `Crossfeed: Off/CM/JM/JM+`
 
 ---
 
